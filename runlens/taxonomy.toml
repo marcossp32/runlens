@@ -1,0 +1,115 @@
+# Failure taxonomy for agent runs. Seeded from MAST (Cemri et al., "Why Do Multi-Agent
+# LLM Systems Fail?", NeurIPS 2025, https://arxiv.org/abs/2503.13657) plus coding-agent
+# modes from SWE-agent/SWE-PRM trajectory studies and reward-hacking work (ImpossibleBench).
+#
+# Copy to ~/.runlens/taxonomy.toml to adapt it: rename, merge or add categories after
+# reading real incidents (open coding -> axial coding). Keep definitions binary-testable:
+# a reader must be able to say yes or no for one incident.
+
+[[category]]
+id = "spec_disobeyed"
+group = "specification"
+source = "MAST FM-1.1"
+definition = "The agent did something its task or instructions excluded, or skipped something they required."
+
+[[category]]
+id = "role_disobeyed"
+group = "specification"
+source = "MAST FM-1.2"
+definition = "The agent acted outside its assigned role, e.g. a reviewer editing code or a builder redesigning the plan."
+
+[[category]]
+id = "step_repetition"
+group = "specification"
+source = "MAST FM-1.3"
+definition = "The agent repeated a step it had already completed, without new information that justified repeating it."
+
+[[category]]
+id = "context_lost"
+group = "specification"
+source = "MAST FM-1.4"
+definition = "The agent lost or ignored earlier context: re-asked, re-read or contradicted something already established."
+
+[[category]]
+id = "termination_unaware"
+group = "specification"
+source = "MAST FM-1.5"
+definition = "The agent kept going after the work was done, or did not recognise its stop condition."
+
+[[category]]
+id = "no_clarification"
+group = "inter_agent"
+source = "MAST FM-2.2"
+definition = "The agent guessed where the inputs were ambiguous or missing instead of stopping or asking."
+
+[[category]]
+id = "task_derailment"
+group = "inter_agent"
+source = "MAST FM-2.3"
+definition = "The agent drifted to a different objective than the one it was given."
+
+[[category]]
+id = "input_ignored"
+group = "inter_agent"
+source = "MAST FM-2.4/2.5"
+definition = "The agent ignored or dropped information another agent, a tool or a check handed it."
+
+[[category]]
+id = "reasoning_action_mismatch"
+group = "inter_agent"
+source = "MAST FM-2.6"
+definition = "What the agent said it would do and what it then did disagree."
+
+[[category]]
+id = "premature_termination"
+group = "verification"
+source = "MAST FM-3.1"
+definition = "The agent stopped or declared success before the task was actually complete."
+
+[[category]]
+id = "verification_missing"
+group = "verification"
+source = "MAST FM-3.2"
+definition = "The agent claimed a result without running the check that would show it, or checked only part of it."
+
+[[category]]
+id = "verification_incorrect"
+group = "verification"
+source = "MAST FM-3.3"
+definition = "The agent ran a check but the check could not detect the failure, or its result was misread."
+
+[[category]]
+id = "test_tampering"
+group = "coding"
+source = "ImpossibleBench (arXiv 2510.20270)"
+definition = "The agent changed tests, assertions or checks to make them pass instead of fixing the behaviour."
+
+[[category]]
+id = "tool_misuse"
+group = "coding"
+source = "SWE-PRM (arXiv 2509.02360)"
+definition = "Wrong tool or wrong arguments: invalid input, edit without reading, malformed command, wrong path."
+
+[[category]]
+id = "environment_friction"
+group = "operational"
+source = "runlens"
+definition = "The failure comes from the environment the agent runs in: shell or OS differences, missing binaries, quoting, paths, sandbox limits."
+
+[[category]]
+id = "busy_waiting"
+group = "operational"
+source = "runlens"
+definition = "The agent spent turns polling, sleeping or printing while waiting for something it would be notified about."
+
+[[category]]
+id = "external_failure"
+group = "operational"
+source = "runlens"
+definition = "A service outside the agent failed: network, API error, rate limit, a third-party outage."
+
+[[category]]
+id = "expected_behavior"
+group = "none"
+source = "runlens"
+definition = "Not a failure: the incident is the system working as designed, e.g. a check catching a real defect, or a planned retry."

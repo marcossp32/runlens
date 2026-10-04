@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runlens"
+version = "0.1.0"
+description = "History of Claude Code runs in DuckDB, to find where a flow struggles"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "marcossp32" }]
+requires-python = ">=3.11"
+dependencies = ["duckdb>=1.1", "pytz"]
+keywords = ["claude-code", "observability", "agents", "duckdb", "skills"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Repository = "https://github.com/marcossp32/runlens"
+
+[project.scripts]
+runlens = "runlens.cli:run"
+
+[tool.setuptools]
+packages = ["runlens"]
+
+[tool.setuptools.package-data]
+runlens = ["*.sql", "*.toml", "skill/**/*"]

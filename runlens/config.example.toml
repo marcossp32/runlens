@@ -1,0 +1,38 @@
+# runlens config: everything specific to a flow lives here; the code stays generic.
+# Copy to ~/.runlens/config.toml (or pass --config). Every section is optional.
+
+[select]
+# Which Claude Code sessions count as runs. CLI flags (--since, --skill, --project, --session) override these.
+since = ""        # ISO date; runs started before it are skipped. "" = no limit
+skills = []       # keep runs that used any of these skills, e.g. ["my-flow"]; [] = every session
+projects = []     # keep runs whose working directory contains one of these strings; [] = any
+
+[analysis]
+# Thresholds for the generic incident detectors (defaults shown).
+# repeat_min = 3          identical tool calls in one agent before it is a repeated_call incident
+# idle_min = 3            wait/print-only shell calls in one agent before it is an idle_loop incident
+# error_streak_min = 2    consecutive failing tool calls before it is an error_streak incident
+# context_steps = 8       timeline steps kept before each incident
+# test_path = '...'       regex for test files (edits after a failure become test_edit_after_failure)
+
+[classify]
+model = "sonnet"  # model alias `claude -p` uses to label incidents
+
+# [prices]  USD per million tokens (input, output, cache_read), for models missing from the built-in table.
+# "claude-new-model" = [3.0, 15.0, 0.30]
+
+# Extra files a flow leaves outside the transcript, copied into each run's archive.
+# Placeholders: {cwd} (the run's working directory), {git_dir} (its git common dir).
+# [[evidence]]
+# name = "ledger"
+# glob = "{git_dir}/myflow/**/*"
+
+# Markers turn a flow's own output into data: each regex match becomes a row in `markers`,
+# and a match whose value is in `bad` ("*" = every match) becomes an incident.
+# source = tool_result | tool_input | assistant_text | any. Group 1, if present, is the value.
+# Anchor patterns to the real output format, not to words the skill text also contains.
+# [[marker]]
+# name = "check"
+# source = "tool_result"
+# pattern = '^CHECK: (PASS|FAIL)\b'
+# bad = ["FAIL"]

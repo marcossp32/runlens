@@ -1,0 +1,42 @@
+# runlens config for mstack's /m-feature flow (https://github.com/marcossp32/mstack).
+# Copy to ~/.runlens/config.toml. Everything flow-specific lives here; the code stays generic.
+
+[select]
+# Defaults for `archive` and the SessionEnd hook (CLI flags override them).
+since = "2026-09-28"     # runs started on or after this date (example)
+skills = ["m-feature"]   # keep runs that used any of these skills; [] = every run
+projects = []            # substrings of the run's cwd; [] = any
+
+# Extra files a flow writes outside the transcript, copied into the run's archive.
+# Placeholders: {cwd} (the run's working dir), {git_dir} (its git common dir).
+[[evidence]]
+name = "mstack"
+glob = "{git_dir}/mstack/**/*"
+
+# Markers: regexes that turn flow output into rows of the `markers` table.
+# source = tool_result | tool_input | assistant_text | any. Group 1, if any, is the value.
+# bad = values that mean something went wrong ("*" = every match); each bad match becomes an incident.
+# Anchor them to the real output format, not to words the skill text also contains.
+
+[[marker]]
+name = "step_check"
+source = "tool_result"
+pattern = '^STEP CHECK: (PASS|FAIL)\b'
+bad = ["FAIL"]
+
+[[marker]]
+name = "suite"
+source = "tool_result"
+pattern = '^SUITE (WORSE|BETTER|SAME|not comparable)\b'
+bad = ["WORSE"]
+
+[[marker]]
+name = "replan"
+source = "tool_input"
+pattern = 'Replanned: ([^"]{0,200})'
+bad = "*"
+
+[[marker]]
+name = "pr_opened"
+source = "tool_input"
+pattern = 'gh pr create'
