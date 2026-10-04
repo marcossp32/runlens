@@ -7,33 +7,93 @@ A **run** is one Claude Code session plus every subagent it spawned. runlens kno
 - which output lines are signals;
 - which files outside the transcript to keep.
 
+## Requirements
+
+| What | Why |
+|---|---|
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | Installs runlens and the Python it runs on. You don't need Python installed yourself: uv fetches Python 3.11+ if it is missing |
+| [Claude Code](https://code.claude.com/docs/en/setup) | runlens reads the transcripts Claude Code writes to `~/.claude/projects` |
+| `claude` on the PATH | Only for `runlens classify`, which runs `claude -p` with your Claude Code login |
+| git | Only if your config archives files with `{git_dir}` |
+
+Works on Windows, macOS and Linux.
+
 ## Install
 
+Do this on every machine where you run Claude Code.
+
+**1. Install the tool.**
+
 ```bash
-git clone git@github.com:marcossp32/runlens.git
-cd runlens
-pip install -e .
-python -m runlens install
+uv tool install git+https://github.com/marcossp32/runlens.git
 ```
 
-`install` does three things:
-- adds an async `SessionEnd` hook to `~/.claude/settings.json`, after backing the file up;
+This puts `runlens` in uv's tool directory, in its own environment. If `runlens` is not found afterwards, run `uv tool update-shell` and open a new terminal.
+
+**2. Hook it into Claude Code.**
+
+```bash
+runlens install
+```
+
+This does three things, and is safe to run again:
+- adds an async `SessionEnd` hook to `~/.claude/settings.json`, after backing the file up to `settings.json.runlens-backup-<time>`;
 - copies the `/runlens-retro` skill into `~/.claude/skills`;
 - writes `~/.runlens/config.toml` from [`config.example.toml`](runlens/config.example.toml) if there is none.
 
-It is idempotent. `python -m runlens uninstall` removes the hook.
+**3. Tell it which runs to record.**
 
-With the hook, every session that ends and matches `[select]` is archived and ingested in the background. Activity is logged to `~/.runlens/hooks.log`.
+Edit `[select]` in `~/.runlens/config.toml`. With the defaults, every session is recorded. For mstack's `/m-feature` flow, use the example config instead:
 
-Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default). The runlens archive is the copy that stays.
+```bash
+curl -o ~/.runlens/config.toml https://raw.githubusercontent.com/marcossp32/runlens/main/examples/m-feature.toml
+```
+
+**4. Load what you already have.**
+
+```bash
+runlens refresh
+runlens check
+```
+
+From then on, the hook archives and ingests each run in the background when its session ends. Activity is logged to `~/.runlens/hooks.log`.
+
+**5. Optional: keep Claude Code's own transcripts longer.**
+
+Claude Code deletes transcripts after `cleanupPeriodDays`, 30 by default. The runlens archive keeps its own copy, so this only matters if you want older sessions in `/resume` or want `runlens refresh` to reach further back. Set it in `~/.claude/settings.json`:
+
+```json
+{ "cleanupPeriodDays": 90 }
+```
+
+### Good to know
+
+- **Data stays on the machine.** The archive, the database and the report live in `~/.runlens/`, outside the repo. Each machine records only its own sessions. To bring another machine's history over, copy its `~/.runlens/archive/` and run `runlens ingest`.
+- **The hook calls the tool's own Python** by absolute path. `uv tool upgrade` keeps that path. After `uv tool uninstall` followed by a fresh install, run `runlens install` again.
+
+### Update
+
+```bash
+uv tool upgrade runlens
+runlens install     # refreshes the /runlens-retro skill
+```
+
+### Uninstall
+
+```bash
+runlens uninstall                  # removes the hook from ~/.claude/settings.json
+uv tool uninstall runlens
+rm -rf ~/.claude/skills/runlens-retro
+rm -rf ~/.runlens                  # only if you also want to delete the recorded history
+```
 
 ## Use
 
 ```bash
-python -m runlens refresh      # archive + ingest the runs selected in config.toml
-python -m runlens check        # compare the database with the raw transcripts
-python -m runlens report       # write ~/.runlens/report.html
-python -m runlens show <id>    # the timeline around an incident or a tool call
+runlens refresh      # archive + ingest the runs selected in config.toml
+runlens check        # compare the database with the raw transcripts
+runlens report       # write ~/.runlens/report.html
+runlens show <id>    # the timeline around an incident or a tool call
 ```
 
 | Command | What it does |
@@ -105,21 +165,19 @@ Only `config.toml` changes. See [`config.example.toml`](runlens/config.example.t
 - `[[evidence]]`: extra files to archive;
 - `[[marker]]`: which output lines are signals, and which values are bad.
 
-## Requirements
-
-- Python 3.11 or later.
-- Claude Code.
-- `claude` on the PATH, for `classify`.
-
-CI runs the tests on Windows and Linux.
-
-## Tests
+## Development
 
 ```bash
-python -m unittest discover -s tests -v
+git clone git@github.com:marcossp32/runlens.git
+cd runlens
+uv sync                                         # .venv with the locked dependencies
+uv run python -m unittest discover -s tests -v
+uv tool install -e .                            # a `runlens` command that runs this checkout
 ```
 
-They run against a synthetic run that covers every tricky part of the transcript format:
+Dependencies are locked in `uv.lock`. After changing them in `pyproject.toml`, run `uv lock`.
+
+CI runs the tests on Windows and Linux with Python 3.11 and 3.14. They use a synthetic run that covers every tricky part of the transcript format:
 - messages split across records;
 - forks with copied history;
 - skills with no attribution;

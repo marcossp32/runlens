@@ -141,7 +141,7 @@ def export_labels(path):
                     "llm_note", "llm_evidence", "human_category", "human_note", "context"])
         w.writerows(rows)
     print(f"{len(rows)} incidents -> {path}\nFill human_category (a taxonomy id, 'other:<name>', or the llm_category if it is right), "
-          f"then: python -m runlens labels import {path}")
+          f"then: runlens labels import {path}")
 
 
 def import_labels(path):

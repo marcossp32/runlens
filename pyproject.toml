@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runlens"
-version = "0.1.0"
+version = "0.1.1"
 description = "History of Claude Code runs in DuckDB, to find where a flow struggles"
 readme = "README.md"
 license = "MIT"

@@ -4,7 +4,7 @@ description: "Runs a retrospective over recorded Claude Code runs with runlens: 
 disable-model-invocation: true
 ---
 
-Every claim cites **incident ids** you read with `runlens show`. A failure mode needs **two or more incidents**; one is an anecdote. You propose skill edits; you apply none unless asked. All commands are `python -m runlens <command>`; `--help` lists them.
+Every claim cites **incident ids** you read with `runlens show`. A failure mode needs **two or more incidents**; one is an anecdote. You propose skill edits; you apply none unless asked. All commands are `runlens <command>`; `runlens --help` lists them.
 
 # Refresh
 
