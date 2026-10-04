@@ -8,7 +8,7 @@
   - CI runs through `uv sync --locked`.
 - Messages, the report and the `/runlens-retro` skill now say `runlens <command>` instead of `python -m runlens <command>`.
 - The README covers everything a new machine needs: requirements, install, config, update, uninstall and development.
-- CI moved to `actions/checkout@v7` and `astral-sh/setup-uv@v10`, which run on Node 24.
+- CI moved to `actions/checkout@v7` and `astral-sh/setup-uv@v10.2.0`, which run on Node 24.
 
 ## 0.1.0 - 2026-10-04
 
