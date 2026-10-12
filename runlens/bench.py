@@ -413,7 +413,8 @@ def compute(data, groups=(), resamples=RESAMPLES):
             ({"started": x["started"], "session": x["sid"][:8], "task": _clip(task_of(uid, kind, x["sid"])),
               "version": label_of[x["vkey"]], "repo": repo_of(x["sid"]),
               "cost": x["values"]["cost"], "seconds": x["values"]["seconds"],
-              "calls": x["c"]["calls"], "call_errors": x["c"]["call_errors"], "incidents": x["values"]["incidents"],
+              "calls": x["c"]["calls"], "call_errors": x["c"]["call_errors"], "idle": x["c"]["idle"],
+              "turns": x["c"]["turns"], "api_errors": x["c"]["api_errors"], "incidents": x["values"]["incidents"],
               "interventions": x["values"]["interventions"], "bad": x["values"]["bad_markers"]} for x in rs),
             key=lambda r: r["started"] or NEVER, reverse=True)
 
@@ -463,5 +464,92 @@ def load(con):
     }
 
 
+def diagnostics(con):
+    """The rest of what the database records, as small aggregates for the Diagnostics page."""
+    def rows(sql):
+        try:
+            cur = con.execute(sql)
+        except Exception:  # an older database may lack a table; the page then shows that part as empty
+            return []
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    return {
+        "runs": rows("""
+            SELECT r.session_id[:8] AS run, r.started, regexp_extract(r.cwd, '[^\\\\/]+$') AS repo, r.git_branch AS branch,
+                   r.cc_version, r.title, r.cost_usd AS cost, r.cost_estimated AS estimated, r.active_ms,
+                   r.human_prompts AS prompts, r.n_agents AS agents, r.lines_added, r.lines_removed,
+                   (SELECT count(*) FROM incidents i WHERE i.session_id = r.session_id) AS incidents,
+                   (SELECT count(*) FROM tool_calls t WHERE t.session_id = r.session_id) AS tool_calls,
+                   (SELECT count(*) FROM tool_calls t WHERE t.session_id = r.session_id AND t.is_error) AS tool_errors
+            FROM runs r ORDER BY r.started"""),
+        "incidents": rows("""SELECT type, coalesce(skill, '(none)') AS skill, count(*) AS incidents, sum(n) AS occurrences
+                             FROM incidents GROUP BY 1, 2"""),
+        "incident_roles": rows("""SELECT coalesce(role, '?') AS role, count(*) AS incidents FROM incidents
+                                  GROUP BY 1 ORDER BY 2 DESC LIMIT 12"""),
+        "tool_errors": rows("""SELECT coalesce(error_class, 'other') AS class, tool, count(*) AS errors
+                               FROM tool_calls WHERE is_error GROUP BY 1, 2"""),
+        "tools": rows("""SELECT tool, count(*) AS calls, count(*) FILTER (WHERE is_error) AS errors,
+                                median(duration_ms) AS median_ms, quantile_cont(duration_ms, 0.95) AS p95_ms,
+                                sum(duration_ms) AS total_ms
+                         FROM tool_calls GROUP BY 1 ORDER BY calls DESC"""),
+        "idle": rows("""SELECT coalesce(skill, '(none)') AS skill, count(*) FILTER (WHERE idle) AS idle_calls, count(*) AS calls
+                        FROM tool_calls GROUP BY 1 ORDER BY 2 DESC"""),
+        "models": rows("""SELECT model, count(*) AS calls, sum(cost_usd) AS cost, sum(output_tokens) AS output,
+                                 sum(thinking_tokens) AS thinking, sum(input_tokens + cache_write_5m + cache_write_1h) AS fresh_input,
+                                 sum(cache_read_tokens) AS cache_read
+                          FROM api_calls GROUP BY 1 ORDER BY cost DESC"""),
+        "efforts": rows("""SELECT coalesce(effort, '(default)') AS effort, count(*) AS calls, sum(cost_usd) AS cost
+                           FROM api_calls GROUP BY 1 ORDER BY cost DESC"""),
+        "agent_types": rows("""SELECT coalesce(agent_type, '?') AS agent_type, count(*) AS agents, sum(cost_usd) AS cost,
+                                      sum(tool_calls) AS tool_calls, sum(tool_errors) AS tool_errors, max(peak_context) AS peak_context,
+                                      sum(compactions) AS compactions,
+                                      count(*) FILTER (WHERE status NOT IN ('completed', 'async_launched', 'running')) AS not_completed
+                               FROM agents WHERE agent_id <> 'main' GROUP BY 1 ORDER BY cost DESC NULLS LAST"""),
+        "agent_status": rows("""SELECT coalesce(status, '(none)') AS status, count(*) AS agents FROM agents
+                                WHERE agent_id <> 'main' GROUP BY 1 ORDER BY 2 DESC"""),
+        "flow": rows("""WITH s AS (SELECT session_id, ts, coalesce(skill, '(none)') AS skill,
+                               lag(coalesce(skill, '(none)')) OVER (PARTITION BY session_id ORDER BY ts) AS prev
+                        FROM api_calls WHERE agent_id = 'main')
+                        SELECT prev AS source, skill AS target, count(*) AS transitions FROM s
+                        WHERE prev IS NOT NULL AND prev <> skill GROUP BY 1, 2"""),
+        "markers": rows("""SELECT marker, value, bad, coalesce(skill, '(none)') AS skill, count(*) AS n
+                           FROM markers GROUP BY ALL"""),
+        "events": rows("""SELECT kind, count(*) AS n FROM events WHERE kind NOT IN ('turn', 'human_prompt')
+                          GROUP BY 1 ORDER BY 2 DESC"""),
+        "labels": rows("SELECT category, count(*) AS n FROM labels GROUP BY 1 ORDER BY 2 DESC"),
+        # models, effort and thinking
+        "model_effort": rows("""SELECT model, coalesce(effort, '(default)') AS effort, count(*) AS calls, sum(cost_usd) AS cost,
+                                       avg(output_tokens) AS avg_output, avg(thinking_tokens) AS avg_thinking, avg(thinking_ms) AS avg_thinking_ms
+                                FROM api_calls GROUP BY 1, 2"""),
+        "model_skill": rows("""SELECT model, coalesce(skill, '(none)') AS skill, count(*) AS calls, sum(cost_usd) AS cost
+                               FROM api_calls GROUP BY 1, 2"""),
+        "model_day": rows("""SELECT strftime(ts, '%Y-%m-%d') AS day, model, sum(cost_usd) AS cost, count(*) AS calls
+                             FROM api_calls WHERE ts IS NOT NULL GROUP BY 1, 2 ORDER BY 1"""),
+        "api_errors": rows("""SELECT model, count(*) FILTER (WHERE api_error) AS errors, count(*) AS calls FROM api_calls GROUP BY 1"""),
+        # the subagents that runs generated
+        "agents_by_run": rows("""SELECT session_id[:8] AS run, coalesce(agent_type, '?') AS agent_type, count(*) AS n, sum(cost_usd) AS cost
+                                 FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2"""),
+        "agents_by_skill": rows("""SELECT s AS skill, coalesce(agent_type, '?') AS agent_type, count(*) AS n, sum(cost_usd) AS cost
+                                   FROM (SELECT agent_type, cost_usd, unnest(skills) AS s FROM agents WHERE agent_id <> 'main')
+                                   GROUP BY 1, 2"""),
+        "agent_shape": rows("""SELECT spawn_depth AS depth, coalesce(background, false) AS background, count(*) AS n
+                               FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2"""),
+        "agent_models": rows("""SELECT coalesce(agent_type, '?') AS agent_type, coalesce(model, '?') AS model, count(*) AS n, sum(cost_usd) AS cost
+                                FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2"""),
+        "agent_roles": rows("""SELECT coalesce(agent_type, '?') AS agent_type, coalesce(role, '?') AS role, count(*) AS agents,
+                                      sum(cost_usd) AS cost, avg(epoch(ended - started)) AS avg_seconds, avg(tool_calls) AS avg_tools,
+                                      max(peak_context) AS peak_context
+                               FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2 ORDER BY cost DESC NULLS LAST LIMIT 25"""),
+        "agent_time": rows("""SELECT coalesce(agent_type, '?') AS agent_type, avg(epoch(ended - started)) AS avg_s,
+                                     median(epoch(ended - started)) AS median_s, quantile_cont(epoch(ended - started), 0.95) AS p95_s
+                              FROM agents WHERE agent_id <> 'main' AND ended IS NOT NULL GROUP BY 1"""),
+        "agent_day": rows("""SELECT strftime(started, '%Y-%m-%d') AS day, count(*) AS n, sum(cost_usd) AS cost FROM agents
+                             WHERE agent_id <> 'main' AND started IS NOT NULL GROUP BY 1 ORDER BY 1"""),
+    }
+
+
 def build(con, groups=(), resamples=RESAMPLES):
-    return compute(load(con), groups, resamples)
+    model = compute(load(con), groups, resamples)
+    model["diag"] = diagnostics(con)
+    return model

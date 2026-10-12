@@ -209,7 +209,7 @@
   }
 
   // Tabs with arrow-key navigation. Each panel is built once and shown or hidden.
-  function tabbed(label, items, initial) {
+  function tabbed(label, items, initial, onSelect) {
     const buttons = items.map((it) => h("button", {
       type: "button", role: "tab", class: "tab", id: `tab-${it.id}`, "aria-controls": `panel-${it.id}`, "aria-selected": "false", tabindex: "-1",
     }, it.label));
@@ -223,6 +223,7 @@
         buttons[i].tabIndex = on ? 0 : -1;
         panels[i].hidden = !on;
       });
+      if (onSelect) onSelect(id);
     };
     buttons.forEach((b, i) => {
       b.addEventListener("click", () => select(items[i].id));
@@ -298,7 +299,7 @@
       svg("text", { class: "axis", x: x(100), y: T - 9, "text-anchor": "middle" }, "average"));
     rows.forEach((u, i) => {
       const y = T + ROW * i + ROW / 2;
-      const v = verdict(u.score, u.ci);
+      const v = u.partial ? { tone: "", word: "selected versions" } : verdict(u.score, u.ci);
       const t = v.tone || "neutral";
       chart.append(svg("text", { class: "rowlabel", x: LABEL - 10, y: y + 4, "text-anchor": "end" }, u.name));
       if (u.ci) chart.append(svg("line", { class: `range ${t}`, x1: x(u.ci[0]), x2: x(u.ci[1]), y1: y, y2: y }));
@@ -314,7 +315,7 @@
     const seen = new Set();
     const perDay = new Map();
     for (const u of list) {
-      for (const r of DATA.runs[u.id] || []) {
+      for (const r of u.runList || DATA.runs[u.id] || []) {
         if (!r.started || seen.has(r.session)) continue;
         seen.add(r.session);
         const day = r.started.slice(0, 10);
@@ -446,6 +447,10 @@
 
   // Blend two #rrggbb colours: t = 0 gives a, t = 1 gives b.
   function mixHex(a, b, t) {
+    // #fff and #ffffff are the same colour; the light theme writes its surface colour the short way.
+    const full = (c) => (c.length === 4 ? `#${c[1]}${c[1]}${c[2]}${c[2]}${c[3]}${c[3]}` : c);
+    a = full(a);
+    b = full(b);
     const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
     const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
     return "#" + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, "0")).join("");
@@ -627,7 +632,7 @@
 
   // Where the spend goes: each skill is a rectangle sized by its spend.
   function treemapChart(list) {
-    const items = list.map((u) => ({ name: u.name, value: (DATA.runs[u.id] || []).reduce((n, r) => n + (r.cost || 0), 0) }))
+    const items = list.map((u) => ({ name: u.name, value: u.spend }))
       .filter((it) => it.value > 0).sort((a, b) => b.value - a.value);
     if (!items.length) return empty("No spend recorded yet.");
     const total = items.reduce((n, it) => n + it.value, 0);
@@ -656,7 +661,7 @@
       value: runs.filter((r) => r.version === v.label).reduce((n, r) => n + (r.cost || 0), 0) })).filter((p) => p.value > 0);
   }
 
-  function donut(parts) {
+  function donut(parts, fmtv = fmt.usd, centre = centre) {
     const total = parts.reduce((n, p) => n + p.value, 0);
     if (!total) return empty("No spend recorded yet.");
     const W = 200, R = 74, C = 2 * Math.PI * R, mid = W / 2;
@@ -668,13 +673,13 @@
       const len = (p.value / total) * C;
       chart.append(svg("circle", { class: p.cls, cx: mid, cy: mid, r: R, fill: "none", "stroke-width": 22,
         "stroke-dasharray": `${len.toFixed(2)} ${(C - len).toFixed(2)}`, "stroke-dashoffset": (-acc).toFixed(2),
-        transform: `rotate(-90 ${mid} ${mid})` }, svg("title", {}, `${p.label}: ${fmt.usd(p.value)} (${fmt.pct(p.value / total)})`)));
+        transform: `rotate(-90 ${mid} ${mid})` }, svg("title", {}, `${p.label}: ${fmtv(p.value)} (${fmt.pct(p.value / total)})`)));
       acc += len;
     }
-    chart.append(svg("text", { class: "hole-val", x: mid, y: mid + 4, "text-anchor": "middle" }, fmt.usd(total)),
-      svg("text", { class: "hole-lab", x: mid, y: mid + 22, "text-anchor": "middle" }, "total spend"));
+    chart.append(svg("text", { class: "hole-val", x: mid, y: mid + 4, "text-anchor": "middle" }, fmtv(total)),
+      svg("text", { class: "hole-lab", x: mid, y: mid + 22, "text-anchor": "middle" }, centre));
     return h("div", { class: "donutbox" }, chart,
-      legendOf(parts.map((p) => ({ cls: p.cls, label: `${p.label} · ${fmt.usd(p.value)} · ${fmt.pct(p.value / total)}` }))));
+      legendOf(parts.map((p) => ({ cls: p.cls, label: `${p.label} · ${fmtv(p.value)} · ${fmt.pct(p.value / total)}` }))));
   }
 
   // Cost against time, one dot per run, coloured by version.
@@ -729,51 +734,213 @@
 
   // ---- versions of the skills ---------------------------------------------------------
 
-  // The versions of a unit whose skill text was recorded, in the order they first appeared.
-  const recordedOf = (u) => (DATA.versions[u.id] || []).filter((v) => v.recorded);
+  // The versions of the skills, and what the Skills tab shows. Versions whose text was not recorded are listed, not counted.
+
+  // What the Skills tab shows: PICK holds the skills that are on, and VERS holds, per skill, the version keys that are on.
+  // Both start with everything on.
+  const PICK = new Set(DATA.units.filter((u) => u.kind === "skill").map((u) => u.id));
+  const VERS = new Map();
+  function shownKeys(u) {
+    if (!VERS.has(u.id)) VERS.set(u.id, new Set((DATA.versions[u.id] || []).map((v) => v.key)));
+    return VERS.get(u.id);
+  }
+
+  // The choice survives a reload. It is stored in the browser, per page location, and ignored if it no longer fits the data.
+  let SKILLS_TAB = "s-overview";
+  let SPLIT = false;
+  const SELECTION_KEY = "runlens-selection";
+  function saveSelection() {
+    try {
+      localStorage.setItem(SELECTION_KEY, JSON.stringify({
+        skills: [...PICK],
+        split: SPLIT,
+        versions: Object.fromEntries([...VERS].map(([id, keys]) => [id, [...keys]])),
+      }));
+    } catch (e) {
+      /* storage can be blocked; the choice then lasts for this page only */
+    }
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(SELECTION_KEY) || "null");
+    if (saved && Array.isArray(saved.skills)) {
+      SPLIT = Boolean(saved.split);
+      PICK.clear();
+      saved.skills.filter((id) => UNITS.has(id)).forEach((id) => PICK.add(id));
+      for (const [id, keys] of Object.entries(saved.versions || {})) {
+        const valid = new Set((DATA.versions[id] || []).map((v) => v.key));
+        if (valid.size) VERS.set(id, new Set(keys.filter((k) => valid.has(k))));
+      }
+    }
+  } catch (e) {
+    /* nothing usable saved */
+  }
+
+  // The metrics of one run, as the score uses them.
+  function runMetrics(r, kind) {
+    return {
+      cost: r.cost,
+      seconds: r.seconds,
+      error_rate: r.calls ? r.call_errors / r.calls : null,
+      incidents: r.incidents,
+      interventions: kind === "agent" ? null : r.interventions,
+      idle_rate: r.calls ? r.idle / r.calls : null,
+      api_error_rate: r.turns ? r.api_errors / r.turns : null,
+      bad_markers: r.bad,
+    };
+  }
+
+  // The mean of each measure over a set of runs.
+  function kpiOf(runs, kind) {
+    const out = {};
+    for (const m of METRICS) {
+      const xs = runs.map((r) => runMetrics(r, kind)[m.key]).filter((x) => x != null);
+      out[m.key] = xs.length ? xs.reduce((p, q) => p + q, 0) / xs.length : null;
+    }
+    return out;
+  }
+
+  // The score of a set of runs, worked out the same way as the model's score (without the range).
+  function pointScore(runs, kind) {
+    const ref = DATA.reference[kind] || {};
+    const M = DATA.method;
+    const cap = Math.log(M.max_ratio);
+    const vals = runs.map((r) => runMetrics(r, kind));
+    let acc = 0, wsum = 0;
+    const metrics = {};
+    for (const m of METRICS) {
+      const avg = ref[m.key];
+      if (!avg || !m.kinds.includes(kind)) continue;
+      const xs = vals.map((v) => v[m.key]).filter((x) => x != null);
+      if (!xs.length) continue;
+      const n = xs.length, mean = xs.reduce((p, q) => p + q, 0) / n;
+      const counted = (n * mean + M.shrink * avg) / (n + M.shrink);
+      const floor = M.floor * avg;
+      const lr = Math.min(cap, Math.max(-cap, Math.log((avg + floor) / (counted + floor))));
+      metrics[m.key] = { value: mean, counted, n, ref: avg, ratio: Math.exp(lr), weight: m.weight };
+      acc += m.weight * lr;
+      wsum += m.weight;
+    }
+    return wsum ? { score: 100 * Math.exp(acc / wsum), metrics } : null;
+  }
+
+  // A skill as the Skills tab shows it. With every version on, this is the model's own figures. With some versions
+  // left out, the score, measures, spend and runs are those of the versions still on, and there is no range.
+  function viewOf(u) {
+    const all = DATA.versions[u.id] || [];
+    const keys = shownKeys(u);
+    const chosen = all.filter((v) => keys.has(v.key));
+    const full = chosen.length === all.length;
+    const keyOfLabel = new Map(all.map((v) => [v.label, v.key]));
+    const runList = (DATA.runs[u.id] || []).filter((r) => keys.has(keyOfLabel.get(r.version)));
+    let score = u.score, ci = u.ci;
+    if (!full) {
+      const p = pointScore(runList, u.kind);
+      score = p ? p.score : null;
+      ci = null;
+    }
+    let delta = u.delta, overlap = u.overlap;
+    if (!full) {
+      delta = null;
+      overlap = null;
+      if (chosen.length >= 2) {
+        const a = chosen[chosen.length - 1], b = chosen[chosen.length - 2];
+        if (a.score != null && b.score != null) {
+          delta = a.score - b.score;
+          overlap = overlaps(a.ci, b.ci);
+        }
+      }
+    }
+    const started = runList.map((r) => r.started).filter(Boolean).sort();
+    return {
+      ...u, score, ci, partial: !full,
+      kpi: full ? u.kpi : kpiOf(runList, u.kind),
+      runs: runList.length, runList,
+      spend: runList.reduce((n, r) => n + (r.cost || 0), 0),
+      low_sample: runList.length < DATA.method.min_runs,
+      last_seen: started.length ? started[started.length - 1] : null,
+      current: chosen.length ? chosen[chosen.length - 1].label : u.current,
+      chosen,
+      recordedCount: chosen.filter((v) => v.recorded).length,
+      delta, overlap,
+    };
+  }
+
+  // One version of a skill as its own item, so every chart treats the versions as separate entries.
+  function versionView(u, v) {
+    const runList = (DATA.runs[u.id] || []).filter((r) => r.version === v.label);
+    const started = runList.map((r) => r.started).filter(Boolean).sort();
+    return {
+      ...u, name: `${u.name} ${nameOf(v)}`, score: v.score, ci: v.ci, partial: false,
+      kpi: kpiOf(runList, u.kind), runs: runList.length, runList,
+      spend: runList.reduce((n, r) => n + (r.cost || 0), 0), low_sample: v.low_sample,
+      last_seen: started.length ? started[started.length - 1] : null,
+      current: v.label, chosen: [v], recordedCount: v.recorded ? 1 : 0, delta: v.delta, overlap: v.overlap,
+    };
+  }
+
+  // The items every chart on the Skills tab draws: a skill each, or each of its versions when split.
+  function viewsFor(list) {
+    return list.filter((u) => PICK.has(u.id)).flatMap((u) => {
+      const base = viewOf(u);
+      return SPLIT ? base.chosen.map((v) => versionView(u, v)) : [base];
+    });
+  }
 
   const versionsCol = {
-    key: "versions", label: "Versions", num: true, value: (u) => recordedOf(u).length,
-    cell: (u) => (recordedOf(u).length ? `${recordedOf(u).length} · now ${u.current}` : h("span", { class: "muted" }, "not recorded")),
+    key: "versions", label: "Versions", num: true, value: (u) => u.recordedCount,
+    cell: (u) => (u.recordedCount ? `${u.recordedCount} · now ${u.current}` : h("span", { class: "muted" }, "not recorded")),
   };
 
-  // One lane per skill. Each version is a bar across the time it was in use, coloured by its change against the one before.
-  function versionLanes(list) {
-    const lanes = list.map((u) => ({ u, vs: recordedOf(u) })).filter((x) => x.vs.length);
-    if (!lanes.length) return empty("No skill text was recorded, so there are no versions to show yet.");
-    const starts = lanes.flatMap((x) => x.vs.map((v) => Date.parse(v.first_seen)));
-    const ends = lanes.flatMap((x) => x.vs.map((v) => Date.parse(v.last_seen || v.first_seen)));
-    const a = Math.min(...starts) - DAY * 0.5, b = Math.max(...ends) + DAY;
-    const W = 640, L = 130, R = 16, ROW = 46, T = 6, B = 24;
-    const H = T + ROW * lanes.length + B;
-    const x = (t) => L + ((t - a) / (b - a)) * (W - L - R);
-    const total = lanes.reduce((n, ln) => n + ln.vs.length, 0);
-    const chart = svg("svg", { class: "chart lanes", viewBox: `0 0 ${W} ${H}`, role: "img",
-      "aria-label": `${total} recorded versions across ${lanes.length} skills` });
-    for (const t of dayTicks(a, b, 6)) {
-      chart.append(svg("line", { class: "grid", x1: x(t), x2: x(t), y1: T, y2: H - B }),
-        svg("text", { class: "axis", x: x(t), y: H - 6, "text-anchor": "middle" }, dayName(t)));
+  // Each shown skill is a line through its shown versions: across, the version number; up, the score. Each dot has its range.
+  function versionChart(views) {
+    const lines = views.map((u, i) => ({
+      u, cls: `s${i % 6}`,
+      pts: u.chosen.filter((v) => v.recorded && v.score != null).map((v) => ({ v, n: Number(v.label.slice(1)) })).sort((p, q) => p.n - q.n),
+    })).filter((ln) => ln.pts.length);
+    if (!lines.length) return empty("Select at least one version to draw the lines.");
+    const W = 640, H = 270, L = 40, R = 130, T = 14, B = 30;
+    const maxN = Math.max(...lines.flatMap((ln) => ln.pts.map((p) => p.n)));
+    const lows = lines.flatMap((ln) => ln.pts.map((p) => (p.v.ci ? p.v.ci[0] : p.v.score))).concat(100);
+    const highs = lines.flatMap((ln) => ln.pts.map((p) => (p.v.ci ? p.v.ci[1] : p.v.score))).concat(100);
+    const lo = Math.floor((Math.min(...lows) - 5) / 25) * 25, hi = Math.ceil((Math.max(...highs) + 5) / 25) * 25;
+    const x = (n) => L + ((n - 1) / Math.max(1, maxN - 1)) * (W - L - R);
+    const y = (sc) => T + (H - T - B) * (1 - (sc - lo) / (hi - lo));
+    const chart = svg("svg", { class: "chart vchart", viewBox: `0 0 ${W} ${H}`, role: "img",
+      "aria-label": `Score by version for ${lines.length} skills, versions 1 to ${maxN}` });
+    for (const t of ticks(lo, hi, 4)) {
+      chart.append(svg("line", { class: t === 100 ? "ref" : "grid", x1: L, x2: W - R, y1: y(t), y2: y(t) }),
+        svg("text", { class: "axis", x: L - 6, y: y(t) + 4, "text-anchor": "end" }, t));
     }
-    lanes.forEach((ln, i) => {
-      const y0 = T + ROW * i;
-      chart.append(svg("a", { href: hrefUnit(ln.u.id) },
-        svg("text", { class: "lanelabel", x: L - 12, y: y0 + ROW / 2 + 5, "text-anchor": "end" }, ln.u.name)));
-      ln.vs.forEach((v) => {
-        const c = change(v);
-        const x0 = x(Date.parse(v.first_seen));
-        const x1 = Math.max(x0 + 8, x(Date.parse(v.last_seen || v.first_seen)) + 6);
-        chart.append(svg("text", { class: "vlab", x: x0.toFixed(1), y: (y0 + 14).toFixed(1) }, `${nameOf(v)} · ${fmt.score(v.score)}`));
-        chart.append(svg("rect", { class: `bar ${c.tone || "neutral"}`, x: x0.toFixed(1), y: (y0 + 20).toFixed(1),
-          width: (x1 - x0).toFixed(1), height: 18, rx: 4 },
-          svg("title", {}, `${ln.u.name} ${nameOf(v)}: ${fmt.runs(v.runs)}, ${fmt.day(v.first_seen)} – ${fmt.day(v.last_seen)}, score ${fmt.score(v.score)}${c.text ? `, ${c.text}` : ""}`)));
+    for (let n = 1; n <= maxN; n += 1) {
+      chart.append(svg("text", { class: "axis", x: x(n), y: H - 8, "text-anchor": "middle" }, `v${n}`));
+    }
+    lines.forEach((ln) => {
+      if (ln.pts.length > 1) {
+        chart.append(svg("polyline", { class: `vline ${ln.cls}`,
+          points: ln.pts.map((q) => `${x(q.n).toFixed(1)},${y(q.v.score).toFixed(1)}`).join(" ") }));
+      }
+      ln.pts.forEach((q) => {
+        const cx = x(q.n).toFixed(1);
+        if (q.v.ci) chart.append(svg("line", { class: `vrange ${ln.cls}`, x1: cx, x2: cx, y1: y(q.v.ci[0]).toFixed(1), y2: y(q.v.ci[1]).toFixed(1) }));
+        chart.append(svg("circle", { class: `vdot ${ln.cls}`, cx, cy: y(q.v.score).toFixed(1), r: 4.5 },
+          svg("title", {}, `${ln.u.name} ${q.v.label}: ${fmt.score(q.v.score)}${q.v.ci ? `, range ${fmt.interval(q.v.ci)}` : ""}, ${fmt.runs(q.v.runs)}`)));
       });
     });
+    // The skill names at the ends of the lines are pushed apart when they would overlap.
+    const ends = lines.map((ln) => {
+      const end = ln.pts[ln.pts.length - 1];
+      return { ln, x: x(end.n) + 9, y: y(end.v.score) + 4 };
+    }).sort((p, q) => p.y - q.y);
+    ends.forEach((e, i) => {
+      if (i > 0 && e.y - ends[i - 1].y < 13) e.y = ends[i - 1].y + 13;
+    });
+    ends.forEach((e) => chart.append(svg("text", { class: `vend ${e.ln.cls}`, x: e.x.toFixed(1), y: e.y.toFixed(1) }, e.ln.u.name)));
     return chart;
   }
 
-  // Every recorded version in the list, one row each.
-  function versionTable(list) {
-    const rows = list.flatMap((u) => recordedOf(u).map((v) => ({
+  // Every recorded version that is on, one row each.
+  function versionTable(views) {
+    const rows = views.flatMap((u) => u.chosen.filter((v) => v.recorded).map((v) => ({
       id: u.id, name: u.name, label: v.label, hash: v.parts.map((p) => p.hash).join(" + "),
       first: v.first_seen, last: v.last_seen, runs: v.runs, score: v.score, ci: v.ci, change: change(v),
     })));
@@ -788,6 +955,78 @@
         cell: (r) => (r.change.text ? h("span", { class: `change ${r.change.tone}` }, `${r.change.arrow} ${r.change.text}`) : h("span", { class: "muted" }, "first version")) },
     ];
     return table({ caption: "All recorded versions", cols, rows, sort: { key: "name", dir: 1 } }).el;
+  }
+
+  // The checkboxes: a skill on or off, and each of its versions on or off. The buttons set many at once.
+  function selectorCard(skills, onChange) {
+    const rows = skills.map((u) => {
+      const box = h("input", { type: "checkbox" });
+      const vboxes = (DATA.versions[u.id] || []).map((v) => {
+        const b = h("input", { type: "checkbox" });
+        b.addEventListener("change", () => {
+          if (b.checked) shownKeys(u).add(v.key);
+          else shownKeys(u).delete(v.key);
+          touch();
+        });
+        const label = h("label", { class: "vchip" }, b, ` ${nameOf(v)}${v.recorded ? ` · ${fmt.score(v.score)}` : " · no text"}`);
+        return { v, b, label };
+      });
+      box.addEventListener("change", () => {
+        if (box.checked) PICK.add(u.id);
+        else PICK.delete(u.id);
+        touch();
+      });
+      return { u, box, vboxes, row: h("div", { class: "srow" }, h("label", { class: "sname" }, box, ` ${u.name}`),
+        h("div", { class: "vchips" }, vboxes.map((x) => x.label))) };
+    });
+    const count = h("span", { class: "selcount", "aria-live": "polite" });
+    function sync() {
+      for (const r of rows) {
+        r.box.checked = PICK.has(r.u.id);
+        for (const x of r.vboxes) {
+          x.b.checked = shownKeys(r.u).has(x.v.key);
+          x.b.disabled = !PICK.has(r.u.id);
+        }
+      }
+      const recorded = skills.reduce((n, u) => n + (DATA.versions[u.id] || []).filter((v) => v.recorded).length, 0);
+      const shown = skills.filter((u) => PICK.has(u.id))
+        .reduce((n, u) => n + (DATA.versions[u.id] || []).filter((v) => v.recorded && shownKeys(u).has(v.key)).length, 0);
+      count.textContent = `${PICK.size} of ${skills.length} skills · ${shown} of ${recorded} recorded versions shown`;
+    }
+    function touch() {
+      saveSelection();
+      sync();
+      onChange();
+    }
+    const button = (text, fn) => {
+      const b = h("button", { type: "button", class: "seg" }, text);
+      b.addEventListener("click", () => {
+        fn();
+        touch();
+      });
+      return b;
+    };
+    const split = h("input", { type: "checkbox" });
+    split.checked = SPLIT;
+    split.addEventListener("change", () => {
+      SPLIT = split.checked;
+      touch();
+    });
+    const controls = h("div", { class: "selbar" },
+      h("label", { class: "check splitbox" }, split, " Show each version as its own item in every chart"),
+      button("All skills", () => skills.forEach((u) => PICK.add(u.id))),
+      button("No skills", () => PICK.clear()),
+      button("All versions", () => skills.forEach((u) => (DATA.versions[u.id] || []).forEach((v) => shownKeys(u).add(v.key)))),
+      button("Latest versions only", () => skills.forEach((u) => {
+        const vs = DATA.versions[u.id] || [];
+        shownKeys(u).clear();
+        if (vs.length) shownKeys(u).add(vs[vs.length - 1].key);
+      })));
+    sync();
+    return h("details", { class: "card selector" },
+      h("summary", { class: "cardtitle" }, "Show in the charts · ", count),
+      controls, rows.map((r) => r.row),
+      note("Every chart and table on this page follows this selection. A skill with some versions left out is scored from the versions still on: a point score, with no range."));
   }
 
   // ---- the skills page ------------------------------------------------------------
@@ -812,37 +1051,51 @@
       ]));
   }
 
-  function skillsPanel(list) {
-    if (!list.length) return empty("No skill has run yet.");
+  function skillsView(list) {
+    const bases = list.filter((u) => PICK.has(u.id)).map(viewOf);
+    const shown = viewsFor(list);
+    if (!shown.length) return empty("No skill is on. Tick a skill above to show it.");
     const cols = [nameCol("Skill"), scoreCol, changeCol, versionsCol, runsCol, costCol, timeCol, errCol, lastCol];
-    const better = list.filter((u) => verdict(u.score, u.ci).tone === "good").length;
-    const worse = list.filter((u) => verdict(u.score, u.ci).tone === "bad").length;
-    const spend = list.reduce((n, u) => n + (DATA.runs[u.id] || []).reduce((m, r) => m + (r.cost || 0), 0), 0);
-    const versions = list.flatMap((u) => recordedOf(u));
-    const unrecorded = list.filter((u) => (DATA.versions[u.id] || []).length && !recordedOf(u).length).map((u) => u.name);
+    const better = shown.filter((u) => verdict(u.score, u.ci).tone === "good").length;
+    const worse = shown.filter((u) => verdict(u.score, u.ci).tone === "bad").length;
+    const versions = bases.reduce((n, u) => n + u.recordedCount, 0);
+    const sessions = new Set(shown.flatMap((u) => u.runList.map((r) => r.session))).size;
+    const spend = shown.reduce((n, u) => n + u.spend, 0);
+    const partial = shown.some((u) => u.partial);
+    const unrecorded = shown.filter((u) => (DATA.versions[u.id] || []).length && !u.recordedCount).map((u) => u.name);
     return h("div", {},
       h("div", { class: "kpis" },
-        kpi("Skills", fmt.num(list.length, 0), `${better} better than average`),
-        kpi("Versions", fmt.num(versions.length, 0), `recorded, across ${list.filter((u) => recordedOf(u).length).length} skills`),
-        kpi("Runs", fmt.num(DATA.window.runs, 0), DATA.window.first ? `${fmt.day(DATA.window.first)} – ${fmt.day(DATA.window.last)}` : ""),
-        kpi("Model spend", fmt.usd(spend), "across the skills"),
-        kpi("Worse than average", fmt.num(worse, 0), `${list.length - better - worse} not clear yet`)),
-      h("div", { class: "charts" },
-        card("Score range by skill", rangePlot(list)),
-        card("Version history", versionLanes(list),
-          legendOf([{ cls: "good", label: "better than the version before" }, { cls: "bad", label: "worse" },
-            { cls: "neutral", label: "no clear change" }]),
-          note(`${unrecorded.length ? `No skill text was recorded for ${unrecorded.join(", ")}, so their versions are unknown. ` : ""}A version is one distinct skill text. A skill that only ever ran inside a subagent has no version of its own yet.`)),
-        h("div", { class: "grid2" },
-          card("Score against cost per run", bubbleChart(list),
-            note("Each bubble is a skill. Further right costs more per run, higher is a better score, bigger means more runs.")),
-          card("Where the spend goes", treemapChart(list))),
-        card("Measures by skill", heatmap(list),
-          note("The latest version against the average run. Green is better, red is worse.")),
-        card("Runs per day", activityBars(list))),
-      table({ caption: "Skills", cols, rows: list, sort: { key: "runs", dir: -1 } }).el,
-      note("Latest change compares the newest version with the one before it. “Unclear” means their likely ranges overlap."),
-      h("details", { class: "more" }, h("summary", {}, `All ${versions.length} recorded versions`), versionTable(list)));
+        kpi(SPLIT ? "Items" : "Skills", fmt.num(shown.length, 0), `${SPLIT ? `${bases.length} skills split into versions` : `of ${list.length}`} · ${better} better than average`),
+        kpi("Versions", fmt.num(versions, 0), "recorded, shown"),
+        kpi("Runs", fmt.num(sessions, 0), DATA.window.first ? `${fmt.day(DATA.window.first)} – ${fmt.day(DATA.window.last)}` : ""),
+        kpi("Model spend", fmt.usd(spend), "across the skills shown"),
+        kpi("Worse than average", fmt.num(worse, 0), `${shown.length - better - worse} not clear yet`)),
+      tabbed("Charts", [
+        { id: "s-overview", label: "Overview", build: () => h("div", { class: "charts" },
+          h("div", { class: "grid2" },
+            card("Score range", rangePlot(shown),
+              partial ? note("Skills with versions left out show a point score, with no range.") : null),
+            card("Score by version", versionChart(bases),
+              note("Each line is a skill: across, its versions in order; up, each version's score and range."))),
+          table({ caption: "Skills", cols, rows: shown, sort: { key: "runs", dir: -1 } }).el,
+          note(`Latest change compares the newest version shown with the one before it. “Unclear” means their likely ranges overlap.${unrecorded.length ? ` No skill text was recorded for ${unrecorded.join(", ")}, so their versions are unknown.` : ""} A skill that only ever ran inside a subagent has no version of its own yet.`),
+          h("details", { class: "more" }, h("summary", {}, `${versions} recorded versions shown`), versionTable(bases))) },
+        { id: "s-cost", label: "Cost", build: () => h("div", { class: "charts" },
+          card("Score against cost per run", bubbleChart(shown),
+            note("Each bubble is one item. Further right costs more per run, higher is a better score, bigger means more runs.")),
+          h("div", { class: "grid2" }, card("Where the spend goes", treemapChart(shown)), card("Runs per day", activityBars(shown)))) },
+        { id: "s-measures", label: "Measures", build: () => card("Measures", heatmap(shown),
+          note("The latest version shown, against the average run. Green is better, red is worse.")) },
+      ], SKILLS_TAB, (id) => { SKILLS_TAB = id; }));
+  }
+
+  function skillsPanel(list) {
+    if (!list.length) return empty("No skill has run yet.");
+    const holder = h("div", {});
+    const draw = () => holder.replaceChildren(skillsView(list));
+    const picker = selectorCard(list, draw);
+    draw();
+    return h("div", {}, picker, holder);
   }
 
   function rolesPanel(list) {
@@ -1193,6 +1446,33 @@
 
   // ---- how it works ---------------------------------------------------------------
 
+  // The score walked through on one of your own skills, so every number can be followed.
+  function workedExample() {
+    const unit = DATA.units.filter((u) => u.kind === "skill" && u.score != null).sort((a, b) => b.runs - a.runs)
+      .find((u) => (DATA.versions[u.id] || []).some((v) => v.label === u.current && Object.keys(v.metrics || {}).length));
+    if (!unit) return empty("There is no scored skill yet, so there is nothing to walk through.");
+    const v = DATA.versions[unit.id].find((x) => x.label === unit.current);
+    const ms = METRICS.filter((m) => v.metrics[m.key]);
+    const wsum = ms.reduce((n, m) => n + v.metrics[m.key].weight, 0);
+    const acc = ms.reduce((n, m) => n + v.metrics[m.key].weight * Math.log(v.metrics[m.key].ratio), 0);
+    const rows = ms.map((m) => {
+      const d = v.metrics[m.key];
+      return [metricLabel(m), fmt.metric(m, d.value), fmt.metric(m, d.ref), fmt.metric(m, d.counted), `×${d.ratio.toFixed(2)}`,
+        d.weight, fmt.num(d.weight * Math.log(d.ratio), 3)];
+    });
+    return h("div", { class: "prose" },
+      h("p", {}, `This is ${unit.name}, version ${nameOf(v)}, which has ${fmt.runs(v.runs)}. Each row is one measure. The ratio is the average divided by the value that counts, so a ratio above 1 means better than average.`),
+      plain("Worked example",
+        [{ label: "Measure" }, { label: "Its value", num: true }, { label: "Average run", num: true }, { label: "Value that counts", num: true },
+          { label: "Ratio", num: true }, { label: "Weight", num: true }, { label: "Weight × ln(ratio)", num: true }], rows),
+      h("p", {}, "“Value that counts” is the value pulled toward the average when there are few runs. Ratios are capped at ×2 and ×0.5 before they are combined."),
+      h("ol", {},
+        h("li", {}, `Add the last column: ${fmt.num(acc, 3)}.`),
+        h("li", {}, `Divide by the total weight, ${wsum}: ${fmt.num(acc / wsum, 3)}.`),
+        h("li", {}, `Take 100 × e to that power: ${fmt.num(100 * Math.exp(acc / wsum), 1)}.`)),
+      h("p", {}, `So the score is ${fmt.score(v.score)}`, v.ci ? `, with a likely range of ${fmt.interval(v.ci)}.` : "."));
+  }
+
   function methodView() {
     const m = DATA.method;
     const formula = [
@@ -1201,22 +1481,19 @@
       "countedᵢ = (nᵢ · meanᵢ + K · avgᵢ) / (nᵢ + K)",
       `f = ${m.floor} × avgᵢ      K = ${m.shrink}`,
     ].join("\n");
-    const qa = (q, a) => h("div", { class: "qa-item" }, h("h2", {}, q), h("p", {}, a));
-    return h("article", { class: "page" },
-      h("header", { class: "pagehead" },
-        h("h1", { tabindex: "-1" }, "How it works"),
-        h("p", { class: "lede" }, "Every number comes from your recorded runs. Nothing is labelled by hand, and nothing leaves this machine.")),
-      h("div", { class: "qa" },
-        qa("What does 100 mean?",
-          "The average run of the same kind (skill, agent role or group) in your history. Above 100 means the unit did better than that average on the measures below; below 100, worse."),
-        qa("What is the likely range?",
-          `The range comes from re-sampling its runs ${m.resamples} times. If the whole range is above 100 the verdict is "better"; if it is all below 100, "worse"; otherwise "not clear yet". Two versions are only called different when their ranges do not overlap.`),
-        qa("What does it measure?",
-          "Cost, time, tool errors, problems (error streaks, repeated calls, interrupts), your messages while the skill ran, waiting calls, API errors, and the checks your config marks as failed. Cost counts three times; time, errors, problems and messages twice; the rest once."),
-        qa("What does it not measure?",
-          "Whether a run produced the right result. Before acting on a drop, read the traces with runlens show.")),
-      h("details", { class: "more" },
-        h("summary", {}, "Exact formula and settings"),
+    const li = (...kids) => h("li", {}, ...kids);
+
+    const score = h("div", { class: "prose" },
+      h("p", {}, "Every number comes from your recorded runs. Nothing is labelled by hand, and nothing leaves this machine."),
+      h("ol", {},
+        li(h("strong", {}, "Group the work. "), "Each skill, agent role and group you define is a unit. Its runs are the sessions where it did any work."),
+        li(h("strong", {}, "Measure each run. "), "Eight measures per run: cost, time, tool errors, problems, your messages, waiting calls, API errors and failed checks."),
+        li(h("strong", {}, "Compare with the average. "), "For every measure, the unit's mean is compared with the average run of the same kind. The result is a ratio: above 1 is better."),
+        li(h("strong", {}, "Trust small samples less. "), `A unit with few runs is pulled toward the average, as if it had ${m.shrink} extra average runs. A ratio never counts for more than ×${m.max_ratio} either way.`),
+        li(h("strong", {}, "Combine. "), "The ratios are combined with weights (cost counts most) into one number. 100 is the average run; above 100 is better.")),
+      h("h2", {}, "The likely range"),
+      h("p", {}, `The runs are re-sampled ${m.resamples} times and the score is worked out each time. The range is the middle 90% of those scores. If the whole range is above 100 the verdict is “better”, if it is all below 100 “worse”, otherwise “not clear yet”. Two scores are only called different when their ranges do not overlap, and a unit with fewer than ${m.min_runs} runs is marked “few runs”.`),
+      h("details", { class: "more" }, h("summary", {}, "Exact formula and settings"),
         h("pre", { class: "formula" }, formula),
         plain("Settings", [{ label: "Setting" }, { label: "Value", num: true }, { label: "Meaning" }], [
           ["Shrink K", m.shrink, "pseudo-runs at the average that every unit starts with"],
@@ -1225,11 +1502,529 @@
           ["Turn cap", `${m.turn_cap} s`, "longest time credited to one gap between two model turns"],
           ["Resamples", m.resamples, "re-samples behind each range"],
           ["Few-runs flag", `under ${m.min_runs} runs`, "scores are still shown, but marked"],
-        ])),
-      h("details", { class: "more" },
-        h("summary", {}, "How runs are assigned to versions and groups"),
-        h("p", {}, "A run belongs to the version of each skill it loaded, identified by a hash of the skill text. A run that did not load a skill uses the version that was current when it started. Versions are numbered by first appearance. A group's runs are the union of its members' work, each piece counted once, and its version changes when any member's text changes."),
-        h("p", {}, "An agent role is a subagent type with its folded description. Roles have no versions, and your messages are not attributed to them.")));
+        ])));
+
+    const measures = h("div", {},
+      plain("Measures", [{ label: "Measure" }, { label: "Weight", num: true }, { label: "What it is" }, { label: "Scored for" }],
+        m.metrics.map((x) => [metricLabel(x), x.weight, x.what, x.kinds.map((k) => KIND[k]).join(", ")])),
+      note("Every measure is a cost, a time or a count of failures, so lower is better. “Your messages” is only counted for skills and groups, since subagents never receive messages."));
+
+    const pages = h("div", { class: "prose" },
+      h("dl", { class: "defs" },
+        h("dt", {}, "Skills"), h("dd", {}, "Every skill compared on one screen, with a panel to choose which skills and versions the charts show, and a setting to draw each version as its own item. Agent roles and groups are on the other tabs."),
+        h("dt", {}, "A skill, role or group"), h("dd", {}, "Open one from any table. A gauge, a radar profile against the average, and trends. Tabs for its versions and what changed, what drives its score, and its runs."),
+        h("dt", {}, "Compare"), h("dd", {}, "Any two skills, roles or groups, and any of their versions, side by side."),
+        h("dt", {}, "Diagnostics"), h("dd", {}, "Everything else that was recorded: each run, problems and tool errors, tools, models and effort, subagents, how skills hand over, and your config's checks."),
+        h("dt", {}, "How it works"), h("dd", {}, "This page.")));
+
+    const limits = h("div", { class: "prose" },
+      h("ul", {},
+        li(h("strong", {}, "It does not judge correctness. "), "The score says what a unit cost, how long it worked, and how often it failed, idled or needed you. Before acting on a drop, read the traces with ", h("code", {}, "runlens show"), "."),
+        li(h("strong", {}, "A version is one skill text. "), "Versions are numbered by first use. A skill whose text Claude Code did not record shows as unrecorded, and is not counted as a version."),
+        li(h("strong", {}, "Leaving versions out re-scores a skill. "), "The score is then worked out from the versions still on, as a single number with no range."),
+        li(h("strong", {}, "Time is approximate. "), `It is the gap from each model turn to the same agent's next turn, capped at ${m.turn_cap} seconds, so it includes tool time and waiting.`),
+        li(h("strong", {}, "Cost comes from Claude Code. "), "A run that is still open has no final cost yet, so it is estimated at list price and marked “est.”."),
+        li(h("strong", {}, "Skills that only run in subagents. "), "Claude Code credits a subagent's turns to the skill that started it. A skill that only ever ran inside a subagent therefore has no unit or versions of its own yet."),
+        li(h("strong", {}, "Agent roles have no versions. "), "A role is a subagent type with its description, numbers folded, so two spawns that differ only in a number are one role."),
+        li(h("strong", {}, "Groups. "), "A group's runs are the union of its members' work, each piece counted once. Its version changes when any member's text changes.")));
+
+    return h("article", { class: "page" },
+      h("header", { class: "pagehead" },
+        h("h1", { tabindex: "-1" }, "How it works"),
+        h("p", { class: "lede" }, "How a score is made, followed on a real example from your history, and what to keep in mind when reading it.")),
+      tabbed("How it works", [
+        { id: "h-score", label: "The score", build: () => score },
+        { id: "h-example", label: "A worked example", build: () => workedExample() },
+        { id: "h-measures", label: "Measures", build: () => measures },
+        { id: "h-pages", label: "The pages", build: () => pages },
+        { id: "h-limits", label: "Good to know", build: () => limits },
+      ]));
+  }
+
+  // ---- diagnostics: everything else the database records -------------------------------
+
+  const clip = (t, n = 28) => (String(t).length > n ? `${String(t).slice(0, n - 1)}…` : String(t));
+  const sumOf = (rows, f) => rows.reduce((n, r) => n + (f(r) || 0), 0);
+  const groupSum = (rows, key, val) => {
+    const m = new Map();
+    for (const r of rows) m.set(r[key], (m.get(r[key]) || 0) + (r[val] || 0));
+    return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  };
+
+  // One bar per item, to the right of its label.
+  function hbars(items, fmtv, cls) {
+    const rows = items.filter((i) => i.value != null && Number.isFinite(i.value));
+    if (!rows.length) return empty("Nothing recorded for this yet.");
+    const W = 640, LABEL = 190, RIGHT = 100, ROW = 26, T = 4;
+    const H = T + ROW * rows.length + 4;
+    const max = Math.max(...rows.map((r) => r.value), 1e-9);
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${rows.length} bars, largest ${fmtv(max)}` });
+    rows.forEach((r, i) => {
+      const y = T + ROW * i;
+      const w = Math.max(2, (r.value / max) * (W - LABEL - RIGHT));
+      chart.append(svg("text", { class: "rowlabel", x: LABEL - 10, y: y + 17, "text-anchor": "end" }, clip(r.label), svg("title", {}, r.label)));
+      chart.append(svg("rect", { class: r.cls || cls || "s0", x: LABEL, y: y + 4, width: w.toFixed(1), height: 16, rx: 3 },
+        svg("title", {}, `${r.label}: ${fmtv(r.value)}`)));
+      chart.append(svg("text", { class: "axis", x: (LABEL + w + 6).toFixed(1), y: y + 17 }, fmtv(r.value)));
+    });
+    return chart;
+  }
+
+  // One column per item along the bottom.
+  function colbars(items, fmtv, cls) {
+    const rows = items.filter((i) => i.value != null && Number.isFinite(i.value));
+    if (!rows.length) return empty("Nothing recorded for this yet.");
+    const top = Math.max(...rows.map((r) => r.value), 1e-9) * 1.05;
+    const scale = ticks(0, top, 4);
+    const yMax = Math.max(top, scale[scale.length - 1]);
+    const W = 640, H = 220, L = 58, R = 10, T = 10, B = 34;
+    const slot = (W - L - R) / rows.length, bw = Math.min(46, slot * 0.7);
+    const y = (v) => T + (H - T - B) * (1 - v / yMax);
+    const every = slot < 44 ? 2 : 1;
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${rows.length} columns, largest ${fmtv(Math.max(...rows.map((r) => r.value)))}` });
+    for (const t of scale) {
+      chart.append(svg("line", { class: "grid", x1: L, x2: W - R, y1: y(t), y2: y(t) }),
+        svg("text", { class: "axis", x: L - 6, y: y(t) + 4, "text-anchor": "end" }, fmtv(t)));
+    }
+    rows.forEach((r, i) => {
+      const x0 = L + i * slot + (slot - bw) / 2;
+      chart.append(svg("rect", { class: r.cls || cls || "s0", x: x0.toFixed(1), y: y(r.value).toFixed(1), width: bw.toFixed(1),
+        height: Math.max(0, H - B - y(r.value)).toFixed(1), rx: 2 }, svg("title", {}, `${r.label}: ${fmtv(r.value)}`)));
+      if (i % every === 0) chart.append(svg("text", { class: "axis", x: (x0 + bw / 2).toFixed(1), y: H - 14, "text-anchor": "middle" }, clip(r.label, 9)));
+    });
+    return chart;
+  }
+
+  // Bars split into parts, each bar shown as shares of its own total.
+  function stackbars(items, fmtv) {
+    const rows = items.filter((i) => i.parts.some((p) => p.value > 0));
+    if (!rows.length) return empty("Nothing recorded for this yet.");
+    const W = 640, LABEL = 190, RIGHT = 100, ROW = 28, T = 4;
+    const H = T + ROW * rows.length + 4;
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${rows.length} stacked bars` });
+    rows.forEach((r, i) => {
+      const y = T + ROW * i;
+      const total = r.parts.reduce((n, p) => n + p.value, 0);
+      let x = LABEL;
+      chart.append(svg("text", { class: "rowlabel", x: LABEL - 10, y: y + 18, "text-anchor": "end" }, clip(r.label), svg("title", {}, r.label)));
+      r.parts.forEach((p) => {
+        const w = (p.value / total) * (W - LABEL - RIGHT);
+        if (w <= 0) return;
+        chart.append(svg("rect", { class: p.cls, x: x.toFixed(1), y: y + 4, width: w.toFixed(1), height: 18 },
+          svg("title", {}, `${r.label} · ${p.label}: ${fmtv(p.value)} (${fmt.pct(p.value / total)})`)));
+        x += w;
+      });
+      chart.append(svg("text", { class: "axis", x: W - RIGHT + 8, y: y + 18 }, fmtv(total)));
+    });
+    return chart;
+  }
+
+  // Two measures against each other, one dot per item. pts: [{x, y, r, cls, tip}].
+  function xyScatter(pts, o) {
+    const ps = pts.filter((p) => p.x != null && p.y != null && Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (!ps.length) return empty("Not enough data for this chart yet.");
+    const xTop = Math.max(...ps.map((p) => p.x), 1e-9) * 1.08, yTop = Math.max(...ps.map((p) => p.y), 1e-9) * 1.08;
+    const xt = ticks(0, xTop, 5), yt = ticks(0, yTop, 4);
+    const xMax = Math.max(xTop, xt[xt.length - 1]), yMax = Math.max(yTop, yt[yt.length - 1]);
+    const W = 640, H = 270, L = 62, R = 16, T = 12, B = 46;
+    const x = (v) => L + (v / xMax) * (W - L - R);
+    const y = (v) => T + (H - T - B) * (1 - v / yMax);
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${o.ylab} against ${o.xlab}, ${ps.length} points` });
+    for (const t of yt) {
+      chart.append(svg("line", { class: "grid", x1: L, x2: W - R, y1: y(t), y2: y(t) }),
+        svg("text", { class: "axis", x: L - 8, y: y(t) + 4, "text-anchor": "end" }, o.fy(t)));
+    }
+    for (const t of xt) chart.append(svg("text", { class: "axis", x: x(t), y: H - 26, "text-anchor": "middle" }, o.fx(t)));
+    chart.append(svg("text", { class: "axis", x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, `${o.xlab} →`),
+      svg("text", { class: "axis", x: L, y: T - 2 }, `↑ ${o.ylab}`));
+    ps.forEach((p) => chart.append(svg("circle", { class: `run ${p.cls || "s0"}`, cx: x(p.x).toFixed(1), cy: y(p.y).toFixed(1), r: (p.r || 5).toFixed(1) },
+      svg("title", {}, p.tip || ""))));
+    return chart;
+  }
+
+  // A grid of counts: rows by columns, the darker the cell the more. rows/cols: [{key, label}].
+  function matrix(rows, cols, get, o = {}) {
+    if (!rows.length || !cols.length) return empty("Nothing recorded for this yet.");
+    const P = palette();
+    const LABEL = o.label || 150, CELL = o.cell || 66, TOP = 34, ROWH = 28;
+    const f = o.fmt || ((v) => fmt.num(v, 0));
+    const W = LABEL + cols.length * CELL, H = TOP + ROWH * rows.length + 4;
+    const max = Math.max(...rows.flatMap((r) => cols.map((c) => get(r, c) || 0)), 1);
+    const chart = svg("svg", { class: "chart heat", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${rows.length} rows by ${cols.length} columns` });
+    cols.forEach((c, j) => chart.append(svg("text", { class: "axis", x: LABEL + j * CELL + CELL / 2, y: TOP - 10, "text-anchor": "middle" },
+      clip(c.label, 10), svg("title", {}, c.label))));
+    rows.forEach((r, i) => {
+      const y0 = TOP + i * ROWH;
+      chart.append(svg("text", { class: "rowlabel", x: LABEL - 8, y: y0 + 19, "text-anchor": "end" }, clip(r.label, 24), svg("title", {}, r.label)));
+      cols.forEach((c, j) => {
+        const v = get(r, c) || 0;
+        chart.append(svg("rect", { x: LABEL + j * CELL + 2, y: y0 + 2, width: CELL - 4, height: ROWH - 4, rx: 4,
+          fill: v ? mixHex(P.surface, P.accent, 0.18 + 0.42 * (v / max)) : mixHex(P.surface, P.line, 0.35) },
+          svg("title", {}, `${r.label} · ${c.label}: ${f(v)}`)));
+        if (v) chart.append(svg("text", { class: "hcell", x: LABEL + j * CELL + CELL / 2, y: y0 + 19, "text-anchor": "middle" }, f(v)));
+      });
+    });
+    return chart;
+  }
+
+  // Columns split into parts, stacked: each item is [{label, parts: [{label, value, cls}]}].
+  function stackcols(items, fmtv) {
+    const rows = items.filter((i) => i.parts.some((p) => p.value > 0));
+    if (!rows.length) return empty("Nothing recorded for this yet.");
+    const totals = rows.map((r) => r.parts.reduce((n, p) => n + p.value, 0));
+    const top = Math.max(...totals, 1e-9) * 1.05;
+    const scale = ticks(0, top, 4);
+    const yMax = Math.max(top, scale[scale.length - 1]);
+    const W = 640, H = 240, L = 58, R = 10, T = 10, B = 34;
+    const slot = (W - L - R) / rows.length, bw = Math.min(46, slot * 0.7);
+    const y = (v) => T + (H - T - B) * (1 - v / yMax);
+    const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${rows.length} stacked columns` });
+    for (const t of scale) {
+      chart.append(svg("line", { class: "grid", x1: L, x2: W - R, y1: y(t), y2: y(t) }),
+        svg("text", { class: "axis", x: L - 6, y: y(t) + 4, "text-anchor": "end" }, fmtv(t)));
+    }
+    rows.forEach((r, i) => {
+      const x0 = L + i * slot + (slot - bw) / 2;
+      let acc = 0;
+      r.parts.forEach((p) => {
+        if (p.value <= 0) return;
+        chart.append(svg("rect", { class: p.cls, x: x0.toFixed(1), y: y(acc + p.value).toFixed(1), width: bw.toFixed(1),
+          height: Math.max(0, y(acc) - y(acc + p.value)).toFixed(1) }, svg("title", {}, `${r.label} · ${p.label}: ${fmtv(p.value)}`)));
+        acc += p.value;
+      });
+      if (i % (slot < 44 ? 2 : 1) === 0) chart.append(svg("text", { class: "axis", x: (x0 + bw / 2).toFixed(1), y: H - 14, "text-anchor": "middle" }, clip(r.label, 9)));
+    });
+    return chart;
+  }
+
+  const topParts = (items, n) => {
+    const head = items.slice(0, n).map((it, i) => ({ label: it.label, value: it.value, cls: `s${i % 6}` }));
+    const rest = items.slice(n).reduce((t, it) => t + it.value, 0);
+    return rest > 0 ? head.concat({ label: "others", value: rest, cls: "s5" }) : head;
+  };
+  const DIAG_NONE = "Nothing recorded for this yet.";
+
+  function diagRuns(D) {
+    const runs = D.runs || [];
+    if (!runs.length) return empty("No runs recorded yet.");
+    const cost = sumOf(runs, (r) => r.cost), active = sumOf(runs, (r) => r.active_ms) / 1000;
+    const added = sumOf(runs, (r) => r.lines_added), removed = sumOf(runs, (r) => r.lines_removed);
+    const name = (r) => dayName(Date.parse(r.started));
+    const cols = [
+      { key: "run", label: "Run", value: (r) => r.run, cell: (r) => h("code", {}, r.run) },
+      { key: "started", label: "Started", value: (r) => r.started, cell: (r) => fmt.when(r.started) },
+      { key: "repo", label: "Repo", value: (r) => r.repo },
+      { key: "branch", label: "Branch", value: (r) => r.branch },
+      { key: "cost", label: "Cost", num: true, value: (r) => r.cost, cell: (r) => fmt.usd(r.cost) + (r.estimated ? " est." : "") },
+      { key: "active", label: "Active", num: true, value: (r) => r.active_ms, cell: (r) => fmt.secs((r.active_ms || 0) / 1000) },
+      { key: "agents", label: "Subagents", num: true, value: (r) => r.agents },
+      { key: "prompts", label: "Your prompts", num: true, value: (r) => r.prompts },
+      { key: "lines", label: "Lines +/−", num: true, value: (r) => (r.lines_added || 0) + (r.lines_removed || 0),
+        cell: (r) => (r.lines_added == null ? "—" : `+${fmt.num(r.lines_added, 0)} −${fmt.num(r.lines_removed, 0)}`) },
+      { key: "errors", label: "Tool errors", num: true, value: (r) => (r.tool_calls ? r.tool_errors / r.tool_calls : null), cell: (r) => fmt.pct(r.tool_calls ? r.tool_errors / r.tool_calls : null) },
+      { key: "incidents", label: "Incidents", num: true, value: (r) => r.incidents },
+      { key: "title", label: "Title", value: (r) => r.title, cell: (r) => h("span", { class: "task", title: r.title || "" }, r.title || "—") },
+    ];
+    return h("div", {},
+      h("div", { class: "kpis" },
+        kpi("Runs", fmt.num(runs.length, 0), `${fmt.day(runs[0].started)} – ${fmt.day(runs[runs.length - 1].started)}`),
+        kpi("Cost", fmt.usd(cost), `${fmt.usd(cost / runs.length)} per run`),
+        kpi("Active time", fmt.secs(active), `${fmt.secs(active / runs.length)} per run`),
+        kpi("Code changed", `+${fmt.num(added, 0)} −${fmt.num(removed, 0)}`, "lines added and removed"),
+        kpi("Your prompts", fmt.num(sumOf(runs, (r) => r.prompts), 0), "typed during the runs")),
+      h("div", { class: "charts" },
+        card("Cost per run", colbars(runs.map((r) => ({ label: name(r), value: r.cost })), wholeUsd)),
+        h("div", { class: "grid2" },
+          card("Cost against active time", xyScatter(runs.map((r) => ({ x: (r.active_ms || 0) / 3.6e6, y: r.cost, r: 4 + Math.sqrt(r.agents || 0),
+            tip: `${r.run} · ${fmt.usd(r.cost)} · ${fmt.secs((r.active_ms || 0) / 1000)} · ${r.agents} subagents` })),
+          { xlab: "active hours", ylab: "cost", fx: (v) => `${fmt.num(v, 1)} h`, fy: wholeUsd }), note("Bigger dots had more subagents.")),
+          card("Code changed against cost", xyScatter(runs.filter((r) => r.lines_added != null).map((r) => ({ x: (r.lines_added || 0) + (r.lines_removed || 0), y: r.cost,
+            tip: `${r.run} · +${r.lines_added} −${r.lines_removed} lines · ${fmt.usd(r.cost)}` })),
+          { xlab: "lines added + removed", ylab: "cost", fx: (v) => fmt.num(v, 0), fy: wholeUsd }))),
+        h("div", { class: "grid2" },
+          card("Incidents per run", colbars(runs.map((r) => ({ label: name(r), value: r.incidents })), (v) => fmt.num(v, 0), "s3")),
+          card("Tool error rate per run", colbars(runs.map((r) => ({ label: name(r), value: r.tool_calls ? r.tool_errors / r.tool_calls : null })), fmt.pct, "s1")))),
+      table({ caption: "Runs", cols, rows: runs, sort: { key: "started", dir: -1 } }).el);
+  }
+
+  function diagProblems(D) {
+    const inc = D.incidents || [];
+    if (!inc.length && !(D.tool_errors || []).length) return empty("No incident or tool error was recorded.");
+    const types = groupSum(inc, "type", "incidents");
+    const skills = groupSum(inc, "skill", "incidents").slice(0, 8);
+    const classes = groupSum(D.tool_errors || [], "class", "errors");
+    const tools = groupSum(D.tool_errors || [], "tool", "errors").slice(0, 8);
+    const at = (a, b, ka, kb) => (inc.concat([]).filter((r) => r[ka] === a && r[kb] === b)[0] || {}).incidents || 0;
+    const classTool = (c, t) => sumOf((D.tool_errors || []).filter((r) => r.class === c.key && r.tool === t.key), (r) => r.errors);
+    const donutParts = topParts(classes, 5);
+    return h("div", {},
+      h("div", { class: "kpis" },
+        kpi("Incidents", fmt.num(sumOf(inc, (r) => r.incidents), 0), `${types.length} types`),
+        kpi("Tool errors", fmt.num(sumOf(D.tool_errors || [], (r) => r.errors), 0), `${classes.length} classes`),
+        kpi("Most common incident", types[0] ? types[0].label : "—", types[0] ? `${fmt.num(types[0].value, 0)} times` : ""),
+        kpi("Most common error", classes[0] ? classes[0].label : "—", classes[0] ? `${fmt.num(classes[0].value, 0)} times` : "")),
+      h("div", { class: "charts" },
+        h("div", { class: "grid2" },
+          card("Incidents by type", hbars(types, (v) => fmt.num(v, 0), "s3")),
+          card("Incidents by agent role", hbars((D.incident_roles || []).map((r) => ({ label: r.role, value: r.incidents })), (v) => fmt.num(v, 0), "s4"))),
+        card("Incident type by skill", matrix(types.map((t) => ({ key: t.label, label: t.label })), skills.map((s) => ({ key: s.label, label: s.label })),
+          (r, c) => at(r.key, c.key, "type", "skill")), note("How many incidents of each type each skill had. The darker the cell, the more.")),
+        h("div", { class: "grid2" },
+          card("Tool errors by class", donut(donutParts, (v) => fmt.num(v, 0), "tool errors")),
+          card("Tool errors by tool", hbars(tools, (v) => fmt.num(v, 0), "s1"))),
+        card("Error class by tool", matrix(classes.map((c) => ({ key: c.label, label: c.label })), tools.map((t) => ({ key: t.label, label: t.label })), classTool)),
+        card("Other events", hbars((D.events || []).map((e) => ({ label: e.kind, value: e.n })), (v) => fmt.num(v, 0), "s2"))));
+  }
+
+  function diagTools(D) {
+    const tools = D.tools || [];
+    if (!tools.length) return empty(DIAG_NONE);
+    const cols = [
+      { key: "tool", label: "Tool", value: (t) => t.tool },
+      { key: "calls", label: "Calls", num: true, value: (t) => t.calls, cell: (t) => fmt.num(t.calls, 0) },
+      { key: "errors", label: "Errors", num: true, value: (t) => t.errors, cell: (t) => fmt.num(t.errors, 0) },
+      { key: "rate", label: "Error rate", num: true, value: (t) => (t.calls ? t.errors / t.calls : null), cell: (t) => fmt.pct(t.calls ? t.errors / t.calls : null) },
+      { key: "median", label: "Median", num: true, value: (t) => t.median_ms, cell: (t) => fmt.secs((t.median_ms || 0) / 1000) },
+      { key: "p95", label: "Slowest 5%", num: true, value: (t) => t.p95_ms, cell: (t) => fmt.secs((t.p95_ms || 0) / 1000) },
+      { key: "total", label: "Total time", num: true, value: (t) => t.total_ms, cell: (t) => fmt.secs((t.total_ms || 0) / 1000) },
+    ];
+    const idle = (D.idle || []).filter((i) => i.calls).map((i) => ({ label: i.skill, value: i.idle_calls / i.calls }));
+    const top = tools.slice(0, 12);
+    return h("div", {},
+      h("div", { class: "kpis" },
+        kpi("Tool calls", fmt.num(sumOf(tools, (t) => t.calls), 0), `${tools.length} tools`),
+        kpi("Failed", fmt.pct(sumOf(tools, (t) => t.errors) / Math.max(1, sumOf(tools, (t) => t.calls))), "share of calls"),
+        kpi("Time in tools", fmt.secs(sumOf(tools, (t) => t.total_ms) / 1000), "all runs")),
+      h("div", { class: "charts" },
+        h("div", { class: "grid2" },
+          card("Calls by tool", hbars(top.map((t) => ({ label: t.tool, value: t.calls })), (v) => fmt.num(v, 0), "s0")),
+          card("Error rate by tool", hbars(top.filter((t) => t.calls >= 20).map((t) => ({ label: t.tool, value: t.errors / t.calls })), fmt.pct, "s4"),
+            note("Tools with at least 20 calls."))),
+        h("div", { class: "grid2" },
+          card("Slowest 5% of calls", hbars(top.filter((t) => t.p95_ms != null).sort((a, b) => b.p95_ms - a.p95_ms).map((t) => ({ label: t.tool, value: t.p95_ms / 1000 })), fmt.secs, "s1")),
+          card("Where tool time goes", donut(topParts(tools.map((t) => ({ label: t.tool, value: (t.total_ms || 0) / 1000 })).sort((a, b) => b.value - a.value), 5), fmt.secs, "tool time"))),
+        card("Waiting calls by skill", hbars(idle.sort((a, b) => b.value - a.value), fmt.pct, "s3"),
+          note("Share of a skill's tool calls that only wait or print."))),
+      table({ caption: "Tools", cols, rows: tools, sort: { key: "calls", dir: -1 } }).el);
+  }
+
+  function diagModels(D) {
+    const ms = D.models || [];
+    if (!ms.length) return empty(DIAG_NONE);
+    const colour = new Map(ms.map((m, i) => [m.model, `s${i % 6}`]));
+    const modelLegend = legendOf(ms.map((m) => ({ cls: colour.get(m.model), label: m.model })));
+    const parts = (m) => [
+      { label: "fresh input", value: m.fresh_input || 0, cls: "bar s0" }, { label: "read from cache", value: m.cache_read || 0, cls: "bar s2" },
+      { label: "output", value: m.output || 0, cls: "bar s1" }, { label: "thinking", value: m.thinking || 0, cls: "bar s3" }];
+    const hit = (m) => (m.cache_read || 0) / Math.max(1, (m.cache_read || 0) + (m.fresh_input || 0));
+    const cols = [
+      { key: "model", label: "Model", value: (m) => m.model },
+      { key: "calls", label: "Calls", num: true, value: (m) => m.calls, cell: (m) => fmt.num(m.calls, 0) },
+      { key: "cost", label: "Cost", num: true, value: (m) => m.cost, cell: (m) => fmt.usd(m.cost) },
+      { key: "per", label: "Cost per call", num: true, value: (m) => (m.cost || 0) / Math.max(1, m.calls), cell: (m) => fmt.usd((m.cost || 0) / Math.max(1, m.calls)) },
+      { key: "output", label: "Output tokens", num: true, value: (m) => m.output, cell: (m) => fmt.num(m.output, 0) },
+      { key: "thinking", label: "Thinking tokens", num: true, value: (m) => m.thinking, cell: (m) => fmt.num(m.thinking, 0) },
+      { key: "cache", label: "Cache hit", num: true, value: hit, cell: (m) => fmt.pct(hit(m)) },
+    ];
+    const kp = h("div", { class: "kpis" },
+      kpi("Model spend", fmt.usd(sumOf(ms, (m) => m.cost)), `${ms.length} models`),
+      kpi("API calls", fmt.num(sumOf(ms, (m) => m.calls), 0), "model turns"),
+      kpi("Output", `${fmt.num(sumOf(ms, (m) => m.output) / 1e6, 2)} M`, "tokens written"),
+      kpi("Thinking", `${fmt.num(sumOf(ms, (m) => m.thinking) / 1e6, 2)} M`, "tokens thought"),
+      kpi("Cache hit", fmt.pct(sumOf(ms, (m) => m.cache_read) / Math.max(1, sumOf(ms, (m) => m.cache_read) + sumOf(ms, (m) => m.fresh_input))), "of input read from cache"));
+
+    // effort
+    const me = D.model_effort || [];
+    const efforts = groupSum(me, "effort", "cost");
+    const effortCalls = groupSum(me, "effort", "calls");
+    const weighted = (key) => efforts.map((e) => {
+      const rows = me.filter((r) => r.effort === e.label);
+      const n = sumOf(rows, (r) => r.calls);
+      return { label: e.label, value: n ? sumOf(rows, (r) => (r[key] || 0) * r.calls) / n : null };
+    });
+    const modelNames = ms.map((m) => ({ key: m.model, label: m.model }));
+    const effortKeys = efforts.map((e) => ({ key: e.label, label: e.label }));
+    const effortTab = h("div", { class: "charts" },
+      h("div", { class: "grid2" },
+        card("Spend by effort level", donut(topParts(efforts, 5), fmt.usd, "model spend")),
+        card("Calls by effort level", hbars(effortCalls.map((e) => ({ label: e.label, value: e.value })), (v) => fmt.num(v, 0), "s0"))),
+      card("Effort level used by each model", stackbars(ms.map((m) => ({ label: m.model,
+        parts: efforts.map((e, i) => ({ label: e.label, cls: `bar s${i % 6}`, value: sumOf(me.filter((r) => r.model === m.model && r.effort === e.label), (r) => r.calls) })) })),
+      (v) => `${fmt.num(v, 0)} calls`), legendOf(efforts.map((e, i) => ({ cls: `s${i % 6}`, label: e.label })))),
+      h("div", { class: "grid2" },
+        card("Thinking tokens per call", hbars(weighted("avg_thinking"), (v) => fmt.num(v, 0), "s3"), note("Average, by effort level.")),
+        card("Thinking time per call", hbars(weighted("avg_thinking_ms").map((e) => ({ label: e.label, value: e.value == null ? null : e.value / 1000 })), fmt.secs, "s5"), note("Average, by effort level."))),
+      card("Calls by model and effort", matrix(modelNames, effortKeys, (r, c) => sumOf(me.filter((x) => x.model === r.key && x.effort === c.key), (x) => x.calls), { label: 190 })));
+
+    // by skill
+    const msk = D.model_skill || [];
+    const skillsBySpend = groupSum(msk, "skill", "cost").slice(0, 9);
+    const skillTab = h("div", { class: "charts" },
+      card("Spend by skill and model", matrix(skillsBySpend.map((k) => ({ key: k.label, label: k.label })), modelNames,
+        (r, c) => sumOf(msk.filter((x) => x.skill === r.key && x.model === c.key), (x) => x.cost), { label: 130, cell: 92, fmt: wholeUsd }),
+      note("Model spend in dollars, for the nine skills that spent the most.")),
+      card("Which models each skill uses", stackbars(skillsBySpend.map((k) => ({ label: k.label,
+        parts: ms.map((m) => ({ label: m.model, cls: `bar ${colour.get(m.model)}`, value: sumOf(msk.filter((x) => x.skill === k.label && x.model === m.model), (x) => x.cost) })) })), fmt.usd),
+      modelLegend));
+
+    // over time
+    const days = [...new Set((D.model_day || []).map((d) => d.day))].sort();
+    const timeTab = h("div", { class: "charts" },
+      card("Spend per day, by model", stackcols(days.map((d) => ({ label: dayName(Date.parse(`${d}T00:00:00Z`)),
+        parts: ms.map((m) => ({ label: m.model, cls: colour.get(m.model), value: sumOf((D.model_day || []).filter((x) => x.day === d && x.model === m.model), (x) => x.cost) })) })), wholeUsd), modelLegend),
+      card("API calls per day, by model", stackcols(days.map((d) => ({ label: dayName(Date.parse(`${d}T00:00:00Z`)),
+        parts: ms.map((m) => ({ label: m.model, cls: colour.get(m.model), value: sumOf((D.model_day || []).filter((x) => x.day === d && x.model === m.model), (x) => x.calls) })) })), (v) => fmt.num(v, 0))));
+
+    // calls
+    const errs = D.api_errors || [];
+    const callsTab = h("div", { class: "charts" },
+      card("API error rate by model", hbars(errs.map((e) => ({ label: e.model, value: e.calls ? e.errors / e.calls : null })), fmt.pct, "s4")),
+      card("What each model processed", stackbars(ms.map((m) => ({ label: m.model, parts: parts(m) })), (v) => `${fmt.num(v / 1e6, 1)} M`),
+        legendOf([{ cls: "s0", label: "fresh input" }, { cls: "s2", label: "read from cache" }, { cls: "s1", label: "output" }, { cls: "s3", label: "thinking" }])),
+      card("Cache hit rate", hbars(ms.map((m) => ({ label: m.model, value: hit(m) })), fmt.pct, "s2")));
+
+    const spendTab = h("div", { class: "charts" },
+      h("div", { class: "grid2" },
+        card("Spend by model", donut(topParts(ms.map((m) => ({ label: m.model, value: m.cost || 0 })), 5), fmt.usd, "model spend")),
+        card("Calls by model", hbars(ms.map((m) => ({ label: m.model, value: m.calls })), (v) => fmt.num(v, 0), "s0"))),
+      table({ caption: "Models", cols, rows: ms, sort: { key: "cost", dir: -1 } }).el);
+
+    return h("div", {}, kp, tabbed("Model detail", [
+      { id: "m-spend", label: "Spend", build: () => spendTab },
+      { id: "m-effort", label: "Effort", build: () => effortTab },
+      { id: "m-skill", label: "By skill", build: () => skillTab },
+      { id: "m-time", label: "Over time", build: () => timeTab },
+      { id: "m-calls", label: "Calls", build: () => callsTab },
+    ]));
+  }
+
+  function diagAgents(D) {
+    const ag = D.agent_types || [];
+    if (!ag.length) return empty("No subagent was recorded.");
+    const types = ag.map((a) => a.agent_type);
+    const colour = new Map(types.map((t, i) => [t, `s${i % 6}`]));
+    const typeLegend = legendOf(types.map((t) => ({ cls: colour.get(t), label: t })));
+    const total = sumOf(ag, (a) => a.agents);
+    const byRun = D.agents_by_run || [];
+    const runs = D.runs || [];
+    const perRun = runs.map((r) => ({ run: r.run, started: r.started, n: sumOf(byRun.filter((x) => x.run === r.run), (x) => x.n) }));
+    const background = sumOf((D.agent_shape || []).filter((x) => x.background), (x) => x.n);
+    const cols = [
+      { key: "type", label: "Agent type", value: (a) => a.agent_type },
+      { key: "agents", label: "Agents", num: true, value: (a) => a.agents, cell: (a) => fmt.num(a.agents, 0) },
+      { key: "cost", label: "Cost", num: true, value: (a) => a.cost, cell: (a) => fmt.usd(a.cost) },
+      { key: "per", label: "Cost each", num: true, value: (a) => (a.cost || 0) / Math.max(1, a.agents), cell: (a) => fmt.usd((a.cost || 0) / Math.max(1, a.agents)) },
+      { key: "tools", label: "Tool calls", num: true, value: (a) => a.tool_calls, cell: (a) => fmt.num(a.tool_calls, 0) },
+      { key: "rate", label: "Error rate", num: true, value: (a) => (a.tool_calls ? a.tool_errors / a.tool_calls : null), cell: (a) => fmt.pct(a.tool_calls ? a.tool_errors / a.tool_calls : null) },
+      { key: "peak", label: "Peak context", num: true, value: (a) => a.peak_context, cell: (a) => `${fmt.num((a.peak_context || 0) / 1000, 0)}k tokens` },
+      { key: "compactions", label: "Compactions", num: true, value: (a) => a.compactions },
+      { key: "failed", label: "Not completed", num: true, value: (a) => a.not_completed },
+    ];
+    const kp = h("div", { class: "kpis" },
+      kpi("Subagents generated", fmt.num(total, 0), `${ag.length} types`),
+      kpi("Per run", fmt.num(total / Math.max(1, runs.length), 1), `most in one run: ${fmt.num(Math.max(0, ...perRun.map((r) => r.n)), 0)}`),
+      kpi("In the background", fmt.pct(background / Math.max(1, total)), `${fmt.num(background, 0)} of ${fmt.num(total, 0)}`),
+      kpi("Subagent spend", fmt.usd(sumOf(ag, (a) => a.cost)), `${fmt.usd(sumOf(ag, (a) => a.cost) / Math.max(1, total))} each`),
+      kpi("Not completed", fmt.num(sumOf(ag, (a) => a.not_completed), 0), "failed, killed or errored"));
+
+    const overview = h("div", { class: "charts" },
+      h("div", { class: "grid2" },
+        card("Spend by agent type", donut(topParts(ag.map((a) => ({ label: a.agent_type, value: a.cost || 0 })), 5), fmt.usd, "subagent spend")),
+        card("How subagents ended", donut(topParts((D.agent_status || []).map((s) => ({ label: s.status, value: s.agents })), 5), (v) => fmt.num(v, 0), "subagents"))),
+      h("div", { class: "grid2" },
+        card("Tool calls by agent type", hbars(ag.map((a) => ({ label: a.agent_type, value: a.tool_calls })), (v) => fmt.num(v, 0), "s0")),
+        card("Largest context reached", hbars(ag.map((a) => ({ label: a.agent_type, value: a.peak_context })), (v) => `${fmt.num(v / 1000, 0)}k`, "s5"))),
+      table({ caption: "Agent types", cols, rows: ag, sort: { key: "cost", dir: -1 } }).el);
+
+    const dayList = (D.agent_day || []).map((d) => ({ label: dayName(Date.parse(`${d.day}T00:00:00Z`)), value: d.n }));
+    const shape = (D.agent_shape || []).map((x) => ({ label: `depth ${x.depth} · ${x.background ? "background" : "waited for"}`, value: x.n }));
+    const skillRows = groupSum(D.agents_by_skill || [], "skill", "n").map((k) => ({ key: k.label, label: k.label }));
+    const generated = h("div", { class: "charts" },
+      card("Subagents generated per run", stackcols(runs.map((r) => ({ label: dayName(Date.parse(r.started)),
+        parts: types.map((t) => ({ label: t, cls: colour.get(t), value: sumOf(byRun.filter((x) => x.run === r.run && x.agent_type === t), (x) => x.n) })) })), (v) => fmt.num(v, 0)), typeLegend),
+      h("div", { class: "grid2" },
+        card("Subagents generated per day", colbars(dayList, (v) => fmt.num(v, 0), "s0")),
+        card("How they were started", hbars(shape, (v) => fmt.num(v, 0), "s3"), note("Depth 1 was started by the main session, depth 2 by a subagent."))),
+      card("Subagents generated by each skill", matrix(skillRows, types.map((t) => ({ key: t, label: t })),
+        (r, c) => sumOf((D.agents_by_skill || []).filter((x) => x.skill === r.key && x.agent_type === c.key), (x) => x.n), { label: 130, cell: 100 }),
+      note("The skill that was running when each subagent was started.")));
+
+    const roles = D.agent_roles || [];
+    const roleCols = [
+      { key: "type", label: "Agent type", value: (r) => r.agent_type },
+      { key: "role", label: "Role", value: (r) => r.role, cell: (r) => h("span", { class: "task", title: r.role }, r.role) },
+      { key: "agents", label: "Agents", num: true, value: (r) => r.agents },
+      { key: "cost", label: "Cost", num: true, value: (r) => r.cost, cell: (r) => fmt.usd(r.cost) },
+      { key: "time", label: "Average time", num: true, value: (r) => r.avg_seconds, cell: (r) => fmt.secs(r.avg_seconds) },
+      { key: "tools", label: "Average tool calls", num: true, value: (r) => r.avg_tools, cell: (r) => fmt.num(r.avg_tools, 0) },
+      { key: "peak", label: "Peak context", num: true, value: (r) => r.peak_context, cell: (r) => `${fmt.num((r.peak_context || 0) / 1000, 0)}k` },
+    ];
+    const times = D.agent_time || [];
+    const rolesTab = h("div", { class: "charts" },
+      h("div", { class: "grid2" },
+        card("Spend by role", hbars(roles.slice(0, 12).map((r) => ({ label: r.role, value: r.cost || 0 })), fmt.usd, "s1"), note("The twelve roles that spent the most.")),
+        card("How long subagents run", hbars(times.map((t) => ({ label: t.agent_type, value: t.p95_s })), fmt.secs, "s5"),
+          note("The slowest 5% of each type; the median is in the table below."))),
+      card("Median time by agent type", hbars(times.map((t) => ({ label: t.agent_type, value: t.median_s })), fmt.secs, "s2")),
+      table({ caption: "Roles", cols: roleCols, rows: roles, sort: { key: "cost", dir: -1 } }).el);
+
+    const am = D.agent_models || [];
+    const modelNames = [...new Set(am.map((x) => x.model))];
+    const mcolour = new Map(modelNames.map((m, i) => [m, `s${i % 6}`]));
+    const modelsTab = h("div", { class: "charts" },
+      card("Which model each agent type uses", stackbars(types.map((t) => ({ label: t,
+        parts: modelNames.map((m) => ({ label: m, cls: `bar ${mcolour.get(m)}`, value: sumOf(am.filter((x) => x.agent_type === t && x.model === m), (x) => x.n) })) })),
+      (v) => `${fmt.num(v, 0)} agents`), legendOf(modelNames.map((m) => ({ cls: mcolour.get(m), label: m })))),
+      card("Spend by agent type and model", matrix(types.map((t) => ({ key: t, label: t })), modelNames.map((m) => ({ key: m, label: m })),
+        (r, c) => sumOf(am.filter((x) => x.agent_type === r.key && x.model === c.key), (x) => x.cost), { label: 130, cell: 90, fmt: wholeUsd })));
+
+    return h("div", {}, kp, tabbed("Subagent detail", [
+      { id: "a-overview", label: "Overview", build: () => overview },
+      { id: "a-generated", label: "Generated", build: () => generated },
+      { id: "a-roles", label: "Roles and time", build: () => rolesTab },
+      { id: "a-models", label: "Models", build: () => modelsTab },
+    ]));
+  }
+
+  function diagFlow(D) {
+    const flow = D.flow || [];
+    const names = [...new Set(flow.flatMap((f) => [f.source, f.target]))];
+    const weight = (n) => sumOf(flow.filter((f) => f.source === n || f.target === n), (f) => f.transitions);
+    names.sort((a, b) => weight(b) - weight(a));
+    const axis = names.slice(0, 9).map((n) => ({ key: n, label: n }));
+    const marks = new Map();
+    for (const m of D.markers || []) {
+      const e = marks.get(m.marker) || { label: m.marker, parts: [{ label: "ok", value: 0, cls: "bar good" }, { label: "bad", value: 0, cls: "bar bad" }] };
+      e.parts[m.bad ? 1 : 0].value += m.n;
+      marks.set(m.marker, e);
+    }
+    const labels = D.labels || [];
+    return h("div", { class: "charts" },
+      card("Which skill hands over to which", matrix(axis, axis, (r, c) => sumOf(flow.filter((f) => f.source === r.key && f.target === c.key), (f) => f.transitions), { label: 130 }),
+        note("Read each row as a skill that was running, and each column as the skill that took over, in the main session.")),
+      card("Checks from your config", [...marks.values()].length
+        ? stackbars([...marks.values()], (v) => fmt.num(v, 0)) : empty("Your config defines no markers, or none matched."),
+      legendOf([{ cls: "good", label: "ok" }, { cls: "bad", label: "bad value" }])),
+      card("Incidents by failure category", labels.length
+        ? hbars(labels.map((l) => ({ label: l.category, value: l.n })), (v) => fmt.num(v, 0), "s4")
+        : empty("No incident has a label yet. Run runlens classify to label them.")));
+  }
+
+  function diagView() {
+    const D = DATA.diag;
+    if (!D) return h("article", { class: "page" }, h("h1", { tabindex: "-1" }, "Diagnostics"), empty("Run runlens dashboard again to add this page."));
+    return h("article", { class: "page" },
+      h("header", { class: "pagehead" },
+        h("h1", { tabindex: "-1" }, "Diagnostics"),
+        h("p", { class: "lede" }, "The rest of what runlens recorded: each run, the problems it hit, its tools and models, its subagents, and how skills hand work to each other.")),
+      tabbed("Diagnostics", [
+        { id: "d-runs", label: "Runs", build: () => diagRuns(D) },
+        { id: "d-problems", label: "Problems", build: () => diagProblems(D) },
+        { id: "d-tools", label: "Tools", build: () => diagTools(D) },
+        { id: "d-models", label: "Models", build: () => diagModels(D) },
+        { id: "d-agents", label: "Agents", build: () => diagAgents(D) },
+        { id: "d-flow", label: "Flow and checks", build: () => diagFlow(D) },
+      ]));
   }
 
   // ---- routing, theme, footer -----------------------------------------------------
@@ -1253,6 +2048,9 @@
     else if (parts[0] === "compare") {
       page = "compare";
       view = compareView(params);
+    } else if (parts[0] === "diagnostics") {
+      page = "diagnostics";
+      view = diagView();
     } else if (parts[0] === "method") {
       page = "method";
       view = methodView();
@@ -1260,7 +2058,7 @@
 
     app.replaceChildren(view);
     window.scrollTo(0, 0);
-    const target = { skills: "#/", compare: "#/compare", method: "#/method" }[page];
+    const target = { skills: "#/", compare: "#/compare", diagnostics: "#/diagnostics", method: "#/method" }[page];
     for (const a of document.querySelectorAll(".top nav a")) {
       if (a.getAttribute("href") === target) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");

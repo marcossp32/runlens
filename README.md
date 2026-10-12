@@ -7,6 +7,21 @@ A **run** is one Claude Code session plus every subagent it spawned. runlens kno
 - which output lines are signals;
 - which files outside the transcript to keep.
 
+## Quick start
+
+```bash
+uv tool install git+https://github.com/marcossp32/runlens.git
+runlens install      # the hook, the /runlens-retro skill and a starter config
+runlens refresh      # load the runs you already have
+runlens dashboard    # prints the path of dashboard.html: open it in a browser
+```
+
+[Install](#install) explains each step. What you get:
+
+- **A database of your runs**, in DuckDB: every model call, tool call, subagent, incident and skill version.
+- **A dashboard**: a score for every skill and agent role, how each version of a skill compared with the one before, and diagnostics for the rest.
+- **A retrospective skill**, `/runlens-retro`, that turns the evidence into proposed skill edits.
+
 ## Requirements
 
 | What | Why |
@@ -137,7 +152,7 @@ In Claude Code, `/runlens-retro` runs the whole retrospective:
 
 The `v_*` views in [`views.sql`](runlens/views.sql) group by run, skill, agent role, model, tool, error class, incident, label and skill version.
 
-## How it works
+## How the data is read
 
 - **Cost.** Each model's cost comes from Claude Code's `cost-state` and is split across that model's calls by their list-price cost. A run that is still open has no `cost-state` yet, so it is estimated at list price (`runs.cost_estimated`). Override prices under `[prices]`.
 - **Skill attribution.** Each model turn and tool call is credited to a skill:
@@ -169,20 +184,61 @@ The `v_*` views in [`views.sql`](runlens/views.sql) group by run, skill, agent r
 
 Every skill that ran and every agent role gets its own score, with no labelling by hand. Each group you define in `config.toml` gets one too.
 
-The dashboard has four pages:
+### The pages
 
-- **Skills.** A summary row, then the charts: each skill's score range against the average, the version history of every skill, a bubble chart of score against cost per run, a treemap of where the spend goes, a heatmap of every skill against every measure, and runs per day. Below them, a table you can sort, and every recorded version in a collapsed list. Agent roles and groups are on the other two tabs. Roles seen only once are hidden until you tick the box.
-- **A skill, role or group.** A gauge for the score, a radar profile against the average with each vertex labelled by its value, and KPI cards with sparklines. The radar overlays the current version on the one before it. Three tabs: **Versions** (when each version was in use, its score, what changed, with the diff), **What drives the score** (spend by version and the breakdown of every measure), and **Runs** (cost over time, cost against time, and each run).
-- **Compare.** Pick any two skills, roles or groups, and any of their versions. The verdict uses their likely ranges, and the page shows a radar overlay and bars for each measure.
-- **How it works.** The score in plain words, with the exact formula and settings in a collapsed section.
+| Page | It answers | What is on it |
+|---|---|---|
+| **Skills** | Which skills do well, and did a new version help? | Summary cards, the score range of every skill, score by version, score against cost, a treemap of spend, a heatmap of every measure, runs per day, and a sortable table. Agent roles and groups are on the other two tabs |
+| **A skill, role or group** | Why is this score what it is? | A gauge, a radar profile against the average, and trends. Tabs: **Versions** (when each was in use, its score, what changed, with the diff), **What drives the score** (spend by version and every measure), **Runs** (cost over time, cost against time, each run) |
+| **Compare** | Is version B really better than A? | Any two skills, roles or groups, and any of their versions: a verdict from their likely ranges, a radar overlay, and bars for each measure |
+| **Diagnostics** | What else happened? | Six tabs, below |
+| **How it works** | How is the score made? | Five short tabs, including a worked example that walks one of your own skills from its measures to its score |
 
-**The score.** 100 is the average run of the same kind (skill, agent role or group). Above 100 is better. It is a weighted geometric mean of eight metrics: cost per run (weight 3), time per run (2), tool error rate (2), incidents per run (2), human prompts per run (2), idle call rate (1), API error rate (1), bad markers per run (1). Each metric is compared with the average, pulled toward it when the sample is small, and clipped to a factor of two. Scores from fewer than five runs are flagged.
+### Choosing what the charts show
 
-**The likely range.** The 5th to 95th percentile of the score over 200 resamples of the unit's runs. Two scores are only called different when their ranges do not overlap.
+On the Skills page, the **Show in the charts** panel is collapsed, with the current counts on its summary line.
 
-**Versions.** A version is one distinct skill text, recorded when Claude Code loads the skill. Versions are numbered by first use, and each is diffed against the one before it. Only versions whose text was recorded are counted.
+- Tick a skill to show it, or one of its versions to show that version. The buttons turn on all skills, no skills, all versions, or only the latest version of each skill.
+- Tick **Show each version as its own item in every chart** and every plot, the heatmap and the table draw each version as a separate entry.
+- Every chart and table on the page follows the choice, and it is remembered in the browser.
+- A skill with some versions left out is scored from the versions still on. That score is a single number with no range.
+- Agent roles seen only once are hidden until you tick the box on their tab.
 
-**Groups.** Name a set of skills and agent types in `config.toml`:
+### Diagnostics
+
+- **Runs**: cost, active time, lines changed, prompts and incidents per run, with scatter plots of cost against time and against code changed.
+- **Problems**: incidents by type, role and skill, and tool errors by class and tool.
+- **Tools**: calls, error rate, latency, and where the time goes.
+- **Models**: spend; effort (spend and calls by level, thinking tokens and time, which model ran at which level); spend by skill and model; spend and calls per day; API errors, tokens processed and cache hit.
+- **Agents**: overview (spend, context size, how subagents ended); generated (how many each run, day and skill started, by type, and whether they ran in the background); roles and time; which models they used.
+- **Flow and checks**: which skill hands over to which, your config's markers, and failure labels once `runlens classify` has run.
+
+### The score
+
+100 is the average run of the same kind (skill, agent role or group). Above 100 is better. It combines eight measures, each compared with that average and weighted:
+
+| Measure | Weight | What it is |
+|---|---|---|
+| Cost per run | 3 | model spend attributed to the unit |
+| Time per run | 2 | working time: from each model turn to the same agent's next, capped at 10 minutes |
+| Tool error rate | 2 | failing tool calls over all its tool calls |
+| Incidents per run | 2 | error streaks, repeated calls, interrupts and the other incident types |
+| Human prompts per run | 2 | your messages while the unit was the active skill (skills and groups only) |
+| Idle call rate | 1 | tool calls that only wait or print |
+| API error rate | 1 | API errors over model turns |
+| Bad markers per run | 1 | config markers whose value is declared bad |
+
+A unit with few runs is pulled toward the average, and no measure counts for more than a factor of two either way. The page "How it works" has the exact formula.
+
+**The likely range** is the 5th to 95th percentile of the score over 200 resamples of the unit's runs. A unit is called better or worse than average only when its whole range is on one side of 100, and two scores are only called different when their ranges do not overlap. Units with fewer than five runs are flagged.
+
+### Versions
+
+A version is one distinct skill text, recorded when Claude Code loads the skill. Versions are numbered by first use, and each is diffed against the one before it. Only versions whose text was recorded are counted: a skill with no recorded text shows as unrecorded.
+
+### Groups
+
+Name a set of skills and agent types in `config.toml`:
 
 ```toml
 [[group]]
@@ -192,16 +248,37 @@ members = ["skill:my-plan", "skill:my-build", "agent:Explore"]
 
 A group's runs are the union of its members' work, each piece counted once. Its version is the combination of its members' versions, so it changes when any member's text changes.
 
-The score does not judge whether a run produced the right result. Read the traces with `runlens show` before acting on a drop.
+### What the score does not tell you
+
+- **Whether a run produced the right result.** It measures cost, time, failures and how often you had to step in. Read the traces with `runlens show` before acting on a drop.
+- **Anything about a skill that only ran inside a subagent.** See the known gap under [How the data is read](#how-the-data-is-read).
+- **More than the runs support.** With few runs the range is wide; trust the range, not the number.
 
 ## Using it with your flow
 
-Only `config.toml` changes. See [`config.example.toml`](runlens/config.example.toml) for every option, and [`examples/m-feature.toml`](examples/m-feature.toml) for a real config for [mstack](https://github.com/marcossp32/mstack)'s `/m-feature` flow. You set three things:
-- `[select]`: which sessions are runs;
-- `[[evidence]]`: extra files to archive;
-- `[[marker]]`: which output lines are signals, and which values are bad.
+Only `config.toml` changes. See [`config.example.toml`](runlens/config.example.toml) for every option, and [`examples/m-feature.toml`](examples/m-feature.toml) for a real config for [mstack](https://github.com/marcossp32/mstack)'s `/m-feature` flow.
 
-Optionally, `[[group]]` names a set of skills and agent types to score together (see [Dashboard and benchmarks](#dashboard-and-benchmarks)).
+| Section | What it sets | Default |
+|---|---|---|
+| `[select]` | which sessions are runs: `since`, `skills`, `projects` | every session |
+| `[[evidence]]` | extra files to archive with each run | none |
+| `[[marker]]` | output lines that are signals, and which values are bad | none |
+| `[[group]]` | a set of skills and agent types to score together | none |
+| `[dashboard]` | `auto`: rebuild the dashboard after each ingested run | `true` |
+| `[analysis]` | thresholds of the generic incident detectors | see the example |
+| `[classify]` | the model `runlens classify` uses | `sonnet` |
+| `[prices]` | per-model prices, for models missing from the built-in table | built in |
+
+## Troubleshooting
+
+| You see | Why, and what to do |
+|---|---|
+| A diff says "text not recorded yet" | The skill text is recorded when a run is ingested. Run `runlens refresh` once |
+| A skill is not on the dashboard | It may not match `[select]`, or it only ever ran inside a subagent (a known gap, see above) |
+| Charts are empty or missing a skill | Open **Show in the charts** on the Skills page and tick it, or press **All skills** |
+| "few runs" next to a score | The unit has fewer than five runs. Read its range, not the number |
+| The dashboard is out of date | It is rebuilt by the hook when a session ends. Run `runlens dashboard` to rebuild it now. A failure is logged in `~/.runlens/hooks.log` |
+| `runlens check` reports `FAIL` | The transcript format changed and the parser fell behind. Do not trust the numbers until it passes |
 
 ## Development
 

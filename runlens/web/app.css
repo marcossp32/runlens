@@ -240,8 +240,44 @@ pre.diff .ctx{color:var(--text2)}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
 .chart.heat{height:auto;max-width:760px}
 .bublabel{fill:var(--text2);font-size:10.5px}
-.lanelabel{fill:var(--accent);font-size:13px;font-weight:600}
-.vlab{fill:var(--text2);font-size:11px;font-variant-numeric:tabular-nums}
+/* jump bar and collapsible selector */
+.jump{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.jump .seg{border:1px solid var(--line);border-radius:14px;padding:3px 12px;font-size:12.5px}
+.jump .seg:hover{color:var(--text)}
+#c-range,#c-versions,#c-cost,#c-measures,#c-spend,#c-table{scroll-margin-top:56px}
+details.selector{margin:0 0 4px}
+details.selector > summary{cursor:pointer;margin:0;font-size:13px;color:var(--text)}
+details.selector[open] > summary{margin-bottom:10px}
+.selcount{color:var(--muted);font-weight:400}
+
+/* the selector: skills and versions that are on */
+.selector .selbar{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.selector .srow{display:grid;grid-template-columns:minmax(140px,200px) minmax(0,1fr);gap:10px;align-items:start;padding:7px 0;border-top:1px solid var(--line2)}
+.selector .sname{font-weight:600;display:flex;gap:6px;align-items:center;padding-top:3px}
+.selector .vchips{display:flex;flex-wrap:wrap;gap:6px}
+.selector .vchip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:2px 10px;font-size:12px;color:var(--text2);cursor:pointer;font-variant-numeric:tabular-nums}
+.selector .vchip:has(input:disabled){opacity:.45;cursor:default}
+.selector input[type="checkbox"]{margin:0;accent-color:var(--accent)}
+.selector .note{margin:8px 0 0}
+
+/* the version chart: one line per skill, labelled at its end */
+.chart.vchart{max-width:700px}
+.vline{fill:none;stroke-width:2.2;stroke-linejoin:round}
+.vrange{stroke-width:2;opacity:.4}
+.vdot{stroke:var(--surface);stroke-width:1.5}
+.vend{font-size:12px;font-weight:600}
+.vline.s0,.vrange.s0{stroke:var(--s0)}
+.vline.s1,.vrange.s1{stroke:var(--s1)}
+.vline.s2,.vrange.s2{stroke:var(--s2)}
+.vline.s3,.vrange.s3{stroke:var(--s3)}
+.vline.s4,.vrange.s4{stroke:var(--s4)}
+.vline.s5,.vrange.s5{stroke:var(--s5)}
+.vdot.s0,.vend.s0{fill:var(--s0)}
+.vdot.s1,.vend.s1{fill:var(--s1)}
+.vdot.s2,.vend.s2{fill:var(--s2)}
+.vdot.s3,.vend.s3{fill:var(--s3)}
+.vdot.s4,.vend.s4{fill:var(--s4)}
+.vdot.s5,.vend.s5{fill:var(--s5)}
 
 /* how it works */
 .qa{margin-top:10px}
@@ -250,6 +286,15 @@ pre.diff .ctx{color:var(--text2)}
 details.more{margin:14px 0;max-width:76ch}
 details.more > summary{font-weight:600;color:var(--text);padding:6px 0}
 .formula{background:var(--code);border-radius:8px;padding:12px 14px;overflow-x:auto;font:13px/1.6 ui-monospace,Consolas,monospace;margin:8px 0 12px}
+.prose{max-width:80ch}
+.prose p,.prose li,.prose dd{color:var(--text2)}
+.prose ol,.prose ul{padding-left:20px}
+.prose li{margin:6px 0}
+.prose h2{margin:18px 0 4px;color:var(--text)}
+.prose .tw{margin:10px 0}
+.defs{margin:0}
+.defs dt{font-weight:600;margin-top:12px}
+.defs dd{margin:2px 0 0}
 .howto{max-width:72ch;padding:12px 0}
 .howto p{color:var(--text2)}
 .snippet{background:var(--code);border-radius:8px;padding:12px 14px;font:13px/1.5 ui-monospace,Consolas,monospace;overflow-x:auto}

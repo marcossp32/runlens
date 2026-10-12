@@ -148,6 +148,15 @@ class Attribution(unittest.TestCase):
         self.assertTrue(v["recorded"])
         self.assertEqual(v["parts"], [{"skill": "flow", "hash": "abcdef12"}])
 
+    def test_runs_carry_what_the_page_needs_to_rescore_a_selection(self):
+        model = bench.compute(data(
+            runs=[run("s1", 0)],
+            api=[turn("s1", "main", 1, "flow")],
+        ), resamples=10)
+        r = model["runs"]["skill:flow"][0]
+        for key in ("cost", "seconds", "calls", "call_errors", "idle", "turns", "api_errors", "incidents", "interventions", "bad"):
+            self.assertIn(key, r)
+
     def test_group_counts_shared_work_once(self):
         model = bench.compute(data(
             runs=[run("s1", 0)],
