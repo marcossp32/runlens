@@ -243,6 +243,7 @@ class RunlensTest(unittest.TestCase):
         diag = model["diag"]
         for key in ("runs", "incidents", "tool_errors", "tools", "models", "agent_types", "flow", "markers", "events"):
             self.assertIn(key, diag)
+        self.assertIn("agent_skills", diag)
         self.assertEqual(len(diag["runs"]), 1)
         self.assertTrue(any(t["tool"] == "Bash" for t in diag["tools"]))
         self.assertNotIn("{{", page)

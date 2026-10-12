@@ -1,6 +1,21 @@
 # runlens
 
-A history of your Claude Code runs in DuckDB, to find where a skill flow struggles and to check whether a change to a skill helped.
+**Benchmarks for your Claude Code skills and agents, built from your own run history.**
+
+runlens archives every Claude Code session (and the subagents it spawned) into a local DuckDB database, then scores each skill, agent role and group of skills against your average run. It tells you where a flow struggles, what it costs, and whether the last edit to a skill made things better or worse. Everything stays on your machine, and the dashboard is one static HTML file.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/skills-dark.jpg">
+    <img alt="The Skills page of the runlens dashboard: score range, score by version and a table of skills" src="docs/images/skills-light.jpg" width="900">
+  </picture>
+</p>
+<p align="center"><sub>The dashboard, in the theme your system uses. All the screenshots in this README come from invented data (see <a href="#screenshots">Screenshots</a>).</sub></p>
+
+- **A score per skill, computed and not labelled by hand.** A weighted geometric mean of eight measures (cost, time, errors, incidents, your interruptions and more), each against the average run, with a likely range so you can tell a real change from noise.
+- **Versions.** Each distinct text of a skill is a version, with the diff from the one before and a verdict on whether the score really moved.
+- **Charts and tables for the rest.** Models, effort, subagents, tools, incidents and how skills hand work to each other.
+- **A retrospective skill**, `/runlens-retro`, that turns the evidence into proposed skill edits.
 
 A **run** is one Claude Code session plus every subagent it spawned. runlens knows nothing about any skill or flow: skills, agent types and roles are attributes read from the transcripts. Everything specific to a flow lives in `~/.runlens/config.toml`:
 - which sessions count as runs;
@@ -160,7 +175,7 @@ The `v_*` views in [`views.sql`](runlens/views.sql) group by run, skill, agent r
   - an explicit `attributionSkill` wins;
   - a change to `None` pops back to the outer skill, because Claude Code records `None` when a nested skill ends; the outermost skill is never popped;
   - a subagent turn with no attribution inherits the skill active where the subagent was spawned.
-  - **Known gap.** Claude Code also writes the spawning skill as `attributionSkill` on subagent turns. So a skill that a subagent loads for itself is credited to the skill that spawned it, and it gets no unit or versions of its own. Fixing this changes every per-skill total, so it is not done yet.
+  - **Known gap.** Claude Code also writes the spawning skill as `attributionSkill` on subagent turns. So a skill that a subagent loads for itself is credited to the skill that spawned it, and it gets no unit or versions of its own. Changing that would change every per-skill total, so those skills are listed instead on the Diagnostics page, under Agents, **Skills inside**.
 - **Forks.** A fork agent starts with a copy of its parent's history. Those records are skipped, so no work is counted twice.
 - **Roles.** A role is the subagent's description with numbers folded, so `Repro F-013` becomes `Repro F-#`.
 - **Skill versions.** A version is a hash of the skill text as Claude Code injected it, without the invocation arguments. Each version's text is kept once in `skill_texts`, so the dashboard can diff versions. `v_skill_version_stats` compares versions in SQL. A version whose text was never recorded is shown as unrecorded, and it is not counted as a version.
@@ -186,6 +201,8 @@ Every skill that ran and every agent role gets its own score, with no labelling 
 
 ### The pages
 
+<p align="center"><img alt="A skill page: gauge, radar profile and sparklines, then its versions" src="docs/images/skill-page.jpg" width="760"></p>
+
 | Page | It answers | What is on it |
 |---|---|---|
 | **Skills** | Which skills do well, and did a new version help? | Summary cards, the score range of every skill, score by version, score against cost, a treemap of spend, a heatmap of every measure, runs per day, and a sortable table. Agent roles and groups are on the other two tabs |
@@ -193,6 +210,11 @@ Every skill that ran and every agent role gets its own score, with no labelling 
 | **Compare** | Is version B really better than A? | Any two skills, roles or groups, and any of their versions: a verdict from their likely ranges, a radar overlay, and bars for each measure |
 | **Diagnostics** | What else happened? | Six tabs, below |
 | **How it works** | How is the score made? | Five short tabs, including a worked example that walks one of your own skills from its measures to its score |
+
+The Skills page has three tabs of charts: Overview, Cost and Measures.
+
+<p align="center"><img alt="Spend by skill and score against cost" src="docs/images/skills-cost.jpg" width="760"></p>
+<p align="center"><img alt="A heatmap of every measure for every skill" src="docs/images/skills-measures.jpg" width="760"></p>
 
 ### Choosing what the charts show
 
@@ -206,11 +228,14 @@ On the Skills page, the **Show in the charts** panel is collapsed, with the curr
 
 ### Diagnostics
 
+<p align="center"><img alt="Effort level by model: spend, calls, thinking tokens" src="docs/images/diagnostics-effort.jpg" width="760"></p>
+<p align="center"><img alt="Subagents generated per run, by type and by skill" src="docs/images/diagnostics-agents.jpg" width="760"></p>
+
 - **Runs**: cost, active time, lines changed, prompts and incidents per run, with scatter plots of cost against time and against code changed.
 - **Problems**: incidents by type, role and skill, and tool errors by class and tool.
 - **Tools**: calls, error rate, latency, and where the time goes.
 - **Models**: spend; effort (spend and calls by level, thinking tokens and time, which model ran at which level); spend by skill and model; spend and calls per day; API errors, tokens processed and cache hit.
-- **Agents**: overview (spend, context size, how subagents ended); generated (how many each run, day and skill started, by type, and whether they ran in the background); roles and time; which models they used.
+- **Agents**: overview (spend, context size, how subagents ended); generated (how many each run, day and skill started, by type, and whether they ran in the background); roles and time; which models they used; the skills they loaded for themselves.
 - **Flow and checks**: which skill hands over to which, your config's markers, and failure labels once `runlens classify` has run.
 
 ### The score
@@ -236,6 +261,12 @@ A unit with few runs is pulled toward the average, and no measure counts for mor
 
 A version is one distinct skill text, recorded when Claude Code loads the skill. Versions are numbered by first use, and each is diffed against the one before it. Only versions whose text was recorded are counted: a skill with no recorded text shows as unrecorded.
 
+<p align="center"><img alt="Versions of a skill, with the score of each and the diff from the one before" src="docs/images/versions-diff.jpg" width="760"></p>
+
+**Compare** puts any two versions (or skills, roles, groups) side by side and says whether their ranges overlap:
+
+<p align="center"><img alt="Comparing two versions of a skill: radar overlay and bars per measure" src="docs/images/compare.jpg" width="760"></p>
+
 ### Groups
 
 Name a set of skills and agent types in `config.toml`:
@@ -248,10 +279,14 @@ members = ["skill:my-plan", "skill:my-build", "agent:Explore"]
 
 A group's runs are the union of its members' work, each piece counted once. Its version is the combination of its members' versions, so it changes when any member's text changes.
 
+The dashboard's own **How it works** page walks one skill from its measures to its score:
+
+<p align="center"><img alt="A worked example of the score" src="docs/images/how-it-works.jpg" width="760"></p>
+
 ### What the score does not tell you
 
 - **Whether a run produced the right result.** It measures cost, time, failures and how often you had to step in. Read the traces with `runlens show` before acting on a drop.
-- **Anything about a skill that only ran inside a subagent.** See the known gap under [How the data is read](#how-the-data-is-read).
+- **Anything about a skill that only ran inside a subagent.** It has no score of its own; it is listed under Diagnostics, Agents, **Skills inside**. See [How the data is read](#how-the-data-is-read).
 - **More than the runs support.** With few runs the range is wide; trust the range, not the number.
 
 ## Using it with your flow
@@ -274,7 +309,7 @@ Only `config.toml` changes. See [`config.example.toml`](runlens/config.example.t
 | You see | Why, and what to do |
 |---|---|
 | A diff says "text not recorded yet" | The skill text is recorded when a run is ingested. Run `runlens refresh` once |
-| A skill is not on the dashboard | It may not match `[select]`, or it only ever ran inside a subagent (a known gap, see above) |
+| A skill is not on the dashboard | It may not match `[select]`, or it only ever ran inside a subagent (see Diagnostics, Agents, Skills inside) |
 | Charts are empty or missing a skill | Open **Show in the charts** on the Skills page and tick it, or press **All skills** |
 | "few runs" next to a score | The unit has fewer than five runs. Read its range, not the number |
 | The dashboard is out of date | It is rebuilt by the hook when a session ends. Run `runlens dashboard` to rebuild it now. A failure is logged in `~/.runlens/hooks.log` |
@@ -301,6 +336,15 @@ CI runs the tests on Windows and Linux with Python 3.11 and 3.14. They use a syn
 - the hook, install, labels and dashboard.
 
 `tests/test_bench.py` checks the score, the version, group and attribution rules on plain rows, without a database.
+
+### Screenshots
+
+The images in this README come from `scripts/make_demo.py`, which builds an invented history (six made-up skills, three models, 33 runs) in a throwaway home folder. It never reads your transcripts. To see the same data:
+
+```bash
+python scripts/make_demo.py demo-home
+RUNLENS_HOME=demo-home runlens dashboard --out demo.html
+```
 
 ## References
 

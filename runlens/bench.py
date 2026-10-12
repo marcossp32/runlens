@@ -544,6 +544,11 @@ def diagnostics(con):
         "agent_time": rows("""SELECT coalesce(agent_type, '?') AS agent_type, avg(epoch(ended - started)) AS avg_s,
                                      median(epoch(ended - started)) AS median_s, quantile_cont(epoch(ended - started), 0.95) AS p95_s
                               FROM agents WHERE agent_id <> 'main' AND ended IS NOT NULL GROUP BY 1"""),
+        # skills a subagent loaded for itself: they get no unit of their own, so they are listed here
+        "agent_skills": rows("""SELECT l.skill, coalesce(a.agent_type, '?') AS agent_type, count(*) AS loads,
+                                       count(DISTINCT l.session_id || a.agent_id) AS agents, sum(a.cost_usd) AS cost
+                                FROM skill_loads l JOIN agents a ON a.session_id = l.session_id AND a.agent_id = l.agent_id
+                                WHERE l.agent_id <> 'main' GROUP BY 1, 2 ORDER BY loads DESC"""),
         "agent_day": rows("""SELECT strftime(started, '%Y-%m-%d') AS day, count(*) AS n, sum(cost_usd) AS cost FROM agents
                              WHERE agent_id <> 'main' AND started IS NOT NULL GROUP BY 1 ORDER BY 1"""),
     }

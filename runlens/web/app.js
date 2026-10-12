@@ -263,10 +263,10 @@
   const legendOf = (items) => h("ul", { class: "legend" }, items.map((it) => h("li", {}, h("span", { class: `swatch ${it.cls}` }), it.label)));
 
   // Readable tick values between lo and hi, about `count` of them.
-  function ticks(lo, hi, count) {
+  function ticks(lo, hi, count, whole = false) {
     if (!(hi > lo)) return [lo];
     const pow = 10 ** Math.floor(Math.log10((hi - lo) / count));
-    const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((s) => (hi - lo) / s <= count) || pow * 10;
+    const step = (whole ? [1, 2, 5, 10] : [1, 2, 2.5, 5, 10]).map((m) => Math.max(m * pow, whole ? 1 : 0)).find((s) => (hi - lo) / s <= count) || pow * 10;
     const out = [];
     for (let t = Math.ceil(lo / step) * step; t <= hi + step / 1e6; t += step) out.push(Number(t.toPrecision(10)));
     return out;
@@ -661,7 +661,7 @@
       value: runs.filter((r) => r.version === v.label).reduce((n, r) => n + (r.cost || 0), 0) })).filter((p) => p.value > 0);
   }
 
-  function donut(parts, fmtv = fmt.usd, centre = centre) {
+  function donut(parts, fmtv = fmt.usd, centre = "total spend") {
     const total = parts.reduce((n, p) => n + p.value, 0);
     if (!total) return empty("No spend recorded yet.");
     const W = 200, R = 74, C = 2 * Math.PI * R, mid = W / 2;
@@ -1575,12 +1575,12 @@
     const rows = items.filter((i) => i.value != null && Number.isFinite(i.value));
     if (!rows.length) return empty("Nothing recorded for this yet.");
     const top = Math.max(...rows.map((r) => r.value), 1e-9) * 1.05;
-    const scale = ticks(0, top, 4);
+    const scale = ticks(0, top, 4, rows.every((r) => Number.isInteger(r.value)));
     const yMax = Math.max(top, scale[scale.length - 1]);
     const W = 640, H = 220, L = 58, R = 10, T = 10, B = 34;
     const slot = (W - L - R) / rows.length, bw = Math.min(46, slot * 0.7);
     const y = (v) => T + (H - T - B) * (1 - v / yMax);
-    const every = slot < 44 ? 2 : 1;
+    const every = Math.max(1, Math.ceil(54 / slot));
     const chart = svg("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${rows.length} columns, largest ${fmtv(Math.max(...rows.map((r) => r.value)))}` });
     for (const t of scale) {
       chart.append(svg("line", { class: "grid", x1: L, x2: W - R, y1: y(t), y2: y(t) }),
@@ -1673,7 +1673,7 @@
     if (!rows.length) return empty("Nothing recorded for this yet.");
     const totals = rows.map((r) => r.parts.reduce((n, p) => n + p.value, 0));
     const top = Math.max(...totals, 1e-9) * 1.05;
-    const scale = ticks(0, top, 4);
+    const scale = ticks(0, top, 4, totals.every(Number.isInteger));
     const yMax = Math.max(top, scale[scale.length - 1]);
     const W = 640, H = 240, L = 58, R = 10, T = 10, B = 34;
     const slot = (W - L - R) / rows.length, bw = Math.min(46, slot * 0.7);
@@ -1692,7 +1692,7 @@
           height: Math.max(0, y(acc) - y(acc + p.value)).toFixed(1) }, svg("title", {}, `${r.label} · ${p.label}: ${fmtv(p.value)}`)));
         acc += p.value;
       });
-      if (i % (slot < 44 ? 2 : 1) === 0) chart.append(svg("text", { class: "axis", x: (x0 + bw / 2).toFixed(1), y: H - 14, "text-anchor": "middle" }, clip(r.label, 9)));
+      if (i % Math.max(1, Math.ceil(54 / slot)) === 0) chart.append(svg("text", { class: "axis", x: (x0 + bw / 2).toFixed(1), y: H - 14, "text-anchor": "middle" }, clip(r.label, 9)));
     });
     return chart;
   }
@@ -1968,6 +1968,21 @@
       card("Median time by agent type", hbars(times.map((t) => ({ label: t.agent_type, value: t.median_s })), fmt.secs, "s2")),
       table({ caption: "Roles", cols: roleCols, rows: roles, sort: { key: "cost", dir: -1 } }).el);
 
+    const loaded = D.agent_skills || [];
+    const loadedCols = [
+      { key: "skill", label: "Skill", value: (r) => r.skill },
+      { key: "type", label: "Agent type", value: (r) => r.agent_type },
+      { key: "loads", label: "Loads", num: true, value: (r) => r.loads },
+      { key: "agents", label: "Subagents", num: true, value: (r) => r.agents },
+      { key: "cost", label: "Cost of those subagents", num: true, value: (r) => r.cost, cell: (r) => fmt.usd(r.cost) },
+    ];
+    const loadedTab = loaded.length
+      ? h("div", { class: "charts" },
+        card("Skills loaded inside subagents", hbars(loaded.slice(0, 12).map((r) => ({ label: `${r.skill} · ${r.agent_type}`, value: r.loads })), (v) => fmt.num(v, 0), "s4"),
+          note("A skill a subagent loads for itself is counted under the skill that started the subagent, so it has no score or versions of its own. It is listed here instead.")),
+        table({ caption: "Skills loaded by subagents", cols: loadedCols, rows: loaded, sort: { key: "loads", dir: -1 } }).el)
+      : h("div", { class: "charts" }, note("No subagent loaded a skill for itself."));
+
     const am = D.agent_models || [];
     const modelNames = [...new Set(am.map((x) => x.model))];
     const mcolour = new Map(modelNames.map((m, i) => [m, `s${i % 6}`]));
@@ -1983,6 +1998,7 @@
       { id: "a-generated", label: "Generated", build: () => generated },
       { id: "a-roles", label: "Roles and time", build: () => rolesTab },
       { id: "a-models", label: "Models", build: () => modelsTab },
+      { id: "a-skills", label: "Skills inside", build: () => loadedTab },
     ]));
   }
 

@@ -14,7 +14,7 @@
 - Skill texts are stored once per version (`skill_texts`), so versions can be diffed. Run `runlens refresh` once to record them for runs already archived.
 - Only versions whose skill text was recorded are counted. The rest are shown as unrecorded.
 - The hook rebuilds the dashboard after each ingested run. Turn it off with `[dashboard] auto = false`.
-- Known gap: a skill that a subagent loads for itself is credited to the skill that spawned it, so it gets no unit or versions of its own. Fixing it changes every per-skill total (see the README).
+- A skill that a subagent loads for itself is credited to the skill that spawned it, so it gets no unit or versions of its own. Diagnostics, Agents, "Skills inside" lists those skills with their loads and the cost of the subagents that loaded them.
 
 ## 0.1.1 - 2026-10-04
 

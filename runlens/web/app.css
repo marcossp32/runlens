@@ -286,7 +286,7 @@ details.selector[open] > summary{margin-bottom:10px}
 details.more{margin:14px 0;max-width:76ch}
 details.more > summary{font-weight:600;color:var(--text);padding:6px 0}
 .formula{background:var(--code);border-radius:8px;padding:12px 14px;overflow-x:auto;font:13px/1.6 ui-monospace,Consolas,monospace;margin:8px 0 12px}
-.prose{max-width:80ch}
+.prose > p,.prose > ol,.prose > ul,.prose > dl,.prose > h2,.prose > details{max-width:80ch}
 .prose p,.prose li,.prose dd{color:var(--text2)}
 .prose ol,.prose ul{padding-left:20px}
 .prose li{margin:6px 0}
