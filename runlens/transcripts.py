@@ -200,7 +200,7 @@ def parse_run(main, info, cfg):
     an = cfg["analysis"]
     markers = Markers(cfg)
     test_rx = re.compile(an["test_path"], re.I)
-    rows = {t: [] for t in ("runs", "agents", "api_calls", "tool_calls", "texts", "events", "markers", "skill_loads")}
+    rows = {t: [] for t in ("runs", "agents", "api_calls", "tool_calls", "texts", "events", "markers", "skill_loads", "skill_texts")}
     sid = main.stem
     meta_by_agent = {}
     for meta in main.with_suffix("").glob("subagents/*.meta.json"):
@@ -312,12 +312,14 @@ def parse_run(main, info, cfg):
                         skill_dir = m.group(1)
                         loaded = re.split(r"[\\/]", skill_dir.rstrip("\\/"))[-1]
                         skills.push(loaded)
+                        digest = hashlib.sha1(body.strip().encode()).hexdigest()[:12]
                         rows["skill_loads"].append({
                             "session_id": sid, "agent_id": agent_id, "ts": t, "seq": seq,
                             "skill": loaded, "skill_dir": skill_dir,
-                            "content_hash": hashlib.sha1(body.strip().encode()).hexdigest()[:12], "content_len": len(body),
+                            "content_hash": digest, "content_len": len(body),
                             "args": args.strip()[:2000] or None,
                         })
+                        rows["skill_texts"].append({"skill": loaded, "content_hash": digest, "text": body.strip()})
                 results = [x for x in content if isinstance(x, dict) and x.get("type") == "tool_result"] if isinstance(content, list) else []
                 tur = r.get("toolUseResult")
                 for x in results:

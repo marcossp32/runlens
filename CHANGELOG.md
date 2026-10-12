@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- `runlens dashboard` writes `~/.runlens/dashboard.html`, a static page built from the database with no server and no network:
+  - every skill and agent role is scored on its own, and each group in `config.toml` is scored as one unit;
+  - charts: score range, score by version (one line per skill), score against cost, spend, a heatmap of measures and runs per day; a gauge, a radar profile and sparklines for each unit; cost over time and cost against time per run;
+  - a "Show in the charts" panel on the Skills page turns skills and their versions on and off; every chart and table there follows it;
+  - each unit's versions are listed with their score, likely range and the diff against the version before;
+  - two skills, roles or groups, and any of their versions, can be compared side by side;
+  - a Diagnostics page covers the rest of the database: runs, incidents, tool errors, tools, models, agents, skill hand-offs and markers, as bars, columns, scatter plots, matrices, donuts and stacked bars;
+  - a "How it works" page in five short tabs: the score, a worked example that follows one of your own skills from its measures to its score, the measures, the pages, and what to keep in mind.
+- The score is computed, not labelled: a weighted geometric mean of eight metrics (cost, time, tool errors, incidents, human prompts, idle calls, API errors, bad markers), each compared with the average run of its kind. Each score has a 5th to 95th percentile interval from resampling the runs.
+- Skill texts are stored once per version (`skill_texts`), so versions can be diffed. Run `runlens refresh` once to record them for runs already archived.
+- Only versions whose skill text was recorded are counted. The rest are shown as unrecorded.
+- The hook rebuilds the dashboard after each ingested run. Turn it off with `[dashboard] auto = false`.
+- A skill that a subagent loads for itself is credited to the skill that spawned it, so it gets no unit or versions of its own. Diagnostics, Agents, "Skills inside" lists those skills with their loads and the cost of the subagents that loaded them.
+
 ## 0.1.1 - 2026-10-04
 
 - Install and develop with uv:

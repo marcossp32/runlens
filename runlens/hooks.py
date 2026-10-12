@@ -23,6 +23,17 @@ def log(line):
         fh.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {line}\n")
 
 
+def refresh_dashboard(cfg):
+    """Rebuild the benchmark dashboard after a run is ingested. Its failure is logged, never raised."""
+    if not cfg.get("dashboard", {}).get("auto", True):
+        return
+    try:
+        from .dashboard import write_dashboard
+        write_dashboard(cfg)
+    except Exception as e:
+        log(f"dashboard: {type(e).__name__}: {e}")
+
+
 def handle(cfg, payload):
     if os.environ.get("RUNLENS_JUDGE"):
         return 0
@@ -40,6 +51,7 @@ def handle(cfg, payload):
             try:
                 ingest(cfg, sessions=[sid], quiet=True)
                 log(f"archived and ingested {sid} ({data.get('reason')})")
+                refresh_dashboard(cfg)
                 return 0
             except Exception as e:
                 if "lock" not in str(e).lower() or attempt == 5:

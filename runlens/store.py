@@ -62,6 +62,9 @@ SCHEMA = {
 RUN_TABLES = list(SCHEMA)
 
 # Labels survive re-ingest: they are keyed by incident_id, which is stable for the same run content.
+# The text of each skill version, once per (skill, hash): what a diff between versions compares.
+SKILL_TEXTS = """CREATE TABLE IF NOT EXISTS skill_texts (
+    skill VARCHAR, content_hash VARCHAR, text VARCHAR, PRIMARY KEY (skill, content_hash))"""
 LABELS = """CREATE TABLE IF NOT EXISTS labels (
     incident_id VARCHAR, source VARCHAR, category VARCHAR, fault VARCHAR, confidence VARCHAR, note VARCHAR,
     evidence VARCHAR, model VARCHAR, labeled_at TIMESTAMPTZ DEFAULT current_timestamp)"""
@@ -80,6 +83,7 @@ def connect(read_only=False):
             if c not in have:
                 con.execute(f"ALTER TABLE {table} ADD COLUMN {c} {t}")
     con.execute(LABELS)
+    con.execute(SKILL_TEXTS)
     for col in ("fault", "confidence"):
         con.execute(f"ALTER TABLE labels ADD COLUMN IF NOT EXISTS {col} VARCHAR")
     con.execute((config.PACKAGE / "views.sql").read_text(encoding="utf-8"))
@@ -107,6 +111,8 @@ def ingest(cfg, since=None, sessions=None, quiet=False):
                 names = [c for c, _ in cols]
                 con.executemany(f"INSERT INTO {table} ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
                                 [[r.get(n) for n in names] for r in rows[table]])
+        for t in rows["skill_texts"]:  # a version's text is kept once, however many runs loaded it
+            con.execute("INSERT INTO skill_texts VALUES (?, ?, ?) ON CONFLICT DO NOTHING", [t["skill"], t["content_hash"], t["text"]])
         con.execute("COMMIT")
         done += 1
         if not quiet:

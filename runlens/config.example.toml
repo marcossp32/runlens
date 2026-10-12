@@ -18,6 +18,16 @@ projects = []     # keep runs whose working directory contains one of these stri
 [classify]
 model = "sonnet"  # model alias `claude -p` uses to label incidents
 
+[dashboard]
+auto = true  # rebuild ~/.runlens/dashboard.html after each run is ingested; `runlens dashboard` always works
+
+# Every skill and agent role already has its own score. A group scores a set of them together:
+# its runs are the union of its members' work, each piece counted once. Members are
+# "skill:<name>" or "agent:<subagent type>". A single skill can be a group too.
+# [[group]]
+# name = "pipeline"
+# members = ["skill:my-plan", "skill:my-build", "agent:Explore"]
+
 # [prices]  USD per million tokens (input, output, cache_read), for models missing from the built-in table.
 # "claude-new-model" = [3.0, 15.0, 0.30]
 

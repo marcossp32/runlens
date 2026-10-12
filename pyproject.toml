@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "runlens"
 version = "0.1.1"
-description = "History of Claude Code runs in DuckDB, to find where a flow struggles"
+description = "Benchmarks for Claude Code skills and agents, built from your own run history in DuckDB"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -29,4 +29,4 @@ runlens = "runlens.cli:run"
 packages = ["runlens"]
 
 [tool.setuptools.package-data]
-runlens = ["*.sql", "*.toml", "skill/**/*"]
+runlens = ["*.sql", "*.toml", "skill/**/*", "web/*"]

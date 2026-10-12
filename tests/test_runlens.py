@@ -7,6 +7,7 @@ import importlib
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -21,7 +22,7 @@ os.environ["CLAUDE_SETTINGS"] = str(TMP / "settings.json")
 from runlens import config  # noqa: E402
 
 importlib.reload(config)
-from runlens import archive, check, classify, hooks, report, store, transcripts  # noqa: E402
+from runlens import archive, bench, check, classify, dashboard, hooks, report, store, transcripts  # noqa: E402
 
 SID = "11111111-2222-3333-4444-555555555555"
 USAGE = {"input_tokens": 10, "cache_read_input_tokens": 1000, "output_tokens": 100,
@@ -32,6 +33,10 @@ name = "step_check"
 source = "tool_result"
 pattern = '^STEP CHECK: (PASS|FAIL)\\b'
 bad = ["FAIL"]
+
+[[group]]
+name = "pipeline"
+members = ["skill:flow", "skill:build", "agent:general-purpose"]
 """
 
 
@@ -218,6 +223,44 @@ class RunlensTest(unittest.TestCase):
         self.assertIn("Run Diagnosis", page)
         self.assertIn("step_check", page)
 
+    def test_bench_scores_every_skill_role_and_group(self):
+        model = bench.build(self.con, self.cfg.get("group", []), resamples=20)
+        ids = {u["id"] for u in model["units"]}
+        self.assertTrue({"skill:flow", "skill:build", "agent:general-purpose|Build step #", "group:pipeline"} <= ids, ids)
+        flow = next(u for u in model["units"] if u["id"] == "skill:flow")
+        self.assertEqual(flow["runs"], 1)
+        self.assertIsNotNone(flow["score"])
+        self.assertEqual(model["runs"]["skill:flow"][0]["task"], "issue 7")
+        self.assertEqual([v["label"] for v in model["versions"]["skill:flow"]], ["v1"])
+        self.assertTrue(model["texts"])
+
+    def test_dashboard_is_self_contained_and_parses(self):
+        path = dashboard.write_dashboard(self.cfg, str(TMP / "dash.html"))
+        page = Path(path).read_text(encoding="utf-8")
+        blob = re.search(r'<script id="data" type="application/json">(.*?)</script>', page, re.S).group(1)
+        model = json.loads(blob)
+        self.assertIn("pipeline", {u["name"] for u in model["units"]})
+        diag = model["diag"]
+        for key in ("runs", "incidents", "tool_errors", "tools", "models", "agent_types", "flow", "markers", "events"):
+            self.assertIn(key, diag)
+        self.assertIn("agent_skills", diag)
+        self.assertEqual(len(diag["runs"]), 1)
+        self.assertTrue(any(t["tool"] == "Bash" for t in diag["tools"]))
+        self.assertNotIn("{{", page)
+        self.assertEqual(page.count("</script>"), 2)
+        self.assertIsNone(re.search(r'(src|href)="https?://', page))
+
+    def test_embedded_data_cannot_close_its_script(self):
+        evil = "</script><img src=x onerror=alert(1)>& "
+        text = dashboard.embed({"args": evil})
+        self.assertNotIn("<", text)
+        self.assertNotIn(">", text)
+        self.assertEqual(json.loads(text)["args"], evil)
+
+    def test_web_assets_ship_with_the_package(self):
+        for name in ("template.html", "app.css", "app.js"):
+            self.assertTrue((config.PACKAGE / "web" / name).exists(), name)
+
     def test_labels_roundtrip_and_agreement(self):
         self.con.close()
         con = store.connect()
@@ -258,6 +301,7 @@ class RunlensTest(unittest.TestCase):
         self.assertEqual(hooks.handle(self.cfg, payload), 0)
         self.assertTrue(any(config.ARCHIVE.glob(f"*/{SID}.jsonl")))
         self.assertIn("archived and ingested", (config.HOME / "hooks.log").read_text(encoding="utf-8"))
+        self.assertTrue((config.HOME / "dashboard.html").exists())  # rebuilt after each ingested run
         self.assertEqual(hooks.handle(self.cfg, "not json"), 0)  # never raises
         type(self).con = store.connect(read_only=True)
 
