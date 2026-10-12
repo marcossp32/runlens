@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `runlens dashboard` writes `~/.runlens/dashboard.html`, a static page built from the database with no server and no network:
+  - every skill and agent role is scored on its own, and each group in `config.toml` is scored as one unit;
+  - charts: score range, version history, score against cost, spend, a heatmap of measures and runs per day; a gauge, a radar profile and sparklines for each unit; cost over time and cost against time per run;
+  - each unit's versions are listed with their score, likely range and the diff against the version before;
+  - two skills, roles or groups, and any of their versions, can be compared side by side;
+  - a "How it works" page explains the formula and the settings.
+- The score is computed, not labelled: a weighted geometric mean of eight metrics (cost, time, tool errors, incidents, human prompts, idle calls, API errors, bad markers), each compared with the average run of its kind. Each score has a 5th to 95th percentile interval from resampling the runs.
+- Skill texts are stored once per version (`skill_texts`), so versions can be diffed. Run `runlens refresh` once to record them for runs already archived.
+- Only versions whose skill text was recorded are counted. The rest are shown as unrecorded.
+- The hook rebuilds the dashboard after each ingested run. Turn it off with `[dashboard] auto = false`.
+- Known gap: a skill that a subagent loads for itself is credited to the skill that spawned it, so it gets no unit or versions of its own. Fixing it changes every per-skill total (see the README).
+
 ## 0.1.1 - 2026-10-04
 
 - Install and develop with uv:

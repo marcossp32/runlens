@@ -70,12 +70,14 @@ Claude Code deletes transcripts after `cleanupPeriodDays`, 30 by default. The ru
 
 - **Data stays on the machine.** The archive, the database and the report live in `~/.runlens/`, outside the repo. Each machine records only its own sessions. To bring another machine's history over, copy its `~/.runlens/archive/` and run `runlens ingest`.
 - **The hook calls the tool's own Python** by absolute path. `uv tool upgrade` keeps that path. After `uv tool uninstall` followed by a fresh install, run `runlens install` again.
+- **The dashboard contains transcript text.** It embeds the text of each skill version and the arguments of each run, so it is as private as the transcripts. Keep it on your machine, and check it before you share it.
 
 ### Update
 
 ```bash
 uv tool upgrade runlens
 runlens install     # refreshes the /runlens-retro skill
+runlens refresh     # once: records the skill texts that versions are diffed against
 ```
 
 ### Uninstall
@@ -93,6 +95,7 @@ rm -rf ~/.runlens                  # only if you also want to delete the recorde
 runlens refresh      # archive + ingest the runs selected in config.toml
 runlens check        # compare the database with the raw transcripts
 runlens report       # write ~/.runlens/report.html
+runlens dashboard    # write ~/.runlens/dashboard.html: scores, versions, profiles, comparisons
 runlens show <id>    # the timeline around an incident or a tool call
 ```
 
@@ -102,6 +105,7 @@ runlens show <id>    # the timeline around an incident or a tool call
 | `check` | Compares counts with the raw transcripts, checks cost against Claude Code's `cost-state`, and finds subagents with no parent. The transcript format is internal to Claude Code and changes between versions; a `FAIL` means the parser fell behind |
 | `summary` | One table per run and one per skill, in the terminal |
 | `report` | A self-contained HTML report. `--session` limits it to some runs |
+| `dashboard` | The benchmark dashboard, one static HTML file (see [Dashboard and benchmarks](#dashboard-and-benchmarks)). `--out` chooses the path. Rebuilt after each ingested run unless `[dashboard] auto = false` |
 | `incidents` | List incidents (`--type`, `--skill`) |
 | `show <id>` | What the agent was asked, said and did, in order, around an incident or a tool call |
 | `classify` | Labels incidents with a failure taxonomy through `claude -p`. Uses your Claude Code login, no API key. About $0.02 per incident on Sonnet |
@@ -127,6 +131,7 @@ In Claude Code, `/runlens-retro` runs the whole retrospective:
 | `events` | human prompts, interrupts, compactions, API errors, turn durations |
 | `markers` | matches of the patterns in `config.toml` |
 | `skill_loads` | each skill load, with a hash of the skill text (its version) and the invocation arguments |
+| `skill_texts` | each skill version's text, once per skill and hash: what a diff between versions compares |
 | `incidents` | moments worth reading, each with the timeline that led to it |
 | `labels` | failure labels from the LLM and from humans; they survive re-ingest |
 
@@ -135,15 +140,15 @@ The `v_*` views in [`views.sql`](runlens/views.sql) group by run, skill, agent r
 ## How it works
 
 - **Cost.** Each model's cost comes from Claude Code's `cost-state` and is split across that model's calls by their list-price cost. A run that is still open has no `cost-state` yet, so it is estimated at list price (`runs.cost_estimated`). Override prices under `[prices]`.
-- **Skill attribution.** Claude Code records `attributionSkill` on main-session turns but not inside subagents. When a nested skill ends, it records `None` instead of the outer skill. So:
-  - a skill load pushes;
-  - an explicit attribution wins;
-  - a change to `None` pops back to the outer skill;
-  - the outermost skill is never popped;
-  - a subagent with no skill of its own inherits the skill active where it was spawned.
+- **Skill attribution.** Each model turn and tool call is credited to a skill:
+  - a skill load pushes it onto the stack of its agent;
+  - an explicit `attributionSkill` wins;
+  - a change to `None` pops back to the outer skill, because Claude Code records `None` when a nested skill ends; the outermost skill is never popped;
+  - a subagent turn with no attribution inherits the skill active where the subagent was spawned.
+  - **Known gap.** Claude Code also writes the spawning skill as `attributionSkill` on subagent turns. So a skill that a subagent loads for itself is credited to the skill that spawned it, and it gets no unit or versions of its own. Fixing this changes every per-skill total, so it is not done yet.
 - **Forks.** A fork agent starts with a copy of its parent's history. Those records are skipped, so no work is counted twice.
 - **Roles.** A role is the subagent's description with numbers folded, so `Repro F-013` becomes `Repro F-#`.
-- **Skill versions.** A version is a hash of the skill text as Claude Code injected it, without the invocation arguments. `v_skill_version_stats` compares versions.
+- **Skill versions.** A version is a hash of the skill text as Claude Code injected it, without the invocation arguments. Each version's text is kept once in `skill_texts`, so the dashboard can diff versions. `v_skill_version_stats` compares versions in SQL. A version whose text was never recorded is shown as unrecorded, and it is not counted as a version.
 - **Incidents.** The generic ones are:
   - `error_streak`: consecutive failing tool calls;
   - `repeated_call`: identical calls;
@@ -158,12 +163,45 @@ The `v_*` views in [`views.sql`](runlens/views.sql) group by run, skill, agent r
 - **Taxonomy.** Seeded from MAST and from coding-agent failure studies, plus operational categories. To adapt it, copy [`taxonomy.toml`](runlens/taxonomy.toml) to `~/.runlens/taxonomy.toml`.
 - **LLM labels.** They are a first pass, not ground truth: unvalidated judges find few errors in traces. Review a sample with `labels export/import` and read `agreement` before trusting a category.
 
+## Dashboard and benchmarks
+
+`runlens dashboard` writes `~/.runlens/dashboard.html`: one static page with the data embedded. It opens offline from any folder, needs no server, and makes no network requests. The hook rebuilds it after each run is ingested.
+
+Every skill that ran and every agent role gets its own score, with no labelling by hand. Each group you define in `config.toml` gets one too.
+
+The dashboard has four pages:
+
+- **Skills.** A summary row, then the charts: each skill's score range against the average, the version history of every skill, a bubble chart of score against cost per run, a treemap of where the spend goes, a heatmap of every skill against every measure, and runs per day. Below them, a table you can sort, and every recorded version in a collapsed list. Agent roles and groups are on the other two tabs. Roles seen only once are hidden until you tick the box.
+- **A skill, role or group.** A gauge for the score, a radar profile against the average with each vertex labelled by its value, and KPI cards with sparklines. The radar overlays the current version on the one before it. Three tabs: **Versions** (when each version was in use, its score, what changed, with the diff), **What drives the score** (spend by version and the breakdown of every measure), and **Runs** (cost over time, cost against time, and each run).
+- **Compare.** Pick any two skills, roles or groups, and any of their versions. The verdict uses their likely ranges, and the page shows a radar overlay and bars for each measure.
+- **How it works.** The score in plain words, with the exact formula and settings in a collapsed section.
+
+**The score.** 100 is the average run of the same kind (skill, agent role or group). Above 100 is better. It is a weighted geometric mean of eight metrics: cost per run (weight 3), time per run (2), tool error rate (2), incidents per run (2), human prompts per run (2), idle call rate (1), API error rate (1), bad markers per run (1). Each metric is compared with the average, pulled toward it when the sample is small, and clipped to a factor of two. Scores from fewer than five runs are flagged.
+
+**The likely range.** The 5th to 95th percentile of the score over 200 resamples of the unit's runs. Two scores are only called different when their ranges do not overlap.
+
+**Versions.** A version is one distinct skill text, recorded when Claude Code loads the skill. Versions are numbered by first use, and each is diffed against the one before it. Only versions whose text was recorded are counted.
+
+**Groups.** Name a set of skills and agent types in `config.toml`:
+
+```toml
+[[group]]
+name = "my-flow"
+members = ["skill:my-plan", "skill:my-build", "agent:Explore"]
+```
+
+A group's runs are the union of its members' work, each piece counted once. Its version is the combination of its members' versions, so it changes when any member's text changes.
+
+The score does not judge whether a run produced the right result. Read the traces with `runlens show` before acting on a drop.
+
 ## Using it with your flow
 
 Only `config.toml` changes. See [`config.example.toml`](runlens/config.example.toml) for every option, and [`examples/m-feature.toml`](examples/m-feature.toml) for a real config for [mstack](https://github.com/marcossp32/mstack)'s `/m-feature` flow. You set three things:
 - `[select]`: which sessions are runs;
 - `[[evidence]]`: extra files to archive;
 - `[[marker]]`: which output lines are signals, and which values are bad.
+
+Optionally, `[[group]]` names a set of skills and agent types to score together (see [Dashboard and benchmarks](#dashboard-and-benchmarks)).
 
 ## Development
 
@@ -183,7 +221,9 @@ CI runs the tests on Windows and Linux with Python 3.11 and 3.14. They use a syn
 - skills with no attribution;
 - cost allocation;
 - markers and incidents;
-- the hook, install and labels.
+- the hook, install, labels and dashboard.
+
+`tests/test_bench.py` checks the score, the version, group and attribution rules on plain rows, without a database.
 
 ## References
 

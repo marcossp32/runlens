@@ -6,6 +6,7 @@
   check      compare the database against the raw transcripts
   summary    one table per run and per skill in the terminal
   report     write the HTML diagnosis report
+  dashboard  write the HTML benchmark dashboard: scores, versions, diffs and comparisons
   show       print the timeline around an incident or tool call
   incidents  list incidents
   classify   label incidents with a failure taxonomy, using `claude -p`
@@ -42,6 +43,8 @@ def main(argv=None):
     p = sub.add_parser("report")
     p.add_argument("--out", help=f"output file (default {config.HOME / 'report.html'})")
     p.add_argument("--session", action="append", help="limit the report to these runs")
+    p = sub.add_parser("dashboard")
+    p.add_argument("--out", help=f"output file (default {config.HOME / 'dashboard.html'})")
     p = sub.add_parser("show")
     p.add_argument("id", help="incident id or tool_use id")
     p.add_argument("--steps", type=int, default=12)
@@ -93,6 +96,9 @@ def main(argv=None):
     elif a.command == "report":
         from .report import write_report
         print(write_report(cfg, a.out, a.session))
+    elif a.command == "dashboard":
+        from .dashboard import write_dashboard
+        print(write_dashboard(cfg, a.out))
     elif a.command == "show":
         from .show import show
         return show(a.id, a.steps, a.after)
