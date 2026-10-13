@@ -8,23 +8,32 @@ from datetime import datetime
 from pathlib import Path
 
 from . import config
+from .fs import write_atomic
 from .incidents import TYPES
-
-TABLES = ["runs", "agents", "api_calls", "tool_calls", "texts", "events", "markers", "skill_loads", "incidents"]
 
 
 def load(sessions=None):
-    """An in-memory copy of the database, optionally limited to some runs, with the views on top."""
+    """The database as an in-memory catalog with the views on top, optionally limited to some runs.
+
+    Without a filter the tables are views over the attached file (nothing is copied); with one, the selected
+    runs' rows are copied, with the session ids passed as parameters."""
     import duckdb
+    from .store import RUN_TABLES, connect
+    connect(read_only=True).close()  # migrates an older database before it is read
     mem = duckdb.connect()
-    mem.execute(f"ATTACH '{config.DB.as_posix()}' AS src (READ_ONLY)")
-    where = ""
-    if sessions:
-        ids = ", ".join("'" + s.replace("'", "") + "'" for s in sessions)
-        where = f" WHERE session_id IN (SELECT session_id FROM src.runs WHERE session_id IN ({ids}) OR session_id[:8] IN ({ids}))"
-    for t in TABLES:
-        mem.execute(f"CREATE TABLE {t} AS SELECT * FROM src.{t}{where}")
-    mem.execute("CREATE TABLE labels AS SELECT * FROM src.labels WHERE incident_id IN (SELECT incident_id FROM incidents)")
+    db = str(config.DB).replace("'", "''")  # ATTACH takes no parameters; a quote in the path is escaped
+    mem.execute(f"ATTACH '{db}' AS src (READ_ONLY)")
+    ids = [str(s) for s in sessions or []]
+    for t in RUN_TABLES:
+        if ids:
+            mem.execute(f"""CREATE TABLE {t} AS SELECT * FROM src.{t} WHERE session_id IN (
+                SELECT session_id FROM src.runs WHERE session_id IN (SELECT unnest($1::VARCHAR[]))
+                                                   OR session_id[:8] IN (SELECT unnest($1::VARCHAR[])))""", [ids])
+        else:
+            mem.execute(f"CREATE VIEW {t} AS SELECT * FROM src.{t}")
+    for t in ("ingest_errors", "ingest_state", "meta", "skill_texts"):
+        mem.execute(f"CREATE VIEW {t} AS SELECT * FROM src.{t}")
+    mem.execute("CREATE VIEW labels AS SELECT * FROM src.labels WHERE incident_id IN (SELECT incident_id FROM incidents)")
     mem.execute((config.PACKAGE / "views.sql").read_text(encoding="utf-8"))
     return mem
 
@@ -114,7 +123,7 @@ def incident_list(con, limit=400):
         FROM incidents i
         LEFT JOIN v_labels l ON l.incident_id = i.incident_id AND l.source = 'llm'
         LEFT JOIN v_labels h ON h.incident_id = i.incident_id AND h.source = 'human'
-        ORDER BY i.type, i.skill, i.ts LIMIT {limit}""")
+        ORDER BY i.type, i.skill, i.ts LIMIT {int(limit)}""")
     if not rows:
         return '<p class="empty">No incidents.</p>'
     out = ['<div class="incidents">']
@@ -245,7 +254,7 @@ def write_report(cfg, out=None, sessions=None):
     page = TEMPLATE.replace("{{NAV}}", nav).replace("{{BODY}}", "".join(parts)).replace(
         "{{META}}", esc(f"generated {datetime.now():%Y-%m-%d %H:%M} from {config.DB}"))
     path = Path(out) if out else config.HOME / "report.html"
-    path.write_text(page, encoding="utf-8")
+    write_atomic(path, page)
     return path
 
 

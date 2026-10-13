@@ -3,9 +3,20 @@
 
 [select]
 # Which Claude Code sessions count as runs. CLI flags (--since, --skill, --project, --session) override these.
-since = ""        # ISO date; runs started before it are skipped. "" = no limit
+since = ""        # ISO date or datetime; a bare date is midnight local time. "" = no limit
 skills = []       # keep runs that used any of these skills, e.g. ["my-flow"]; [] = every session
 projects = []     # keep runs whose working directory contains one of these strings; [] = any
+
+[runs]
+# When a run counts as finished, and when it is too small to benchmark (defaults shown).
+# idle_hours = 12        a run with no closing cost-state is taken as ended after this long without new records
+# stub_api_calls = 3     fewer model turns than this is a stub
+# stub_cost_usd = 0.02   so is a run cheaper than this
+
+[privacy]
+redact = false    # true: mask secrets, tokens and e-mail addresses in stored text before it reaches DuckDB
+# patterns = ['my-internal-token-[0-9a-f]{32}']   extra regexes to mask
+# The archive keeps the transcripts verbatim (they are re-ingested from it). `runlens prune` deletes old runs.
 
 [analysis]
 # Thresholds for the generic incident detectors (defaults shown).
@@ -29,13 +40,21 @@ auto = true  # rebuild ~/.runlens/dashboard.html after each run is ingested; `ru
 # members = ["skill:my-plan", "skill:my-build", "agent:Explore"]
 
 # [prices]  USD per million tokens (input, output, cache_read), for models missing from the built-in table.
+# A model with no price is never guessed: its calls get no cost and `runlens check` names it.
 # "claude-new-model" = [3.0, 15.0, 0.30]
 
-# Extra files a flow leaves outside the transcript, copied into each run's archive.
-# Placeholders: {cwd} (the run's working directory), {git_dir} (its git common dir).
+# Extra files a flow leaves outside the transcript, kept with each run.
+# Placeholders: {cwd} (the run's working directory), {git_dir} (its git common dir), {session_id}.
+# Each file's content is stored once (archive/_blobs) however many runs list it. By default only files
+# modified while the run was going are kept (scope = "run"), at most max_mb per run and rule, and browser
+# profiles (Cookies, Login Data...), databases, node_modules and .git objects are never kept.
 # [[evidence]]
 # name = "ledger"
 # glob = "{git_dir}/myflow/**/*"
+# scope = "run"          # or "all": every match, whenever it was modified
+# slack_minutes = 10     # how far outside the run a file's mtime may fall
+# max_mb = 200
+# exclude = ["**/*.png"] # on top of the built-in exclude list
 
 # Markers turn a flow's own output into data: each regex match becomes a row in `markers`,
 # and a match whose value is in `bad` ("*" = every match) becomes an incident.

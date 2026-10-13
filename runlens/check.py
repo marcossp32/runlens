@@ -1,13 +1,15 @@
-"""Compare the database against the raw archived transcripts.
+"""Check that the database tells the whole, current story.
 
 The transcript format is internal to Claude Code and changes between versions.
-This catches a silent parse break: counts that no longer match, costs that no
-longer add up, subagents that lost their parent.
+This catches a silent parse break (counts that no longer match the raw files,
+costs that no longer add up, subagents that lost their parent) and silent gaps:
+runs whose source kept growing after they were archived, sessions [select]
+wants that were never archived, archived runs that failed to ingest, runs still
+open, models with no price, and sessions still waiting in the hook's queue.
 """
-import json
-
 from . import config, store
-from .transcripts import iter_records, run_files
+from .fs import fs_path, read_json
+from .transcripts import PARSER_VERSION, iter_records, run_files
 
 
 def raw_counts(main):
@@ -15,10 +17,11 @@ def raw_counts(main):
     for f in run_files(main):
         agents += 1
         for r in iter_records(f):
-            content = (r.get("message") or {}).get("content")
+            msg = r.get("message") if isinstance(r.get("message"), dict) else {}
+            content = msg.get("content")
             if r.get("type") == "assistant":
-                msgs.add((r.get("message") or {}).get("id") or r.get("uuid"))
-                for b in content or []:
+                msgs.add(msg.get("id") or r.get("uuid"))
+                for b in content if isinstance(content, list) else []:
                     if isinstance(b, dict) and b.get("type") == "tool_use":
                         tools.add(b.get("id"))
             elif r.get("type") == "user" and isinstance(content, list):
@@ -28,38 +31,108 @@ def raw_counts(main):
     return {"agents": agents, "api_calls": len(msgs), "tool_calls": len(tools), "tool_results": len(tools & results)}
 
 
-def check(sessions=None):
+def check(sessions=None, cfg=None, sources=True):
+    """Print one line per run and per gap. Returns the number of problems (FAIL and WARN lines)."""
     con = store.connect(read_only=True)
     failures = 0
-    for mf in sorted(config.ARCHIVE.glob("*/*.runlens.json")):
-        info = json.loads(mf.read_text(encoding="utf-8"))
-        sid = info["session_id"]
-        if sessions and sid not in sessions:
-            continue
-        in_db = con.execute("SELECT count(*) FROM runs WHERE session_id = ?", [sid]).fetchone()[0]
-        if not in_db:
-            continue
-        raw = raw_counts(mf.with_name(f"{sid}.jsonl"))
-        db = dict(zip(["agents", "api_calls", "tool_calls", "tool_results"], con.execute("""
-            SELECT (SELECT count(*) FROM agents WHERE session_id = $1),
-                   (SELECT count(*) FROM api_calls WHERE session_id = $1),
-                   (SELECT count(*) FROM tool_calls WHERE session_id = $1),
-                   (SELECT count(*) FROM tool_calls WHERE session_id = $1 AND ts_result IS NOT NULL)""", [sid]).fetchone()))
-        cost, est, allocated, orphans, unpriced = con.execute("""
-            SELECT r.cost_usd, r.cost_estimated, (SELECT sum(cost_usd) FROM api_calls WHERE session_id = $1),
-                   (SELECT count(*) FROM agents WHERE session_id = $1 AND agent_id <> 'main' AND parent_agent_id IS NULL),
-                   (SELECT count(*) FROM api_calls WHERE session_id = $1 AND cost_usd IS NULL AND NOT api_error
-                        AND model IS NOT NULL AND model <> '<synthetic>')
-            FROM runs r WHERE session_id = $1""", [sid]).fetchone()
-        problems = [f"{k}: raw {raw[k]} vs db {db[k]}" for k in raw if raw[k] != db[k]]
-        if cost and allocated is not None and not est and abs(cost - allocated) > max(0.01 * cost, 0.05):
-            problems.append(f"cost: cost-state {cost:.2f} vs allocated {allocated:.2f}")
-        if orphans:
-            problems.append(f"{orphans} subagent(s) without a parent")
-        if unpriced:
-            problems.append(f"{unpriced} api call(s) without a cost")
-        failures += bool(problems)
-        print(f"{'FAIL' if problems else 'ok  '}  {sid[:8]}  " + ("; ".join(problems) if problems else
-              f"agents={db['agents']} api={db['api_calls']} tools={db['tool_calls']} cost={cost or 0:.2f}{' (est)' if est else ''}"))
-    con.close()
+    try:
+        in_db = {r[0]: r[1:] for r in con.execute("SELECT session_id, status, is_stub, parser_version FROM runs").fetchall()}
+        failed = {r[0] for r in con.execute("SELECT session_id FROM ingest_errors").fetchall()}
+        for mf in sorted(fs_path(config.ARCHIVE).glob("*/*.runlens.json")):
+            sid = mf.name.removesuffix(".runlens.json")
+            if sessions and sid not in sessions and sid[:8] not in sessions:
+                continue
+            if sid not in in_db:
+                if sid in failed:
+                    continue  # reported with its error below
+                failures += 1
+                print(f"WARN  {sid[:8]}  archived but not in the database: run `runlens ingest`")
+                continue
+            problems, notes = run_problems(con, sid, mf.with_name(f"{sid}.jsonl"))
+            status, stub, version = in_db[sid]
+            if version != PARSER_VERSION:
+                problems.append(f"ingested by parser v{version}, current is v{PARSER_VERSION}: run `runlens ingest`")
+            if status == "open":
+                notes.append("open: the session may still be running, its numbers are partial")
+            if stub:
+                notes.append("stub")
+            failures += bool(problems)
+            print(f"{'FAIL' if problems else 'ok  '}  {sid[:8]}  " + "; ".join(problems + notes))
+        failures += gaps(con, cfg or config.load(), sessions, sources)
+    finally:
+        con.close()
+    print(f"{failures} problem(s)" if failures else "all checks passed")
     return failures
+
+
+def run_problems(con, sid, main):
+    raw = raw_counts(main)
+    db = dict(zip(["agents", "api_calls", "tool_calls", "tool_results"], con.execute("""
+        SELECT (SELECT count(*) FROM agents WHERE session_id = $1),
+               (SELECT count(*) FROM api_calls WHERE session_id = $1),
+               (SELECT count(*) FROM tool_calls WHERE session_id = $1),
+               (SELECT count(*) FROM tool_calls WHERE session_id = $1 AND ts_result IS NOT NULL)""", [sid]).fetchone()))
+    cost, est, allocated, orphans, unpriced, models = con.execute("""
+        SELECT r.cost_usd, r.cost_estimated, (SELECT sum(cost_usd) FROM api_calls WHERE session_id = $1),
+               (SELECT count(*) FROM agents WHERE session_id = $1 AND agent_id <> 'main' AND parent_agent_id IS NULL),
+               (SELECT count(*) FROM api_calls WHERE session_id = $1 AND cost_usd IS NULL),
+               r.unpriced_models
+        FROM runs r WHERE session_id = $1""", [sid]).fetchone()
+    problems = [f"{k}: raw {raw[k]} vs db {db[k]}" for k in raw if raw[k] != db[k]]
+    if cost and allocated is not None and not est and abs(cost - allocated) > max(0.01 * cost, 0.05):
+        problems.append(f"cost: cost-state {cost:.2f} vs allocated {allocated:.2f} (a model in cost-state has no calls in the transcript)")
+    if orphans:
+        problems.append(f"{orphans} subagent(s) without a parent")
+    if unpriced:
+        problems.append(f"{unpriced} api call(s) without a cost: no price for {', '.join(models or ['?'])} (add it under [prices])")
+    # Output tokens seen in the transcript against Claude Code's own count. The transcript does not hold every
+    # call (titles, classifiers) nor always the final usage of the last message, so this is a note, not a failure.
+    seen, total = con.execute("""SELECT (SELECT sum(output_tokens) FROM api_calls WHERE session_id = $1),
+                                        (SELECT sum(output_tokens) FROM model_usage WHERE session_id = $1)""", [sid]).fetchone()
+    notes = [f"agents={db['agents']} api={db['api_calls']} tools={db['tool_calls']} cost={cost or 0:.2f}{' (est)' if est else ''}"]
+    if total:
+        notes.append(f"output tokens {100 * (seen or 0) / total:.0f}% of cost-state")
+    return problems, notes
+
+
+def gaps(con, cfg, sessions=None, sources=True):
+    """Problems that are not about one ingested run. Returns how many lines were printed."""
+    from .archive import load_cache, select, stale_runs
+    from .hooks import pending
+    n = 0
+    for sid, stage, error, path in con.execute("SELECT session_id, stage, error, path FROM ingest_errors ORDER BY failed_at").fetchall():
+        if sessions and sid not in sessions and sid[:8] not in sessions:
+            continue
+        n += 1
+        print(f"FAIL  {sid[:8]}  ingest {stage} failed: {error} ({path})")
+    for p in pending():
+        n += 1
+        print(f"WARN  {p.name[:8]}  queued by the hook but not ingested yet: run `runlens refresh`")
+    missing = evidence_check()
+    if missing:
+        n += 1
+        print(f"FAIL  evidence  {missing} evidence file(s) listed in a manifest have no blob in {config.BLOBS}")
+    if not sources or not fs_path(config.PROJECTS).is_dir():
+        return n
+    for sid, project, reason in stale_runs():
+        if sessions and sid not in sessions and sid[:8] not in sessions:
+            continue
+        n += 1
+        print(f"WARN  {sid[:8]}  {reason}: run `runlens refresh`")
+    archived = {mf.name.removesuffix(".runlens.json") for mf in fs_path(config.ARCHIVE).glob("*/*.runlens.json")}
+    for main, info in select(cfg, cache=load_cache(), sessions=sessions):
+        if main.stem not in archived:
+            n += 1
+            print(f"WARN  {main.stem[:8]}  selected by [select] but never archived ({(info['started'] or '')[:10]}): run `runlens refresh`")
+    return n
+
+
+def evidence_check():
+    """Evidence manifests whose blobs are missing. Returns the number of missing blobs."""
+    from .archive import blob_path
+    missing = 0
+    for mf in fs_path(config.ARCHIVE).glob("*/*.evidence.json"):
+        for e in read_json(mf).get("files", []):
+            if not fs_path(blob_path(e["sha256"])).exists():
+                missing += 1
+    return missing

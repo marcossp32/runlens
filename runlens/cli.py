@@ -1,9 +1,11 @@
 """runlens: history of Claude Code runs, to find where a flow struggles.
 
   archive    copy selected runs from ~/.claude/projects into the archive
-  ingest     load the archive into DuckDB (idempotent)
-  refresh    archive + ingest
-  check      compare the database against the raw transcripts
+  ingest     load the archive into DuckDB (incremental: unchanged runs are skipped)
+  refresh    archive + ingest, including the sessions the hook queued
+  check      compare the database against the archive and the archive against ~/.claude/projects
+  prune      delete runs from the database and the archive
+  migrate-evidence  convert evidence archived by runlens 0.1 into deduplicated blobs
   summary    one table per run and per skill in the terminal
   report     write the HTML diagnosis report
   dashboard  write the HTML benchmark dashboard: scores, versions, diffs and comparisons
@@ -12,6 +14,7 @@
   classify   label incidents with a failure taxonomy, using `claude -p`
   labels     export labels to CSV for human review, or import the reviewed CSV
   agreement  how well the LLM labels match the human ones
+  export-eval  turn real incidents into eval cases for `claude plugin eval` and skill-creator
   hook       entry point for Claude Code hooks (reads the hook JSON on stdin)
   install    install the SessionEnd hook and the retro skill
   uninstall  remove the hook
@@ -36,9 +39,23 @@ def main(argv=None):
         p.add_argument("--quiet", action="store_true")
 
     for name in ("archive", "ingest", "refresh"):
-        filters(sub.add_parser(name))
+        p = sub.add_parser(name)
+        filters(p)
+        if name != "archive":
+            p.add_argument("--force", action="store_true", help="parse every run again, changed or not")
     p = sub.add_parser("check")
     p.add_argument("--session", action="append")
+    p.add_argument("--no-sources", action="store_true", help="skip comparing the archive with ~/.claude/projects")
+    p = sub.add_parser("prune")
+    p.add_argument("--before", help="runs started before this ISO date")
+    p.add_argument("--session", action="append", help="this session id or 8-character prefix (repeatable)")
+    p.add_argument("--keep-archive", action="store_true", help="delete database rows only, keep the archived transcripts")
+    p.add_argument("--yes", action="store_true", help="delete; without it, only list what would be deleted")
+    p = sub.add_parser("migrate-evidence")
+    p.add_argument("--yes", action="store_true", help="convert and delete the old folders; without it, a dry run")
+    p.add_argument("--keep-excluded", action="store_true",
+                   help="also keep files the default exclude list drops (browser profiles, databases, node_modules)")
+    sub.add_parser("drain", help=argparse.SUPPRESS)
     sub.add_parser("summary")
     p = sub.add_parser("report")
     p.add_argument("--out", help=f"output file (default {config.HOME / 'report.html'})")
@@ -53,36 +70,75 @@ def main(argv=None):
     p.add_argument("--type")
     p.add_argument("--skill")
     p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--all", action="store_true", help="also list policy permission denials")
+    output_flags(p)
     p = sub.add_parser("classify")
     p.add_argument("--type", action="append", help="only these incident types")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--model", default=None, help="model alias for the judge (default from config, else sonnet)")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--relabel", action="store_true", help="label again incidents that already have an llm label")
+    p.add_argument("--skill", action="append", help="only incidents of this skill (repeatable)")
+    p.add_argument("--sample", choices=["stratified", "priority"], default="stratified",
+                   help="stratified: random, the same number per incident type (unbiased agreement); priority: highest-signal types first")
+    p.add_argument("--seed", type=int, help="seed for the stratified sample, to pick the same incidents again")
+    p.add_argument("--dry-run", action="store_true", help="list the chosen incidents and print one judge prompt; no model call")
     p = sub.add_parser("labels")
     p.add_argument("action", choices=["export", "import"])
     p.add_argument("file")
-    sub.add_parser("agreement")
+    p.add_argument("--limit", type=int, help="export: a stratified random sample of this many LLM-labelled incidents")
+    p.add_argument("--seed", type=int, help="export: seed for the sample")
+    p.add_argument("--blind", action="store_true", help="export: leave the LLM labels out, so they cannot anchor the reviewer")
+    p = sub.add_parser("agreement")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("export-eval")
+    p.add_argument("--incident", action="append", help="incident id (repeatable)")
+    p.add_argument("--skill", action="append", help="incidents of this skill (repeatable)")
+    p.add_argument("--label", action="append", help="incidents whose latest label is this category (repeatable)")
+    p.add_argument("--type", action="append", help="incidents of this type (repeatable)")
+    p.add_argument("--format", choices=["plugin-eval", "skill-creator", "both"], default="both")
+    p.add_argument("--out", help=f"output folder (default {config.HOME / 'evals' / '<timestamp>'})")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--history", action="store_true",
+                   help="for main-session incidents, resume the transcript cut just before the failing step")
     sub.add_parser("hook")
     p = sub.add_parser("install")
     p.add_argument("--no-skill", action="store_true")
     sub.add_parser("uninstall")
     p = sub.add_parser("sql")
     p.add_argument("query")
+    output_flags(p)
 
     a = ap.parse_args(argv)
     cfg = config.load(a.config)
     flt = lambda: {"since": a.since, "skills": a.skill, "projects": a.project, "sessions": a.session}
 
+    if a.command == "refresh":
+        from .hooks import drain, pending
+        if pending():  # sessions the hook queued: archive and ingest them first, then the rest
+            drain(cfg, wait_lock=True)
     if a.command in ("archive", "refresh"):
         from .archive import archive
         archive(cfg, quiet=a.quiet, **flt())
     if a.command in ("ingest", "refresh"):
         from .store import ingest
-        ingest(cfg, since=a.since, sessions=a.session, quiet=a.quiet)
+        ingest(cfg, since=a.since, sessions=a.session, quiet=a.quiet, force=a.force)
     elif a.command == "check":
         from .check import check
-        return 1 if check(a.session) else 0
+        return 1 if check(a.session, cfg, sources=not a.no_sources) else 0
+    elif a.command == "prune":
+        from .store import prune
+        prune(before=a.before, sessions=a.session, keep_archive=a.keep_archive, yes=a.yes)
+    elif a.command == "migrate-evidence":
+        from .archive import migrate_evidence
+        s = migrate_evidence(dry_run=not a.yes, keep_excluded=a.keep_excluded)
+        gb = lambda b: f"{b / 1e9:.2f} GB"
+        print(f"{s['runs']} run folder(s), {s['files']} file(s), {gb(s['bytes'])}; excluded {s['excluded_files']} file(s) "
+              f"({gb(s['excluded_bytes'])}); {'at most ' if not a.yes else ''}{s['blobs_new']} distinct file(s) to keep, {gb(s['blob_bytes_new'])}")
+        print(f"deleted {s['folders_deleted']} old evidence folder(s)" if a.yes else "dry run: add --yes to convert and delete the old folders")
+    elif a.command == "drain":
+        from .hooks import drain
+        drain(cfg)
     elif a.command == "summary":
         from .store import connect
         con = connect(read_only=True)
@@ -110,17 +166,29 @@ def main(argv=None):
             where.append("type = ?"); args.append(a.type)
         if a.skill:
             where.append("skill = ?"); args.append(a.skill)
-        print(con.sql(f"""SELECT incident_id, session_id[:8] AS run, type, n, skill, role, left(key, 80) AS key
-                          FROM incidents WHERE {' AND '.join(where)} ORDER BY ts LIMIT {int(a.limit)}""", params=args))
+        if not a.all:
+            where.append("NOT coalesce(policy, false)")
+        args.append(a.limit)
+        emit(con.execute(f"""SELECT incident_id, session_id[:8] AS run, type, n, skill, role, left(key, 80) AS key, policy
+                             FROM incidents WHERE {' AND '.join(where)} ORDER BY ts LIMIT ?""", args), a)
+        con.close()
     elif a.command == "classify":
         from .classify import classify
-        classify(cfg, types=a.type, limit=a.limit, model=a.model, workers=a.workers, relabel=a.relabel)
+        classify(cfg, types=a.type, skills=a.skill, limit=a.limit, model=a.model, workers=a.workers, relabel=a.relabel,
+                 mode=a.sample, seed=a.seed, dry_run=a.dry_run)
     elif a.command == "labels":
         from .classify import export_labels, import_labels
-        (export_labels if a.action == "export" else import_labels)(a.file)
+        if a.action == "export":
+            export_labels(a.file, limit=a.limit, seed=a.seed, blind=a.blind)
+        else:
+            import_labels(a.file)
     elif a.command == "agreement":
         from .classify import agreement
-        agreement()
+        agreement(as_json=a.json)
+    elif a.command == "export-eval":
+        from .evals import export
+        return 0 if export(cfg, ids=a.incident, skills=a.skill, labels=a.label, types=a.type, fmt=a.format, out=a.out,
+                           limit=a.limit, use_history=a.history) else 1
     elif a.command == "hook":
         from .hooks import handle
         return handle(cfg, sys.stdin.read())
@@ -132,10 +200,78 @@ def main(argv=None):
         uninstall()
     elif a.command == "sql":
         from .store import connect
-        print(connect(read_only=True).sql(a.query))
+        con = connect(read_only=True)
+        try:
+            emit(con.execute(a.query), a)
+        finally:
+            con.close()
     return 0
+
+
+def output_flags(p):
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--json", action="store_true", help="print the rows as a JSON array")
+    g.add_argument("--csv", action="store_true", help="print the rows as CSV")
+
+
+def emit(cur, a):
+    """Print a query result as a table, JSON or CSV."""
+    if cur.description is None:
+        return
+    cols = [d[0] for d in cur.description]
+    if getattr(a, "json", False) or getattr(a, "csv", False):
+        rows = cur.fetchall()
+        if a.json:
+            import json
+            print(json.dumps([dict(zip(cols, r)) for r in rows], ensure_ascii=False, indent=2, default=str))
+        else:
+            import csv
+            w = csv.writer(sys.stdout, lineterminator="\n")
+            w.writerow(cols)
+            w.writerows(rows)
+        return
+    print(_table(cols, cur.fetchall()))
+
+
+def _table(cols, rows, width=60):
+    """A plain text table, without depending on DuckDB's own printer (which needs a relation, not a result)."""
+    cell = lambda v: ("NULL" if v is None else str(v)).replace("\n", " ")[:width]
+    body = [[cell(v) for v in r] for r in rows]
+    w = [max([len(c)] + [len(r[i]) for r in body]) for i, c in enumerate(cols)]
+    line = lambda vals: "  ".join(v.ljust(w[i]) for i, v in enumerate(vals)).rstrip()
+    out = [line(cols), "  ".join("-" * x for x in w)] + [line(r) for r in body] + [f"({len(rows)} row{'s' if len(rows) != 1 else ''})"]
+    return "\n".join(out)
 
 
 def run():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.exit(main())
+    try:
+        code = main()
+    except KeyboardInterrupt:
+        code = 130
+    except Exception as e:
+        code = friendly(e)
+    sys.exit(code)
+
+
+def friendly(e):
+    """One line on stderr for errors a user can fix (bad SQL, bad config, the database busy), not a traceback."""
+    from .config import ConfigError
+    try:
+        import duckdb
+        db_error = isinstance(e, duckdb.Error)
+    except ImportError:
+        db_error = False
+    if isinstance(e, ConfigError):
+        print(f"runlens: config error: {e}", file=sys.stderr)
+    elif db_error:
+        from .store import is_locked
+        msg = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        if is_locked(e):
+            msg = f"the database is in use by another runlens process; try again in a moment ({msg})"
+        print(f"runlens: {type(e).__name__.removesuffix('Exception')} error: {msg}", file=sys.stderr)
+    elif isinstance(e, (ValueError, OSError)):
+        print(f"runlens: {e}", file=sys.stderr)
+    else:
+        raise e
+    return 1

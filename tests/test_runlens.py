@@ -59,9 +59,13 @@ class Writer:
     def assistant(self, mid, blocks, model="claude-opus-5-5", attr=None, split=False):
         extra = {"attributionSkill": attr} if attr else {}
         parts = [[b] for b in blocks] if split else [blocks]
-        for p in parts:  # Claude Code writes one record per content block, repeating the usage
+        for i, p in enumerate(parts):
+            # Claude Code writes one record per content block while the message streams: the usage on the
+            # earlier records is partial (output_tokens still growing) and only the last one has stop_reason.
+            last = i == len(parts) - 1
+            usage = USAGE if last else {**USAGE, "output_tokens": 4}
             self.rec(type="assistant", requestId=f"req-{mid}", message={"id": mid, "model": model, "role": "assistant",
-                     "content": p, "usage": USAGE, "stop_reason": "tool_use"}, **extra)
+                     "content": p, "usage": usage, "stop_reason": "tool_use" if last else None}, **extra)
 
     def result(self, tid, text, error=False, tur=None):
         self.rec(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": tid,
@@ -100,6 +104,16 @@ def build_fixture():
              content="<task-notification><task-id>ab1</task-id><status>failed</status></task-notification>")
     main.assistant("m5", [bash("t6", "python check.py")])
     main.result("t6", "STEP CHECK: FAIL\n2 tests broke")
+    # One real compaction: Claude Code writes both a compact_boundary and an isCompactSummary record for it.
+    main.rec(type="system", subtype="compact_boundary", content="Conversation compacted",
+             compactMetadata={"trigger": "auto", "preTokens": 180000, "postTokens": 9000, "durationMs": 30000})
+    main.rec(type="user", isCompactSummary=True, message={"role": "user", "content": "This session is being continued..."})
+    # A session limit is an API "error" that is the account's quota, not a failure of the work.
+    main.rec(type="assistant", isApiErrorMessage=True, error="rate_limit", apiErrorStatus=429,
+             quotaLimits={"status": "rejected", "rateLimitType": "five_hour"},
+             message={"id": "lim1", "model": "<synthetic>", "role": "assistant", "stop_reason": "stop_sequence",
+                      "content": [{"type": "text", "text": "You've hit your session limit"}], "usage": {"input_tokens": 0, "output_tokens": 0}})
+    main.rec(type="pr-link", prNumber=7, prUrl="https://github.com/o/r/pull/7", prRepository="o/r")
     main.rec(type="system", subtype="turn_duration", durationMs=5000)
     main.rec(type="cost-state", totalCostUSD=1.0, totalAPIDuration=4000, totalToolDuration=900,
              modelUsage={"claude-opus-5-5[1m]": {"costUSD": 0.8}, "claude-sonnet-5": {"costUSD": 0.2}})
@@ -158,8 +172,32 @@ class RunlensTest(unittest.TestCase):
         return self.con.execute(sql, list(args)).fetchone()
 
     def test_api_calls_deduplicated_by_message(self):
-        self.assertEqual(self.one("SELECT count(*) FROM api_calls WHERE agent_id = 'main'")[0], 5)
+        self.assertEqual(self.one("SELECT count(*) FROM api_calls WHERE agent_id = 'main' AND model <> '<synthetic>'")[0], 5)
         self.assertEqual(self.one("SELECT input_tokens, cache_write_1h FROM api_calls WHERE msg_id = 'm1'"), (10, 200))
+
+    def test_usage_comes_from_the_last_streamed_record(self):
+        # m1 streamed in three records; the first two carry output_tokens=4 and no stop_reason
+        self.assertEqual(self.one("SELECT output_tokens, stop_reason FROM api_calls WHERE msg_id = 'm1'"), (100, "tool_use"))
+        self.assertEqual(self.one("SELECT last_stop_reason FROM agents WHERE agent_id = 'main'")[0], "stop_sequence")
+
+    def test_one_compaction_per_real_compaction(self):
+        self.assertEqual(self.one("SELECT count(*) FROM events WHERE kind = 'compaction'")[0], 1)
+        self.assertEqual(self.one("SELECT trigger, pre_tokens, post_tokens FROM compactions"), ("auto", 180000, 9000))
+        self.assertEqual(self.one("SELECT compactions FROM agents WHERE agent_id = 'main'")[0], 1)
+        self.assertEqual(self.one("SELECT count(*) FROM incidents WHERE type = 'compaction'")[0], 1)
+
+    def test_api_limits_are_events_not_errors_or_incidents(self):
+        self.assertEqual(self.one("SELECT api_error, api_limit, api_error_kind, api_error_status FROM api_calls WHERE msg_id = 'lim1'"),
+                         (False, True, "quota", 429))
+        self.assertEqual(self.one("SELECT count(*) FROM events WHERE kind = 'api_limit'")[0], 1)
+        self.assertEqual(self.one("SELECT count(*) FROM incidents WHERE type LIKE 'api%'")[0], 0)
+
+    def test_run_status_and_outcome_fields(self):
+        status, ended_by, stub, prs = self.one("SELECT status, ended_by, is_stub, pr_urls FROM runs")
+        self.assertEqual((status, ended_by, stub), ("complete", "session_end", False))
+        self.assertEqual(prs, ["https://github.com/o/r/pull/7"])
+        self.assertEqual(self.one("SELECT parser_version FROM runs")[0], transcripts.PARSER_VERSION)
+        self.assertEqual(self.one("SELECT count(*) FROM model_usage")[0], 2)
 
     def test_fork_copied_history_is_skipped(self):
         self.assertEqual(self.one("SELECT count(*) FROM api_calls WHERE agent_id = 'fk1'")[0], 1)
@@ -258,7 +296,7 @@ class RunlensTest(unittest.TestCase):
         self.assertEqual(json.loads(text)["args"], evil)
 
     def test_web_assets_ship_with_the_package(self):
-        for name in ("template.html", "app.css", "app.js"):
+        for name in ("template.html", "app.css", *(f"js/{m}" for m in dashboard.MODULES)):
             self.assertTrue((config.PACKAGE / "web" / name).exists(), name)
 
     def test_labels_roundtrip_and_agreement(self):
@@ -298,9 +336,16 @@ class RunlensTest(unittest.TestCase):
         shutil.rmtree(config.ARCHIVE)
         payload = json.dumps({"hook_event_name": "SessionEnd", "session_id": SID, "reason": "other"})
         self.con.close()
-        self.assertEqual(hooks.handle(self.cfg, payload), 0)
+        os.environ["RUNLENS_HOOK_INLINE"] = "1"  # drain in this process instead of a detached one
+        try:
+            self.assertEqual(hooks.handle(self.cfg, payload), 0)
+        finally:
+            os.environ.pop("RUNLENS_HOOK_INLINE")
         self.assertTrue(any(config.ARCHIVE.glob(f"*/{SID}.jsonl")))
-        self.assertIn("archived and ingested", (config.HOME / "hooks.log").read_text(encoding="utf-8"))
+        log = (config.HOME / "hooks.log").read_text(encoding="utf-8")
+        self.assertIn(f"queued {SID}", log)  # logged before any work
+        self.assertIn("archived and ingested", log)
+        self.assertEqual(hooks.pending(), [])
         self.assertTrue((config.HOME / "dashboard.html").exists())  # rebuilt after each ingested run
         self.assertEqual(hooks.handle(self.cfg, "not json"), 0)  # never raises
         type(self).con = store.connect(read_only=True)
@@ -341,8 +386,21 @@ class RunlensTest(unittest.TestCase):
         self.assertTrue(transcripts.is_idle('S="C:/a b/c"; until grep -q "^exit" $S/r.txt; do sleep 20; done; grep -v x $S/r.txt', parts))
 
     def test_prices(self):
+        # https://platform.claude.com/docs/en/about-claude/pricing (2026-10-13)
         self.assertEqual(transcripts.price_of("claude-opus-5-5[1m]")[:3], (4.0, 20.0, 0.20))
         self.assertEqual(transcripts.price_of("claude-haiku-4-5-20251001")[:3], (1.0, 5.0, 0.10))
+        self.assertEqual(transcripts.price_of("claude-sonnet-5-5")[:3], (2.0, 10.0, 0.10))
+        self.assertEqual(transcripts.price_of("claude-fable-5")[:3], (10.0, 50.0, 1.0))
+        self.assertEqual(transcripts.price_of("claude-fable-5-1")[:3], (10.0, 50.0, 0.25))
+        self.assertEqual(transcripts.price_of("claude-opus-4-5")[:3], (5.0, 25.0, 0.50))
+        self.assertEqual(transcripts.price_of("claude-sonnet-4-5")[:3], (3.0, 15.0, 0.30))
+        self.assertEqual(transcripts.price_of("claude-haiku-5-5")[:3], (0.10, 0.50, 0.01))
+        self.assertEqual(transcripts.price_of("claude-haiku-5-5", prompt_tokens=150_000)[:3], (0.50, 2.50, 0.05))
+        self.assertEqual(transcripts.price_of("claude-opus-5-5", speed="fast")[:2], (8.0, 40.0))
+        self.assertAlmostEqual(transcripts.price_of("claude-opus-5-5", geo="us")[0], 4.4)
+        self.assertEqual(transcripts.price_of("claude-opus-5-5")[3:], (5.0, 8.0))  # cache writes 1.25x and 2x
+        self.assertIsNone(transcripts.price_of("claude-unknown-9"))  # flagged, never priced with a guess
+        self.assertEqual(transcripts.price_of("claude-unknown-9", {"claude-unknown-9": [1, 2, 0.1]})[:3], (1, 2, 0.1))
 
 
 if __name__ == "__main__":

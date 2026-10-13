@@ -7,11 +7,17 @@ since = "2026-09-28"     # runs started on or after this date (example)
 skills = ["m-feature"]   # keep runs that used any of these skills; [] = every run
 projects = []            # substrings of the run's cwd; [] = any
 
-# Extra files a flow writes outside the transcript, copied into the run's archive.
-# Placeholders: {cwd} (the run's working dir), {git_dir} (its git common dir).
+# Extra files a flow writes outside the transcript, kept with the run.
+# Placeholders: {cwd} (the run's working dir), {git_dir} (its git common dir), {session_id}.
+# mstack keeps every feature's prove/review output under .git/mstack, so only the files written while
+# this run was going belong to it (scope = "run", the default). Contents are stored once, browser
+# profiles from the prove step (Cookies, Login Data, Local Storage...) are never kept, and each run
+# keeps at most max_mb.
 [[evidence]]
 name = "mstack"
 glob = "{git_dir}/mstack/**/*"
+scope = "run"
+max_mb = 200
 
 # Markers: regexes that turn flow output into rows of the `markers` table.
 # source = tool_result | tool_input | assistant_text | any. Group 1, if any, is the value.

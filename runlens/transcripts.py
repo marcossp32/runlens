@@ -7,37 +7,45 @@ and `runlens check` compares the rows against the raw files.
 import hashlib
 import json
 import re
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
-# USD per million tokens, Anthropic first-party list prices (claude-api skill, cached 2026-09-25).
-# Cache writes use the standard 1.25x (5m) and 2x (1h) of input. Override or extend under [prices] in config.
-# Used to split a run's real cost (cost-state) across its calls, and to estimate runs without cost-state.
+from .fs import fs_path
+
+# Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
+# 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
+#    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
+PARSER_VERSION = 2
+
+# USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
+# https://platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Cache writes are 1.25x (5m) and 2x (1h)
+# of input on every model. Haiku 5.5 has a second tier for prompts over 100K tokens (HAIKU_LONG).
+# Override or extend under [prices] in config. A model in neither table gets no list price: its calls are
+# flagged (runs.unpriced_models) instead of being priced with a guess.
 PRICES = {
-    "claude-fable-5-1": (10.0, 50.0, 0.25), "claude-fable-5": (10.0, 50.0, 0.25),
+    "claude-fable-5-1": (10.0, 50.0, 0.25), "claude-mythos-5-1": (10.0, 50.0, 0.25),
+    "claude-fable-5": (10.0, 50.0, 1.0), "claude-mythos-5": (10.0, 50.0, 1.0),
     "claude-opus-5-5": (4.0, 20.0, 0.20), "claude-opus-5": (5.0, 25.0, 0.50),
     "claude-opus-4-8": (5.0, 25.0, 0.50), "claude-opus-4-7": (5.0, 25.0, 0.50), "claude-opus-4-6": (5.0, 25.0, 0.50),
-    "claude-sonnet-5-5": (2.0, 10.0, 0.20), "claude-sonnet-5": (2.0, 10.0, 0.20), "claude-sonnet-4-6": (3.0, 15.0, 0.30),
-    "claude-haiku-4-5": (1.0, 5.0, 0.10),
+    "claude-opus-4-5": (5.0, 25.0, 0.50), "claude-opus-4-1": (15.0, 75.0, 1.50), "claude-opus-4": (15.0, 75.0, 1.50),
+    "claude-sonnet-5-5": (2.0, 10.0, 0.10), "claude-sonnet-5": (2.0, 10.0, 0.20), "claude-sonnet-4-6": (3.0, 15.0, 0.30),
+    "claude-sonnet-4-5": (3.0, 15.0, 0.30), "claude-sonnet-4": (3.0, 15.0, 0.30),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01), "claude-haiku-4-5": (1.0, 5.0, 0.10), "claude-3-5-haiku": (0.80, 4.0, 0.08),
 }
-DEFAULT_PRICE = (4.0, 20.0, 0.40)
-
-
-def price_of(model, overrides=None):
-    """(input, output, cache_read, cache_write_5m, cache_write_1h) in USD per million tokens."""
-    name = re.sub(r"\[.*\]$", "", model or "")
-    name = re.sub(r"-\d{8}$", "", name)
-    table = {**PRICES, **{k: tuple(v) if isinstance(v, (list, tuple)) else (v["input"], v["output"], v["cache_read"])
-                          for k, v in (overrides or {}).items()}}
-    inp, out, read = table.get(name, DEFAULT_PRICE)
-    return inp, out, read, inp * 1.25, inp * 2.0
+HAIKU_LONG = {"claude-haiku-5-5": ((0.50, 2.50, 0.05), 100_000)}
+FAST = {"claude-opus-5-5": 2.0, "claude-opus-5": 2.0, "claude-opus-4-8": 2.0}  # speed=fast: $8/$40 and $10/$50
+US_GEO = 1.1  # inference_geo "us" on Claude 4.6 and later
+FREE_MODELS = {"<synthetic>"}  # Claude Code's own messages (API errors, limits): no tokens, no cost
 
 SUMMARY_KEYS = ("command", "file_path", "notebook_path", "path", "pattern", "url", "query", "skill",
                 "subagent_type", "description", "prompt", "to", "message", "action")
 
 SKILL_LOAD = re.compile(r"^Base directory for this skill:\s*(.+?)\s*$", re.M)
 TASK_NOTE = re.compile(r"<task-id>([\w-]+)</task-id>.*?<status>(\w+)</status>", re.S)
+EXIT_CODE = re.compile(r"^(?:Error: )?Exit code (-?\d+)", re.M)
 SHELL_TOOLS = {"Bash", "PowerShell"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+HUMAN_SOURCES = {"typed", "suggestion_accepted", "queued"}
 
 # Checked in order against the head of the tool output; the first match wins.
 ERROR_CLASSES = [
@@ -61,29 +69,42 @@ ERROR_CLASSES = [
 ERROR_RX = [(name, re.compile(rx, re.I | re.M)) for name, rx in ERROR_CLASSES]
 
 
-def iter_records(path):
-    with open(path, encoding="utf-8", errors="replace") as fh:
+def iter_records(path, stats=None):
+    """Each JSON object in a transcript. Lines that are not JSON objects are skipped and counted in stats["bad_lines"]."""
+    with open(fs_path(path), encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
-            if line:
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                r = None
+            if isinstance(r, dict):
+                yield r
+            elif stats is not None:
+                stats["bad_lines"] = stats.get("bad_lines", 0) + 1
 
 
 def run_files(main):
     """Main transcript first, then each subagent transcript."""
+    main = fs_path(main)
     return [main] + sorted(main.with_suffix("").glob("subagents/*.jsonl"))
 
 
 def ts(value):
-    if not value:
+    """An aware UTC datetime. A timestamp without a zone is taken as UTC, which is what Claude Code writes."""
+    if not value or not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
+        t = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
         return None
+    return t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t
+
+
+def as_dict(v):
+    return v if isinstance(v, dict) else {}
 
 
 def text_of(content):
@@ -98,6 +119,15 @@ def text_of(content):
     return str(content)
 
 
+def typed_text(content):
+    """Only what a person or the harness typed into a user turn: the string, or its text blocks, never tool output."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(x["text"] for x in content if isinstance(x, dict) and x.get("type") == "text" and isinstance(x.get("text"), str))
+    return ""
+
+
 def summarize(inp):
     if not isinstance(inp, dict):
         return str(inp)[:300]
@@ -109,7 +139,7 @@ def summarize(inp):
 
 def role_of(description):
     """Group agents by what they were asked to do: digits and ids folded, so 'Repro F-013' -> 'Repro F-#'."""
-    if not description:
+    if not description or not isinstance(description, str):
         return None
     d = re.sub(r"#?\d+", "#", description.strip())
     d = re.sub(r"\(#\)|\s+", " ", d).strip()
@@ -129,6 +159,22 @@ def error_class(body, denied, interrupted):
     return "other"
 
 
+def api_error_kind(r, msg):
+    """What an API error message was. `quota` and `rate_limit` are limits on the account, not failures of the work."""
+    status = r.get("apiErrorStatus")
+    quota = as_dict(r.get("quotaLimits"))
+    text = text_of(msg.get("content")).lower()
+    if quota.get("status") == "rejected" or quota.get("rateLimitType") or re.search(r"(session|usage|weekly) limit", text):
+        return "quota"
+    if r.get("error") == "rate_limit" or status == 429:
+        return "rate_limit"
+    if status == 529 or "overloaded" in text:
+        return "overloaded"
+    if isinstance(status, int) and status >= 500 or r.get("error") == "server_error":
+        return "server"
+    return "other"
+
+
 POLL_LOOP = re.compile(r"""^(\s*(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S+)|cd\s+\S+)\s*(?:;|&&)\s*)*"""
                        r"(until|while)\b.*?;\s*do\s+sleep\s+[\d.]+\s*;?\s*done\b", re.S)
 
@@ -143,9 +189,41 @@ def is_idle(command, parts):
     return bool(pieces) and all(any(re.fullmatch(rx, p, re.I) for rx in parts) for p in pieces)
 
 
+def model_key(model):
+    name = re.sub(r"\[.*\]$", "", model or "")
+    return re.sub(r"-\d{8}$", "", name)
+
+
+def price_table(overrides=None):
+    return {**PRICES, **{k: tuple(v[:3]) if isinstance(v, (list, tuple)) else (v["input"], v["output"], v["cache_read"])
+                         for k, v in (overrides or {}).items()}}
+
+
+def price_of(model, overrides=None, prompt_tokens=0, speed=None, geo=None):
+    """(input, output, cache_read, cache_write_5m, cache_write_1h) in USD per million tokens, or None if unknown."""
+    name = model_key(model)
+    if name in FREE_MODELS:
+        return (0.0,) * 5
+    table = price_table(overrides)
+    if name not in table:
+        return None
+    inp, out, read = table[name]
+    if name in HAIKU_LONG and name not in (overrides or {}) and prompt_tokens > HAIKU_LONG[name][1]:
+        inp, out, read = HAIKU_LONG[name][0]
+    k = (FAST.get(name, 1.0) if speed == "fast" else 1.0) * (US_GEO if geo == "us" else 1.0)
+    return inp * k, out * k, read * k, inp * 1.25 * k, inp * 2.0 * k
+
+
+def prompt_tokens(a):
+    return (a["input_tokens"] or 0) + (a["cache_read_tokens"] or 0) + (a["cache_write_5m"] or 0) + (a["cache_write_1h"] or 0)
+
+
 def list_cost(a, overrides=None):
-    """List-price cost of one API call in USD."""
-    inp, out, read, w5, w1 = price_of(a["model"], overrides)
+    """List-price cost of one API call in USD, or None when the model has no known price."""
+    p = price_of(a["model"], overrides, prompt_tokens(a), a.get("speed"), a.get("inference_geo"))
+    if p is None:
+        return None
+    inp, out, read, w5, w1 = p
     return ((a["input_tokens"] or 0) * inp + (a["output_tokens"] or 0) * out + (a["cache_read_tokens"] or 0) * read
             + (a["cache_write_5m"] or 0) * w5 + (a["cache_write_1h"] or 0) * w1) / 1e6
 
@@ -168,6 +246,8 @@ class SkillStack:
             self.stack.append(skill)
 
     def on_attribution(self, attr):
+        if attr and not isinstance(attr, str):
+            attr = None
         if attr:
             if attr in self.stack:
                 del self.stack[self.stack.index(attr) + 1:]
@@ -184,7 +264,8 @@ class Markers:
         self.items = []
         for m in cfg.get("marker", []):
             bad = m.get("bad", [])
-            self.items.append((m["name"], re.compile(m["pattern"], re.M), m.get("source", "any"), bad))
+            self.items.append((m["name"], re.compile(m["pattern"], re.M), m.get("source", "any"),
+                               "*" if bad == "*" else set(bad)))
 
     def scan(self, rows, text, source, **where):
         for name, rx, want, bad in self.items:
@@ -196,78 +277,113 @@ class Markers:
                                         "bad": bad == "*" or value in bad})
 
 
-def parse_run(main, info, cfg):
+TABLES = ("runs", "agents", "api_calls", "tool_calls", "texts", "events", "markers", "skill_loads", "skill_texts",
+          "compactions", "model_usage", "skill_mentions")
+
+
+def parse_run(main, info, cfg, now=None):
+    main = fs_path(main)
     an = cfg["analysis"]
     markers = Markers(cfg)
     test_rx = re.compile(an["test_path"], re.I)
-    rows = {t: [] for t in ("runs", "agents", "api_calls", "tool_calls", "texts", "events", "markers", "skill_loads", "skill_texts")}
+    rows = {t: [] for t in TABLES}
     sid = main.stem
     meta_by_agent = {}
     for meta in main.with_suffix("").glob("subagents/*.meta.json"):
         try:
-            meta_by_agent[meta.name.removesuffix(".meta.json").removeprefix("agent-")] = json.loads(meta.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            data = json.loads(meta.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                meta_by_agent[meta.name.removesuffix(".meta.json").removeprefix("agent-")] = data
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             pass
     run = {"session_id": sid, "project": info["project"], "archived_at": ts(info.get("archived_at")),
-           "active_ms": 0, "human_prompts": 0}
-    cost_state = None
-    tool_owner, statuses, spawn_prompts = {}, {}, {}
+           "active_ms": 0, "human_prompts": 0, "parser_version": PARSER_VERSION}
+    stats = {"bad_lines": 0}
+    cost_state, cost_state_ts, last_msg_ts = None, None, None
+    tool_owner, statuses, spawn_prompts, pr_urls = {}, {}, {}, {}
 
     for f in run_files(main):
-        agent_id = "main" if f == main else f.stem.removeprefix("agent-")
-        seen_msgs, calls = set(), {}
-        stamps, agent_skills, last_stop = [], set(), None
+        is_main = f == main
+        agent_id = "main" if is_main else f.stem.removeprefix("agent-")
+        msg_rows, calls, mentions = {}, {}, []
+        stamps, agent_skills = [], set()
         seq = 0
         skills = SkillStack()
-        inherited = inherited_uuids(main, meta_by_agent.get(agent_id, {}))
-        for r in iter_records(f):
-            if inherited and (r.get("uuid") in inherited or ((r.get("message") or {}).get("id") or "-") in inherited):
+        inherited = inherited_uuids(main, f, meta_by_agent.get(agent_id, {}))
+        for r in iter_records(f, stats):
+            msg = as_dict(r.get("message"))
+            if inherited and (r.get("uuid") in inherited or (msg.get("id") or "-") in inherited):
                 continue  # a fork starts with a copy of its parent's history; that work belongs to the parent
             t = ts(r.get("timestamp"))
             if t:
                 stamps.append(t)
             kind = r.get("type")
-            if f == main:
-                for key, field in (("cwd", "cwd"), ("git_branch", "gitBranch"), ("cc_version", "version")):
-                    if not run.get(key) and r.get(field):
+            if is_main:
+                for key, field in (("cwd", "cwd"), ("git_branch", "gitBranch"), ("cc_version", "version"), ("entrypoint", "entrypoint")):
+                    if not run.get(key) and isinstance(r.get(field), str) and r[field]:
                         run[key] = r[field]
                 if kind == "ai-title":
                     run["title"] = r.get("aiTitle")
-                if kind == "cost-state" and (cost_state is None or (r.get("totalCostUSD") or 0) >= (cost_state.get("totalCostUSD") or 0)):
-                    cost_state = r
+                if kind == "cost-state":
+                    cost_state_ts = t or cost_state_ts
+                    if cost_state is None or (r.get("totalCostUSD") or 0) >= (cost_state.get("totalCostUSD") or 0):
+                        cost_state = r
+                if kind in ("user", "assistant") and t:
+                    last_msg_ts = max(last_msg_ts or t, t)
+            if kind == "pr-link" and r.get("prUrl"):
+                pr_urls.setdefault(str(r["prUrl"]), t)
             if kind == "queue-operation":
                 for task, status in TASK_NOTE.findall(str(r.get("content", ""))):
                     statuses[task] = status
 
             if kind == "assistant":
-                msg = r.get("message") or {}
                 skill = skills.on_attribution(r.get("attributionSkill"))
                 if skill:
                     agent_skills.add(skill)
                 mid = msg.get("id") or r.get("uuid")
-                if mid not in seen_msgs:
-                    seen_msgs.add(mid)
-                    u = msg.get("usage") or {}
-                    cc = u.get("cache_creation") or {}
-                    w1h = cc.get("ephemeral_1h_input_tokens") or 0
-                    w5m = cc.get("ephemeral_5m_input_tokens", (u.get("cache_creation_input_tokens") or 0) - w1h) or 0
-                    last_stop = msg.get("stop_reason") or last_stop
-                    rows["api_calls"].append({
+                u = as_dict(msg.get("usage"))
+                cc = as_dict(u.get("cache_creation"))
+                w1h = cc.get("ephemeral_1h_input_tokens") or 0
+                w5m = cc.get("ephemeral_5m_input_tokens", (u.get("cache_creation_input_tokens") or 0) - w1h) or 0
+                tokens = {"input_tokens": u.get("input_tokens") or 0, "cache_read_tokens": u.get("cache_read_input_tokens") or 0,
+                          "cache_write_5m": w5m, "cache_write_1h": w1h, "output_tokens": u.get("output_tokens") or 0,
+                          "thinking_tokens": as_dict(u.get("output_tokens_details")).get("thinking_tokens") or 0}
+                a = msg_rows.get(mid)
+                if a is None:
+                    is_err = bool(r.get("isApiErrorMessage"))
+                    err_kind = api_error_kind(r, msg) if is_err else None
+                    limit = err_kind in ("quota", "rate_limit")
+                    a = msg_rows[mid] = {
                         "session_id": sid, "agent_id": agent_id, "msg_id": mid, "request_id": r.get("requestId"),
-                        "ts": t, "model": msg.get("model"), "effort": r.get("effort"), "skill": skill,
-                        "input_tokens": u.get("input_tokens") or 0, "cache_read_tokens": u.get("cache_read_input_tokens") or 0,
-                        "cache_write_5m": w5m, "cache_write_1h": w1h, "output_tokens": u.get("output_tokens") or 0,
-                        "thinking_tokens": (u.get("output_tokens_details") or {}).get("thinking_tokens") or 0,
+                        "ts": t, "model": msg.get("model"), "requested_model": r.get("requestedModel"),
+                        "effort": r.get("effort"), "skill": skill, **tokens,
                         "thinking_ms": r.get("thinkingDurationMs"), "stop_reason": msg.get("stop_reason"),
-                        "api_error": bool(r.get("isApiErrorMessage")),
-                    })
-                    if r.get("isApiErrorMessage"):
-                        rows["events"].append(ev(sid, agent_id, t, "api_error", None, text_of(msg.get("content"))[:500]))
-                for b in msg.get("content") or []:
+                        "api_error": is_err and not limit, "api_limit": limit, "api_error_kind": err_kind,
+                        "api_error_status": r.get("apiErrorStatus") if isinstance(r.get("apiErrorStatus"), int) else None,
+                        "speed": u.get("speed"), "inference_geo": u.get("inference_geo"),
+                        "attribution_agent": r.get("attributionAgent"), "mcp_server": r.get("attributionMcpServer"),
+                        "mcp_tool": r.get("attributionMcpTool"),
+                    }
+                    rows["api_calls"].append(a)
+                    if is_err:
+                        rows["events"].append(ev(sid, agent_id, t, "api_limit" if limit else "api_error",
+                                                 a["api_error_status"], text_of(msg.get("content"))[:500], err_kind))
+                else:
+                    # Claude Code writes one record per content block while the message streams. The usage on the
+                    # first record is partial (output_tokens grows), so keep the largest value of each count and
+                    # the last stop_reason that was set.
+                    for k, v in tokens.items():
+                        if v > (a[k] or 0):
+                            a[k] = v
+                    a["stop_reason"] = msg.get("stop_reason") or a["stop_reason"]
+                    if (r.get("thinkingDurationMs") or 0) > (a["thinking_ms"] or 0):
+                        a["thinking_ms"] = r.get("thinkingDurationMs")
+                content = msg.get("content")
+                for b in content if isinstance(content, list) else []:
                     if not isinstance(b, dict):
                         continue
                     if b.get("type") == "tool_use":
-                        inp = b.get("input") or {}
+                        inp = b.get("input") if b.get("input") is not None else {}
                         seq += 1
                         raw = json.dumps(inp, ensure_ascii=False, sort_keys=True)
                         name = b.get("name")
@@ -277,15 +393,17 @@ def parse_run(main, info, cfg):
                             "session_id": sid, "agent_id": agent_id, "tool_use_id": b.get("id"), "msg_id": mid, "seq": seq,
                             "ts": t, "tool": name, "skill": skill, "input_hash": hashlib.sha1(raw.encode()).hexdigest()[:16],
                             "input_summary": summarize(inp), "input_json": raw[:4000], "is_error": False,
-                            "idle": is_idle(command, an["idle_parts"]),
-                            "touches_test": name in EDIT_TOOLS and bool(test_rx.search(path)),
+                            "idle": is_idle(command if isinstance(command, str) else None, an["idle_parts"]),
+                            "touches_test": name in EDIT_TOOLS and isinstance(path, str) and bool(test_rx.search(path)),
                         }
                         tool_owner[b.get("id")] = agent_id
                         if name in ("Agent", "Task") and isinstance(inp, dict):
                             spawn_prompts[b.get("id")] = str(inp.get("prompt") or "")[:8000]
+                        if name == "Skill" and isinstance(inp, dict) and inp.get("skill"):
+                            mentions.append(("invoke", t, str(inp["skill"])))
                         markers.scan(rows, raw, "tool_input", session_id=sid, agent_id=agent_id, ts=t,
                                      tool_use_id=b.get("id"), skill=skill)
-                    elif b.get("type") == "text" and b.get("text", "").strip():
+                    elif b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip():
                         seq += 1
                         rows["texts"].append({"session_id": sid, "agent_id": agent_id, "seq": seq, "ts": t,
                                               "skill": skill, "text": b["text"][:4000]})
@@ -293,86 +411,174 @@ def parse_run(main, info, cfg):
                                      tool_use_id=None, skill=skill)
 
             elif kind == "user":
-                msg = r.get("message") or {}
                 content = msg.get("content")
                 flat = text_of(content)
-                if f == main and isinstance(content, str) and not r.get("isMeta") and (r.get("origin") or {}).get("kind") == "human":
+                if is_main and isinstance(content, str) and not r.get("isMeta") and is_human_prompt(r, content):
                     run["human_prompts"] += 1
-                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, content[:500]))
-                if "[Request interrupted" in flat:
-                    rows["events"].append(ev(sid, agent_id, t, "interrupt", None, None))
-                if r.get("isCompactSummary"):
-                    rows["events"].append(ev(sid, agent_id, t, "compaction", None, None))
+                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, content[:500],
+                                             r.get("promptSource") or as_dict(r.get("origin")).get("kind")))
+                if "[Request interrupted" in typed_text(content):  # not inside a tool result that happens to quote it
+                    rows["events"].append(ev(sid, agent_id, t, "interrupt", None, None, None))
                 for task, status in TASK_NOTE.findall(flat):
                     statuses[task] = status
                 if r.get("isMeta"):
-                    m = SKILL_LOAD.search(flat[:2000])
-                    if m:
-                        body, _, args = flat[m.end():].partition("\nARGUMENTS: ")  # invocation args are not the skill
-                        skill_dir = m.group(1)
-                        loaded = re.split(r"[\\/]", skill_dir.rstrip("\\/"))[-1]
+                    load = skill_load(flat)
+                    if load:
+                        loaded, skill_dir, body, args = load
                         skills.push(loaded)
-                        digest = hashlib.sha1(body.strip().encode()).hexdigest()[:12]
+                        digest = hashlib.sha1(body.encode()).hexdigest()[:12]
                         rows["skill_loads"].append({
                             "session_id": sid, "agent_id": agent_id, "ts": t, "seq": seq,
                             "skill": loaded, "skill_dir": skill_dir,
-                            "content_hash": digest, "content_len": len(body),
-                            "args": args.strip()[:2000] or None,
+                            "content_hash": digest, "content_len": len(body), "args": args,
                         })
-                        rows["skill_texts"].append({"skill": loaded, "content_hash": digest, "text": body.strip()})
+                        rows["skill_texts"].append({"skill": loaded, "content_hash": digest, "text": body})
+                        mentions.append(("invoke", t, loaded))
                 results = [x for x in content if isinstance(x, dict) and x.get("type") == "tool_result"] if isinstance(content, list) else []
-                tur = r.get("toolUseResult")
+                tur = as_dict(r.get("toolUseResult"))
+                single = len(results) == 1
                 for x in results:
                     c = calls.get(x.get("tool_use_id"))
                     if c is None:
                         continue
                     body = text_of(x.get("content"))
-                    interrupted = bool(tur.get("interrupted")) if isinstance(tur, dict) and len(results) == 1 else False
-                    if isinstance(tur, dict) and tur.get("agentId") and tur.get("status"):
-                        statuses.setdefault(tur["agentId"], tur["status"])
+                    interrupted = bool(tur.get("interrupted")) if single else False
+                    if tur.get("agentId") and tur.get("status"):
+                        statuses.setdefault(str(tur["agentId"]), tur["status"])
                     c.update({
                         "ts_result": t, "duration_ms": int((t - c["ts"]).total_seconds() * 1000) if t and c["ts"] else None,
                         "is_error": bool(x.get("is_error")), "denied": r.get("toolDenialKind"), "interrupted": interrupted,
                         "result_len": len(body), "result_head": body[:2000],
                     })
+                    c.update(tool_result_fields(body, tur if single else {}, as_dict(r.get("permissionDecision"))))
                     if c["is_error"]:
                         c["error_class"] = error_class(body, c["denied"], interrupted)
                     markers.scan(rows, body, "tool_result", session_id=sid, agent_id=agent_id, ts=t,
                                  tool_use_id=c["tool_use_id"], skill=c["skill"])
 
+            elif kind == "attachment":
+                att = as_dict(r.get("attachment"))
+                if att.get("type") == "skill_mention" and att.get("skillName"):
+                    mentions.append(("mention", t, str(att["skillName"])))
+                elif att.get("type") == "invoked_skills":
+                    names = [s.get("name") for s in att.get("skills") or [] if isinstance(s, dict) and s.get("name")]
+                    rows["events"].append(ev(sid, agent_id, t, "skills_reinjected", len(names), ", ".join(names)[:500], None))
+
             elif kind == "system":
                 sub = r.get("subtype")
                 if sub == "turn_duration":
-                    rows["events"].append(ev(sid, agent_id, t, "turn", r.get("durationMs"), None))
-                    if f == main:
-                        run["active_ms"] += r.get("durationMs") or 0
+                    ms = r.get("durationMs") if isinstance(r.get("durationMs"), (int, float)) else None
+                    rows["events"].append(ev(sid, agent_id, t, "turn", int(ms) if ms is not None else None, None, None))
+                    if is_main:
+                        run["active_ms"] += int(ms or 0)
                 elif sub == "compact_boundary":
-                    rows["events"].append(ev(sid, agent_id, t, "compaction", None, None))
-                elif sub:
-                    rows["events"].append(ev(sid, agent_id, t, sub, r.get("durationMs"), text_of(r.get("content"))[:500]))
+                    # Claude Code also writes an isCompactSummary user record for the same compaction: counting
+                    # only the boundary gives one event per real compaction.
+                    cm = as_dict(r.get("compactMetadata"))
+                    rows["compactions"].append({"session_id": sid, "agent_id": agent_id, "ts": t, "trigger": cm.get("trigger"),
+                                                "pre_tokens": cm.get("preTokens"), "post_tokens": cm.get("postTokens"),
+                                                "duration_ms": cm.get("durationMs")})
+                    rows["events"].append(ev(sid, agent_id, t, "compaction", cm.get("preTokens"), None, cm.get("trigger")))
+                elif isinstance(sub, str) and sub:
+                    rows["events"].append(ev(sid, agent_id, t, sub, r.get("durationMs") if isinstance(r.get("durationMs"), int) else None,
+                                             text_of(r.get("content"))[:500], None))
 
         rows["tool_calls"].extend(calls.values())
+        rows["skill_mentions"].extend(skill_mentions(sid, agent_id, mentions))
         meta = meta_by_agent.get(agent_id, {})
+        last_stop = None
+        for a in msg_rows.values():
+            last_stop = a["stop_reason"] or last_stop
         rows["agents"].append({
             "session_id": sid, "agent_id": agent_id, "parent_tool_use_id": meta.get("toolUseId"),
-            "agent_type": meta.get("agentType", "main" if f == main else None), "description": meta.get("description"),
-            "role": "main" if f == main else role_of(meta.get("description")),
-            "model": meta.get("model"), "spawn_depth": meta.get("spawnDepth", 0),
-            "background": meta.get("requestShape") == "background",
+            "agent_type": meta.get("agentType", "main" if is_main else None), "description": meta.get("description"),
+            "role": "main" if is_main else role_of(meta.get("description")),
+            "model": meta.get("model"), "effort": meta.get("effort"), "spawn_depth": meta.get("spawnDepth", 0),
+            "background": meta.get("requestShape") == "background", "stopped_by_user": bool(meta.get("stoppedByUser")),
             "started": min(stamps) if stamps else None, "ended": max(stamps) if stamps else None,
             "skills": sorted(agent_skills), "last_stop_reason": last_stop, "meta_parent": meta.get("parentAgentId"),
         })
 
     for a in rows["agents"]:
         a["prompt"] = spawn_prompts.get(a["parent_tool_use_id"])
+    run["pr_urls"] = sorted(pr_urls, key=lambda u: pr_urls[u] or datetime.min.replace(tzinfo=timezone.utc))
+    run["bad_lines"] = stats["bad_lines"]
     finish(rows, run, cost_state, tool_owner, statuses, cfg.get("prices"))
+    run_status(run, cost_state_ts, last_msg_ts, cfg.get("runs") or {}, now)
     return rows
 
 
-def inherited_uuids(main, meta):
+def is_human_prompt(r, content):
+    """A prompt a person sent, across Claude Code versions.
+
+    Newer versions mark it with origin.kind = human or promptSource typed/suggestion_accepted/queued; some older
+    ones wrote typed slash commands with neither field. Task notifications and SDK prompts are not human.
+    """
+    origin = as_dict(r.get("origin")).get("kind")
+    source = r.get("promptSource")
+    if origin == "human" or source in HUMAN_SOURCES:
+        return True
+    if origin or source:
+        return False
+    return not content.lstrip().startswith("<task-notification>")
+
+
+def skill_load(flat):
+    """(skill, skill_dir, body, args) if a user record is Claude Code injecting a skill's text."""
+    m = SKILL_LOAD.search(flat[:2000])
+    if not m:
+        return None
+    body, _, args = flat[m.end():].partition("\nARGUMENTS: ")  # invocation args are not the skill
+    skill_dir = m.group(1)
+    return re.split(r"[\\/]", skill_dir.rstrip("\\/"))[-1], skill_dir, body.strip(), args.strip()[:2000] or None
+
+
+def tool_result_fields(body, tur, decision):
+    """What Claude Code records about a tool result beyond its text: exit code, timeout, own duration, diff size, permission."""
+    out = {"exit_code": None, "return_code_info": tur.get("returnCodeInterpretation") if isinstance(tur.get("returnCodeInterpretation"), str) else None,
+           "timed_out_ms": tur.get("timedOutAfterMs") if isinstance(tur.get("timedOutAfterMs"), int) else None,
+           "tool_duration_ms": None, "patch_added": None, "patch_removed": None, "git_op": None,
+           "permission": decision.get("decision"), "permission_source": None}
+    m = EXIT_CODE.search(body[:300])
+    if m:
+        out["exit_code"] = int(m.group(1))
+    if isinstance(tur.get("durationMs"), (int, float)):
+        out["tool_duration_ms"] = int(tur["durationMs"])
+    elif isinstance(tur.get("durationSeconds"), (int, float)):
+        out["tool_duration_ms"] = int(tur["durationSeconds"] * 1000)
+    patch = tur.get("structuredPatch")
+    if isinstance(patch, list) and patch:
+        lines = [ln for h in patch if isinstance(h, dict) for ln in h.get("lines") or [] if isinstance(ln, str)]
+        out["patch_added"] = sum(1 for ln in lines if ln.startswith("+"))
+        out["patch_removed"] = sum(1 for ln in lines if ln.startswith("-"))
+    elif tur.get("type") == "create" and isinstance(tur.get("content"), str):
+        out["patch_added"], out["patch_removed"] = tur["content"].count("\n") + 1, 0
+    if isinstance(tur.get("gitOperation"), dict):
+        out["git_op"] = ",".join(sorted(tur["gitOperation"]))[:100] or None
+    if decision:
+        out["permission_source"] = ":".join(str(x) for x in (decision.get("source"), decision.get("reasonType")) if x) or None
+    return out
+
+
+def skill_mentions(sid, agent_id, items):
+    """Each time a skill's name came up without the Skill tool being called, and whether it was invoked afterwards."""
+    out = []
+    for i, (kind, t, skill) in enumerate(items):
+        if kind != "mention":
+            continue
+        later = any(k == "invoke" and s == skill for k, _, s in items[i + 1:])
+        out.append({"session_id": sid, "agent_id": agent_id, "ts": t, "skill": skill, "invoked": later})
+    return out
+
+
+def inherited_uuids(main, f, meta):
     """Record uuids and API message ids a fork copied from its parent's transcript."""
     if not (meta.get("isFork") or meta.get("agentType") == "fork"):
         return set()
+    for r in iter_records(f):  # newer forks start with a fork-context-ref and copy no history
+        if r.get("type") == "fork-context-ref":
+            return set()
+        break
     parent = meta.get("parentAgentId")
     pf = main.with_suffix("") / "subagents" / f"agent-{parent}.jsonl" if parent else main
     if not pf.exists():
@@ -381,7 +587,7 @@ def inherited_uuids(main, meta):
     for r in iter_records(pf):
         out.add(r.get("uuid"))
         if r.get("type") == "assistant":
-            out.add((r.get("message") or {}).get("id"))
+            out.add(as_dict(r.get("message")).get("id"))
     out.discard(None)
     return out
 
@@ -391,59 +597,96 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
         a["parent_agent_id"] = a.pop("meta_parent", None) or (tool_owner.get(a["parent_tool_use_id"]) if a["parent_tool_use_id"] else None)
         a["status"] = statuses.get(a["agent_id"]) if a["agent_id"] != "main" else None
     inherit_skills(rows)
-    allocate_cost(rows, cost_state, prices)
+    unpriced = allocate_cost(rows, cost_state, prices)
     by_agent = {}
     for c in rows["api_calls"]:
-        s = by_agent.setdefault(c["agent_id"], {"api_calls": 0, "input_tokens": 0, "output_tokens": 0,
-                                                "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": None, "model": None})
+        s = by_agent.setdefault(c["agent_id"], {"api_calls": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0,
+                                                "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": None,
+                                                "model": None, "peak_context": 0})
         s["api_calls"] += 1
         s["model"] = s["model"] or c["model"]
-        for k in ("input_tokens", "output_tokens", "cache_read_tokens"):
+        for k in ("input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens"):
             s[k] += c[k] or 0
         s["cache_write_tokens"] += (c["cache_write_5m"] or 0) + (c["cache_write_1h"] or 0)
-        s["peak_context"] = max(s.get("peak_context", 0), (c["input_tokens"] or 0) + (c["cache_read_tokens"] or 0)
-                                + (c["cache_write_5m"] or 0) + (c["cache_write_1h"] or 0))
+        s["peak_context"] = max(s["peak_context"], prompt_tokens(c))
         if c["cost_usd"] is not None:
             s["cost_usd"] = (s["cost_usd"] or 0) + c["cost_usd"]
+    tools = defaultdict(lambda: [0, 0])
+    for c in rows["tool_calls"]:
+        tools[c["agent_id"]][0] += 1
+        tools[c["agent_id"]][1] += bool(c["is_error"])
+    compactions = defaultdict(int)
+    for c in rows["compactions"]:
+        compactions[c["agent_id"]] += 1
     for a in rows["agents"]:
         s = by_agent.get(a["agent_id"], {})
-        calls = [c for c in rows["tool_calls"] if c["agent_id"] == a["agent_id"]]
-        a.update({k: s.get(k, 0) for k in ("api_calls", "input_tokens", "output_tokens", "cache_read_tokens",
+        a.update({k: s.get(k, 0) for k in ("api_calls", "input_tokens", "output_tokens", "thinking_tokens", "cache_read_tokens",
                                            "cache_write_tokens", "peak_context")})
         a["cost_usd"] = s.get("cost_usd")
         a["model"] = a["model"] or s.get("model")
-        a["tool_calls"] = len(calls)
-        a["tool_errors"] = sum(1 for c in calls if c["is_error"])
-        a["compactions"] = sum(1 for e in rows["events"] if e["agent_id"] == a["agent_id"] and e["kind"] == "compaction")
+        a["tool_calls"], a["tool_errors"] = tools[a["agent_id"]]
+        a["compactions"] = compactions[a["agent_id"]]
 
     stamps = [a[k] for a in rows["agents"] for k in ("started", "ended") if a[k]]
     cs = cost_state or {}
+    usage = as_dict(cs.get("modelUsage"))
+    for model, u in usage.items():
+        u = as_dict(u)
+        rows["model_usage"].append({
+            "session_id": run["session_id"], "model": model, "input_tokens": u.get("inputTokens"),
+            "output_tokens": u.get("outputTokens"), "thinking_tokens": u.get("thinkingTokens"),
+            "cache_read_tokens": u.get("cacheReadInputTokens"), "cache_write_tokens": u.get("cacheCreationInputTokens"),
+            "web_search_requests": u.get("webSearchRequests"), "cost_usd": u.get("costUSD"),
+        })
+    real_calls = [c for c in rows["api_calls"] if model_key(c["model"]) not in FREE_MODELS]
     run.update({
         "started": min(stamps) if stamps else None, "ended": max(stamps) if stamps else None,
         "n_agents": len(rows["agents"]) - 1, "skills": sorted({s for a in rows["agents"] for s in a["skills"]}),
         "cost_usd": cs.get("totalCostUSD") if cost_state else sum(c["cost_usd"] or 0 for c in rows["api_calls"]),
         "cost_estimated": cost_state is None,
-        "api_ms": cs.get("totalAPIDuration"), "tool_ms": cs.get("totalToolDuration"),
+        "api_ms": cs.get("totalAPIDuration"), "api_ms_no_retries": cs.get("totalAPIDurationWithoutRetries"),
+        "tool_ms": cs.get("totalToolDuration"), "total_ms": cs.get("totalDuration"),
         "lines_added": cs.get("totalLinesAdded"), "lines_removed": cs.get("totalLinesRemoved"),
         "model_usage": json.dumps(cs.get("modelUsage")) if cs else None,
+        "unknown_model_cost": bool(cs.get("hasUnknownModelCost")) if cost_state else None,
+        "unpriced_models": sorted(unpriced), "n_api_calls": len(real_calls),
     })
     rows["runs"].append(run)
 
 
-def ev(sid, agent_id, t, kind, value, detail):
-    return {"session_id": sid, "agent_id": agent_id, "ts": t, "kind": kind, "value": value, "detail": detail}
+def run_status(run, cost_state_ts, last_msg_ts, opts, now=None):
+    """complete: Claude Code wrote its closing cost-state after the last turn, or nothing was added for idle_hours.
+    open: the session may still be going, so its numbers are partial. stub: too small to say anything."""
+    now = now or datetime.now(timezone.utc)
+    if cost_state_ts and (not last_msg_ts or cost_state_ts >= last_msg_ts):
+        run["status"], run["ended_by"] = "complete", "session_end"
+    elif run["ended"] and now - run["ended"] > timedelta(hours=opts.get("idle_hours", 12)):
+        run["status"], run["ended_by"] = "complete", "idle"
+    else:
+        run["status"], run["ended_by"] = "open", None
+    run["is_stub"] = (run["n_api_calls"] < opts.get("stub_api_calls", 3)
+                      or (run["cost_usd"] is not None and run["cost_usd"] < opts.get("stub_cost_usd", 0.02)))
+
+
+def ev(sid, agent_id, t, kind, value, detail, source):
+    return {"session_id": sid, "agent_id": agent_id, "ts": t, "kind": kind,
+            "value": value if isinstance(value, int) else None, "detail": detail, "source": source}
 
 
 def inherit_skills(rows):
     """A subagent with no skill of its own runs under the skill active where it was spawned."""
     spawn_skill = {c["tool_use_id"]: c["skill"] for c in rows["tool_calls"]}
+    by_agent = defaultdict(lambda: defaultdict(list))
+    for table in ("api_calls", "tool_calls", "markers", "texts"):
+        for r in rows[table]:
+            by_agent[r["agent_id"]][table].append(r)
     for ag in sorted(rows["agents"], key=lambda a: a["spawn_depth"] or 0):
         inherited = spawn_skill.get(ag["parent_tool_use_id"])
         if not inherited:
             continue
-        for table in ("api_calls", "tool_calls", "markers", "texts"):
-            for r in rows[table]:
-                if r["agent_id"] == ag["agent_id"] and not r["skill"]:
+        for table, items in by_agent[ag["agent_id"]].items():
+            for r in items:
+                if not r["skill"]:
                     r["skill"] = inherited
                     if table == "tool_calls":
                         spawn_skill[r["tool_use_id"]] = inherited
@@ -452,17 +695,31 @@ def inherit_skills(rows):
 
 
 def allocate_cost(rows, cost_state, prices=None):
-    """Each call gets its list-price cost; when cost-state exists, each model's calls are scaled to its real cost."""
-    usage = (cost_state or {}).get("modelUsage") or {}
-    real = {}
+    """Each call gets its list-price cost; when cost-state exists, each model's calls are scaled to its real cost.
+
+    Returns the models that have no list price. Their calls keep a NULL cost unless cost-state gives the model's
+    real cost, in which case it is split across them by tokens.
+    """
+    usage = as_dict((cost_state or {}).get("modelUsage"))
+    real = defaultdict(float)
     for k, v in usage.items():
-        real[re.sub(r"\[.*\]$", "", k)] = real.get(re.sub(r"\[.*\]$", "", k), 0) + ((v or {}).get("costUSD") or 0)
-    listed = {}
+        real[model_key(k)] += as_dict(v).get("costUSD") or 0
+    listed, weight, unpriced = defaultdict(float), defaultdict(float), set()
     for a in rows["api_calls"]:
         a["cost_usd"] = list_cost(a, prices)
-        listed[a["model"]] = listed.get(a["model"], 0) + a["cost_usd"]
+        if a["cost_usd"] is None:
+            unpriced.add(model_key(a["model"]) or "(unknown)")
+            weight[model_key(a["model"])] += prompt_tokens(a) + 5 * (a["output_tokens"] or 0)
+        else:
+            listed[model_key(a["model"])] += a["cost_usd"]
     if not cost_state:
-        return
+        return unpriced
     for a in rows["api_calls"]:
-        if a["model"] in real and listed.get(a["model"]):
-            a["cost_usd"] *= real[a["model"]] / listed[a["model"]]
+        key = model_key(a["model"])
+        if key not in real:
+            continue
+        if a["cost_usd"] is not None and listed.get(key):
+            a["cost_usd"] *= real[key] / listed[key]
+        elif a["cost_usd"] is None and weight.get(key):
+            a["cost_usd"] = real[key] * (prompt_tokens(a) + 5 * (a["output_tokens"] or 0)) / weight[key]
+    return unpriced
