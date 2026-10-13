@@ -56,7 +56,7 @@ function barChart(spec) {
     { label: spec.valueTitle || "Value", num: true, value: (i) => i.value, cell: (i) => fmtv(i.value) }];
   if (spec.share) tableCols.push({ label: "Share", num: true, value: (i) => (total ? i.value / total : null), cell: (i) => fmt.pct(total ? i.value / total : null) });
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: items.length * rowH() + 50,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: items.length * rowH() + 50,
     table: () => ({ cols: tableCols, rows: items }),
     draw(w) {
       const R = rowH(), dotW = spec.ns ? 18 : 0;
@@ -95,7 +95,7 @@ function stackChart(spec) {
   if (!rows.length) return emptyCard(spec.title, "Nothing recorded for this yet.", spec.notes);
   const share = spec.mode === "share";
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: rows.length * rowH() + 50,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: rows.length * rowH() + 50,
     legend: () => legend(series.map((s) => ({ label: s.label, css: s.css }))),
     table: () => ({
       cols: [{ label: spec.labelTitle || "Item", value: (r) => r.label },
@@ -158,7 +158,7 @@ function dayColumns(spec) {
     all.push({ ...d, t, total: series.reduce((n, s) => n + (d.parts[s.key] || 0), 0) });
   }
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: 240,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: 240,
     legend: spec.series && spec.series.length > 1 ? () => legend(series.map((s) => ({ label: s.label, css: s.css }))) : null,
     table: () => ({
       cols: [{ label: "Day", value: (d) => d.day, cell: (d) => fmt.dayKey(d.day) },
@@ -211,7 +211,7 @@ function scatterChart(spec) {
   if (!pts.length) return emptyCard(spec.title, spec.emptyText || "Not enough data for this chart yet.", spec.notes);
   const fx = spec.x.fmt || fmt.num, fy = spec.y.fmt || fmt.num;
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: 300, n: spec.n, minN: spec.minN,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: 300, n: spec.n, minN: spec.minN,
     legend: spec.legendItems ? () => legend(spec.legendItems) : null,
     table: () => ({
       cols: [{ label: spec.labelTitle || "Item", value: (p) => p.label },
@@ -319,8 +319,9 @@ function rangeChart(spec) {
   const bare = scored.filter((r) => !r.ci).sort((a, b) => b.score - a.score);
   if (!scored.length) return emptyCard(spec.title, "No score yet.", spec.notes);
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: (ranged.length + bare.length) * rowH() + 90,
-    legend: () => toneLegend(["better", "unclear", "worse", "few"]),
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes,
+    height: (ranged.length + bare.length) * rowH() + 100,
+    legend: () => toneLegend(tonesIn(scored.map((r) => r.tone || "unclear"))),
     table: () => ({
       cols: [{ label: spec.labelTitle || "Item", value: (r) => r.label }, { label: "Score", num: true, value: (r) => r.score, cell: (r) => fmt.score(r.score) },
         { label: "Range low", num: true, value: (r) => (r.ci ? r.ci[0] : null), cell: (r) => (r.ci ? fmt.score(r.ci[0]) : "—") },
@@ -329,11 +330,13 @@ function rangeChart(spec) {
       rows: ranged.concat(bare),
     }),
     draw(w) {
-      const R = rowH() + 2, top = 28, gap = bare.length && ranged.length ? 30 : 0;
+      const R = rowH() + 2, top = 44, gap = bare.length && ranged.length ? 30 : 0;
       const H = top + (ranged.length + bare.length) * R + gap + 44;
       const dotW = scored.some((r) => r.ns) ? 18 : 0;
       const labelW = Math.min(maxLabel(scored.map((r) => r.label), FONT.label) + 14 + dotW, Math.max(90, w * 0.32));
-      const verdictW = w >= 560 ? maxLabel(scored.map((r) => `${fmt.score(r.score)}  ▲ ${r.word}`), FONT.axis) + 18 : maxLabel(scored.map((r) => `${fmt.score(r.score)} ▲`), FONT.axis) + 18;
+      const short = (r) => (TONE[r.tone] || TONE.unclear).word;
+      const valText = (r) => `${fmt.score(r.score)}  ${(TONE[r.tone] || TONE.unclear).icon} ${w >= 720 ? r.word : short(r)}`;
+      const verdictW = Math.min(maxLabel(scored.map(valText), FONT.axis) + 18, Math.max(110, w * 0.3));
       const x0 = labelW, x1 = Math.max(x0 + 60, w - verdictW);
       const xs = scored.flatMap((r) => (r.ci ? r.ci : [r.score])).concat(spec.ref);
       const lo = Math.min(...xs), hi = Math.max(...xs), pad = Math.max(4, (hi - lo) * 0.06);
@@ -342,7 +345,9 @@ function rangeChart(spec) {
       const root = svgRoot(w, H, `${spec.title}: ${scored.length} rows; ${spec.ref} is ${spec.refLabel || "the reference"}`);
       const yEnd = top + (ranged.length + bare.length) * R + gap;
       axisX(root, { scale: x, ticks: tk, fmt: fmt.score, x0, x1, y: yEnd, grid: true, gridTop: top - 6, ref: spec.ref, title: spec.axisTitle });
-      root.append(svg("text", { class: "reflabel", x: x(spec.ref), y: top - 12, "text-anchor": "middle" }, spec.refLabel || "reference"));
+      root.append(svg("text", { class: "reflabel strongref", x: x(spec.ref), y: top - 24, "text-anchor": "middle" }, `${spec.ref} = ${spec.refLabel || "reference"}`));
+      root.append(svg("text", { class: "dirlabel", x: x(spec.ref) - 8, y: top - 8, "text-anchor": "end" }, spec.leftLabel || "◀ worse"),
+        svg("text", { class: "dirlabel", x: x(spec.ref) + 8, y: top - 8 }, spec.rightLabel || "better ▶"));
       const row = (r, i, yOff) => {
         const y = yOff + i * R + R / 2;
         const t = TONE[r.tone] || TONE.unclear;
@@ -353,8 +358,8 @@ function rangeChart(spec) {
         if (r.ci) kids.push(svg("line", { class: "range", x1: x(r.ci[0]), x2: x(r.ci[1]), y1: y, y2: y, style: `stroke:${t.css}` }));
         kids.push(marker(r.ci ? "circle" : "circle", x(r.score), y, 5.5, { class: `dot${r.ci ? "" : " hollow"}`, style: r.ci ? `fill:${t.css}` : `stroke:${t.css}` }));
         kids.push(svg("rect", { class: "hit", x: x0 - 4, y: y - R / 2, width: x1 - x0 + 8, height: R }));
-        root.append(markGroup({ title: r.label, rows: [["Score", fmt.score(r.score)], ["Likely range (90%)", r.ci ? fmt.interval(r.ci) : "none: too few runs"], ["Verdict", `${t.icon} ${r.word}`]], href: r.href }, ...kids));
-        root.append(svg("text", { class: "value", x: x1 + 12, y: y + 4 }, w >= 560 ? `${fmt.score(r.score)}  ${t.icon} ${r.word}` : `${fmt.score(r.score)} ${t.icon}`));
+        root.append(markGroup({ title: r.label, rows: [["Score", fmt.score(r.score)], [`Likely range (${pctOf()}%)`, r.ci ? fmt.interval(r.ci) : "none: too few runs"], ["Verdict", `${t.icon} ${r.word}`]], href: r.href }, ...kids));
+        root.append(svg("text", { class: "value", x: x1 + 12, y: y + 4 }, fitText(valText(r), w - x1 - 14, FONT.axis)));
       };
       ranged.forEach((r, i) => row(r, i, top));
       if (bare.length) {
@@ -376,7 +381,7 @@ function rangeChart(spec) {
 function heatmap(spec) {
   if (!spec.rows.length || !spec.cols.length) return emptyCard(spec.title, "Nothing recorded for this yet.", spec.notes);
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: spec.rows.length * 32 + 60,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: spec.rows.length * 32 + 60,
     legend: () => scaleLegend(spec.scale, spec.legendText),
     table: () => ({
       cols: [{ label: spec.rowTitle || "Row", value: (r) => r.label },
@@ -391,6 +396,7 @@ function heatmap(spec) {
       const W = Math.max(w, labelW + cellW * spec.cols.length);
       const H = head + spec.rows.length * RH + 6;
       const root = svgRoot(W, H, `${spec.title}: ${spec.rows.length} rows by ${spec.cols.length} columns`);
+      if (spec.corner) root.append(svg("text", { class: "colsub", x: labelW - 8, y: head - 7, "text-anchor": "end" }, fitText(spec.corner, labelW - 10, FONT.small)));
       spec.cols.forEach((c, j) => {
         const cx = labelW + j * cellW + cellW / 2;
         root.append(svg("text", { class: "colhead", x: cx, y: c.sub ? head - 20 : head - 10, "text-anchor": "middle" }, fitText(c.label, cellW - 4, FONT.small, 600)));
@@ -429,7 +435,7 @@ function divergingBars(spec) {
   const rows = spec.rows.filter((r) => valid(r.value));
   if (!rows.length) return emptyCard(spec.title, "Nothing to compare yet.", spec.notes);
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: rows.length * rowH() + 70, n: spec.n, minN: spec.minN,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: rows.length * rowH() + 70, n: spec.n, minN: spec.minN,
     legend: spec.legendItems ? () => legend(spec.legendItems) : () => toneLegend(["better", "worse"]),
     table: () => ({ cols: [{ label: "Measure", value: (r) => r.label }, { label: spec.axisTitle, num: true, value: (r) => r.value, cell: (r) => r.text }, ...(spec.extraCols || [])], rows }),
     draw(w) {
@@ -479,9 +485,12 @@ function versionTimeline(spec) {
   if (!facets.length) return emptyCard(spec.title, spec.emptyText || "No version has a score yet.", spec.notes);
   const all = facets.flatMap((f) => f.versions);
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: facets.length > 1 ? 420 : 260,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: facets.length > 1 ? 420 : 260,
     legend: () => {
-      const l = toneLegend(["better", "unclear", "worse", "first", "few"]);
+      const l = toneLegend(tonesIn(all.map((v) => v.tone || "unclear")));
+      l.prepend(h("li", {}, svg("svg", { class: "lkey", width: 16, height: 12, "aria-hidden": "true" }, svg("rect", { x: 1, y: 1, width: 14, height: 10, rx: 2, style: "fill:var(--neutral);opacity:.25" }),
+        svg("line", { x1: 1, x2: 15, y1: 6, y2: 6, style: "stroke:var(--neutral)", "stroke-width": 2.5 })), "line = a version's score while it was in use; shaded band = its likely range"),
+      h("li", {}, svg("svg", { class: "lkey", width: 16, height: 12, "aria-hidden": "true" }, svg("line", { class: "ref", x1: 1, x2: 15, y1: 6, y2: 6 })), `dashed line = ${spec.ref}, the usual level`));
       const kinds = new Set((spec.vlines || []).concat(facets.flatMap((f) => f.vlines || [])).map((v) => v.kind));
       const extra = [["cc", "Claude Code update"], ["model", "first use of a model"], ["skill", "another skill changed"]].filter(([k]) => kinds.has(k));
       if (extra.length) l.append(...extra.map(([k, t]) => h("li", {}, svg("svg", { class: "lkey", width: 16, height: 12, "aria-hidden": "true" },
@@ -517,7 +526,14 @@ function versionTimeline(spec) {
         const x = scaleLinear(t0 - pad, t1 + pad, x0 + 6, x1 - 6);
         const y = scaleLinear(Math.min(lo - ypad, yt[0]), Math.max(hi + ypad, yt[yt.length - 1]), bottom, top);
         if (f.ns) g.append(entityDot(f.ns, f.name ?? f.label, 5, 10));
-        g.append(svg("text", { class: "facettitle", x: f.ns ? 14 : 0, y: 14 }, fitText(f.label, fw - 20, FONT.label, 600)));
+        const latest = [...f.versions].sort((a, b) => a.t0 - b.t0).pop();
+        const lt = TONE[latest.tone] || TONE.unclear;
+        const tx = f.ns ? 14 : 0;
+        const name = fitText(f.label, fw - 20, FONT.label, 600);
+        g.append(svg("text", { class: "facettitle", x: tx, y: 14 }, name));
+        const verdictText = `${latest.label}: ${lt.icon} ${latest.text || "first version"}`;
+        const room = fw - tx - textWidth(name, FONT.label, 600) - 14;
+        if (room > 40) g.append(svg("text", { class: "facetsub", x: tx + textWidth(name, FONT.label, 600) + 8, y: 14 }, fitText(verdictText, room, FONT.small)));
         axisY(g, { scale: y, ticks: yt, fmt: fmt.score, x0, x1, top, ref: spec.ref });
         if (!yt.includes(spec.ref)) g.append(svg("line", { class: "ref", x1: x0, x2: x1, y1: y(spec.ref), y2: y(spec.ref) }));
         axisX(g, { scale: x, ticks: timeTicks(t0 - pad, t1 + pad, Math.max(2, Math.floor((x1 - x0) / 75))).map((t) => ({ v: t.t, label: t.label })), x0, x1, y: bottom });
@@ -536,7 +552,7 @@ function versionTimeline(spec) {
           kids.push(marker("circle", b, y(v.score), 4.5, { class: v.ci ? "dot" : "dot hollow", style: v.ci ? `fill:${t.css}` : `stroke:${t.css}` }));
           kids.push(svg("rect", { class: "hit", x: a - 4, y: y(v.score) - 12, width: b - a + 8, height: 24 }));
           g.append(markGroup({ title: `${f.label} ${v.label}`, href: f.href,
-            rows: [["Score", fmt.score(v.score)], ["Likely range (90%)", v.ci ? fmt.interval(v.ci) : "none: too few runs"], ["In use", fmt.span(new Date(v.t0).toISOString(), new Date(v.t1).toISOString())],
+            rows: [["Score", fmt.score(v.score)], [`Likely range (${pctOf()}%)`, v.ci ? fmt.interval(v.ci) : "none: too few runs"], ["In use", fmt.span(new Date(v.t0).toISOString(), new Date(v.t1).toISOString())],
               ["Runs", fmt.int(v.runs)], ["Against the version before", `${t.icon} ${v.text || "first version"}`]] }, ...kids));
           const lab = `${v.label}`;
           if (b - a > textWidth(lab, FONT.small) + 4 || vs.length <= 4) g.append(svg("text", { class: "vlabel", x: (a + b) / 2, y: y(v.score) - 8, "text-anchor": "middle" }, lab));
@@ -557,7 +573,7 @@ function stripPlot(spec) {
   const allV = groups.flatMap((g) => g.values.map((p) => p.v));
   const log = spec.log !== false && allV.every((v) => v > 0) && Math.max(...allV) / Math.min(...allV) > 30;
   return chartCard({
-    title: spec.title, question: spec.question, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: groups.length * 44 + 60,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: groups.length * 44 + 60,
     table: () => ({
       cols: [{ label: "Group", value: (r) => r.group }, { label: spec.axisTitle, num: true, value: (r) => r.v, cell: (r) => fmtv(r.v) }, { label: "Run", value: (r) => (r.tip ? r.tip.title : "") }],
       rows: groups.flatMap((g) => g.values.map((p) => ({ ...p, group: g.label }))),

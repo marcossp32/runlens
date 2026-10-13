@@ -3,8 +3,10 @@
    A chart is drawn at the real pixel width of its card, never scaled: a ResizeObserver redraws it
    (debounced) when the card changes width, so text is the same size at 390 px and at 2500 px.
    A chart is only drawn once it is near the viewport and visible (IntersectionObserver), so hidden tabs
-   and long pages cost nothing until they are looked at. Each card has a table view (the accessible twin
-   of the chart), CSV of that table, and SVG / PNG of the drawing. */
+   and long pages cost nothing until they are looked at.
+   Every card reads the same way: the question it answers, a one-line answer from the data, the chart with
+   its marks labelled where they fit, then "How to read this" (closed) with the encodings and caveats. The
+   table view (the accessible twin of the chart), CSV, SVG and PNG sit in one "⋯" menu per card. */
 
 const FRAMES = new Set();
 const FRAME_OF = new WeakMap();
@@ -44,35 +46,43 @@ function redrawForPrint() {
 }
 
 /* spec: {
-     title, sub (one line under the title: units, period), notes (string or nodes),
+     title,                            what the chart is (a noun phrase): named under "How to read this", used for files
+     question                          the question it answers in plain words: the card's heading
+     takeaway                          one line worked out from the data: the answer, under the heading (string, node or fn)
+     sub (encodings, units, period: "a · b · c"), notes (string or nodes), howto (more text):
+                                       collapsed under "How to read this", never deleted
      draw(width) -> SVG element,       the drawing, at exactly `width` px wide
      table() -> {cols, rows},          the same data as a table: cols are {label, value(r), cell?(r), num, csv?(r)}
-     legend() -> element,              an HTML legend under the plot (optional)
+     legend() -> element,              a legend next to the plot (optional); legendInHowto moves it under "How to read this"
+                                       when the marks are already labelled directly
      height,                           expected height, reserved before the first draw
      n, minN                           sample size: under minN the chart says so and is drawn muted
      controls                          at most two small controls for this chart (a measure, a scale), in its header
-     question                          the question the chart answers, shown under the title
    } */
 function chartCard(spec) {
   const id = `c${Math.random().toString(36).slice(2, 9)}`;
   const plot = h("div", { class: "plot", style: `min-height:${spec.height || 180}px` });
-  const tableBox = h("div", { class: "tableview", hidden: true });
-  const tools = h("div", { class: "tools" });
-  const fig = h("figure", { class: "card chart-card", "aria-labelledby": `${id}-t` },
+  const tableBox = h("div", { class: "tableview", id: `${id}-tv`, hidden: true });
+  const heading = spec.question || spec.title;
+  let takeaway = null;
+  try {
+    takeaway = typeof spec.takeaway === "function" ? spec.takeaway() : spec.takeaway;
+  } catch (err) {
+    console.error(err);
+  }
+  const small = spec.n != null && spec.minN && spec.n < spec.minN;
+  const legendEl = spec.legend ? spec.legend() : null;
+  const fig = h("figure", { class: `card chart-card${small ? " low-n" : ""}`, "aria-labelledby": `${id}-t` },
     h("div", { class: "card-head" },
       h("div", { class: "card-titles" },
-        h("figcaption", { class: "cardtitle", id: `${id}-t` }, spec.title),
-        spec.question ? h("div", { class: "card-q" }, spec.question) : null,
-        spec.sub ? h("div", { class: "card-sub" }, spec.sub) : null),
-      spec.controls ? h("div", { class: "card-controls" }, spec.controls) : null,
-      tools),
-    spec.n != null && spec.minN && spec.n < spec.minN
-      ? h("p", { class: "smalln" }, h("span", { "aria-hidden": "true" }, "○ "), `Only ${fmt.runs(spec.n)}: read this as a hint, not a result.`) : null,
+        h("figcaption", { class: "cardtitle", id: `${id}-t` }, heading),
+        takeaway ? h("p", { class: "card-takeaway" }, takeaway) : null),
+      spec.controls ? h("div", { class: "card-controls" }, spec.controls) : null),
+    small ? h("p", { class: "smalln" }, h("span", { "aria-hidden": "true" }, "○ "), `Only ${fmt.runs(spec.n)}: read this as a hint, not a result.`) : null,
     plot,
-    spec.legend ? spec.legend() : null,
+    spec.legendInHowto ? null : legendEl,
     tableBox,
-    [spec.notes].flat().filter(Boolean).map((n) => (n instanceof Node ? n : note(n))));
-  if (spec.n != null && spec.minN && spec.n < spec.minN) fig.classList.add("low-n");
+    howToRead(spec, spec.legendInHowto ? legendEl : null));
 
   let exportButtons = [];
   const frame = {
@@ -114,32 +124,69 @@ function chartCard(spec) {
   else requestAnimationFrame(() => frame.resize(plot.clientWidth || 600));
   if (IO) IO.observe(plot);
 
+  // Table view and downloads: one small menu per card instead of a row of buttons.
+  const items = [];
   if (spec.table) {
-    const toggle = h("button", { type: "button", class: "tool", "aria-pressed": "false", "aria-controls": `${id}-tv` }, "Table");
-    tableBox.id = `${id}-tv`;
-    toggle.addEventListener("click", () => {
-      const on = tableBox.hidden;
+    const tableBtn = h("button", { type: "button", class: "menu-item", "aria-pressed": "false", "aria-controls": tableBox.id, "data-act": "table" }, "Show the data as a table");
+    const setTable = (on) => {
       if (on && !tableBox.firstChild) {
         const t = spec.table();
-        tableBox.append(sortTable({ caption: `${spec.title}: data`, cols: t.cols, rows: t.rows, sort: t.sort || null, csvName: spec.title }).el);
+        const hide = h("button", { type: "button", class: "tool", "aria-controls": tableBox.id }, "Hide the table");
+        hide.addEventListener("click", () => setTable(false));
+        tableBox.append(h("div", { class: "tableview-bar" }, h("span", { class: "muted" }, "The chart's data"), hide),
+          sortTable({ caption: `${spec.title}: data`, cols: t.cols, rows: t.rows, sort: t.sort || null, csvName: spec.title }).el);
       }
       tableBox.hidden = !on;
-      toggle.setAttribute("aria-pressed", String(on));
-    });
-    const csv = h("button", { type: "button", class: "tool", title: "Download the chart's data as CSV" }, "CSV");
+      tableBtn.setAttribute("aria-pressed", String(on));
+      tableBtn.textContent = on ? "Hide the table" : "Show the data as a table";
+    };
+    tableBtn.addEventListener("click", () => setTable(tableBox.hidden));
+    const csv = h("button", { type: "button", class: "menu-item", "data-act": "csv" }, "Download the data (CSV)");
     csv.addEventListener("click", () => {
       const t = spec.table();
       downloadCSV(spec.title, t.cols, t.rows);
     });
-    tools.append(toggle, csv);
+    items.push(tableBtn, csv);
   }
-  const svgBtn = h("button", { type: "button", class: "tool", title: "Download the chart as SVG" }, "SVG");
+  const svgBtn = h("button", { type: "button", class: "menu-item", "data-act": "svg" }, "Download the image (SVG)");
   svgBtn.addEventListener("click", () => frame.svg && exportSVG(frame.svg, spec.title));
-  const pngBtn = h("button", { type: "button", class: "tool", title: "Download the chart as PNG" }, "PNG");
+  const pngBtn = h("button", { type: "button", class: "menu-item", "data-act": "png" }, "Download the image (PNG)");
   pngBtn.addEventListener("click", () => frame.svg && exportPNG(frame.svg, spec.title));
   exportButtons = [svgBtn, pngBtn];
-  tools.append(svgBtn, pngBtn);
+  items.push(svgBtn, pngBtn);
+  fig.querySelector(".card-head").append(cardMenu(heading, items));
   return fig;
+}
+
+// The "⋯" menu of a card: a disclosure with plain buttons, so Tab, Enter, Space and Escape all work.
+function cardMenu(heading, items) {
+  const box = h("details", { class: "menu cardmenu" },
+    h("summary", { class: "cardmenu-btn", title: "Table and downloads", "aria-label": `Table and downloads: ${heading}` }, h("span", { "aria-hidden": "true" }, "⋯")),
+    h("div", { class: "menu-panel cardmenu-panel" }, items));
+  for (const b of items) {
+    b.addEventListener("click", () => {
+      box.open = false;
+      box.querySelector("summary").focus({ preventScroll: true });
+    });
+  }
+  return box;
+}
+
+// Everything a first-time reader may need to read the chart, closed by default: what it shows, its encodings
+// (each "·" part of spec.sub on its own line), the method notes and caveats.
+function howToRead(spec, legendEl) {
+  const enc = spec.sub ? String(spec.sub).split(" · ").map((x) => x.trim()).filter(Boolean) : [];
+  const notes = [spec.notes].flat().filter(Boolean);
+  const howto = [spec.howto].flat().filter(Boolean);
+  if (!enc.length && !notes.length && !howto.length && !legendEl && !spec.question) return null;
+  return h("details", { class: "howto-read" },
+    h("summary", {}, "How to read this"),
+    h("div", { class: "howto-body" },
+      spec.question ? h("p", { class: "howto-name" }, "Chart: ", h("strong", {}, spec.title)) : null,
+      enc.length ? h("ul", {}, enc.map((x) => h("li", {}, x.charAt(0).toUpperCase() + x.slice(1)))) : null,
+      legendEl,
+      howto.map((n) => (n instanceof Node ? n : h("p", {}, n))),
+      notes.map((n) => (n instanceof Node ? n : h("p", {}, n)))));
 }
 
 // A card that is not a chart (a stat, a list) but sits in the same grid.
@@ -315,7 +362,9 @@ function legend(items, title) {
     return h("li", {}, key, it.label);
   }));
 }
-const toneLegend = (tones) => legend(tones.map((t) => ({ label: `${TONE[t].icon} ${t === "better" ? "better" : t === "worse" ? "worse" : TONE[t].word}`, css: TONE[t].css, kind: "dot" })));
+const toneLegend = (tones) => legend(tones.map((t) => ({ label: `${TONE[t].icon} ${TONE[t].help || TONE[t].word}`, css: TONE[t].css, kind: "dot" })), "What the colours and symbols mean");
+// The tones that actually occur, in a fixed order, so a legend only explains what is on screen.
+const tonesIn = (list) => ["better", "worse", "unclear", "confounded", "few", "first"].filter((t) => list.includes(t));
 
 function svgRoot(w, hgt, label) {
   return svg("svg", { width: w, height: hgt, viewBox: `0 0 ${w} ${hgt}`, role: "group", "aria-label": label });

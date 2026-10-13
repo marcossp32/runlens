@@ -44,7 +44,7 @@ function versionOptions(id, selected) {
   const vs = DATA.versions[id] || [];
   if (!vs.length) return [h("option", { value: "" }, "no versions")];
   return vs.map((v) => h("option", { value: v.key, selected: v.key === selected ? true : null },
-    `${nameOf(v)} · ${v.parts.map((p) => p.hash).join("+") || "–"} · ${fmt.runs(v.runs)}`));
+    `${nameOf(v)} · ${partsText(v, ", ") || "–"} · ${fmt.runs(v.runs)}`));
 }
 
 function sideCard(label, v, name) {
@@ -55,7 +55,8 @@ function sideCard(label, v, name) {
     h("div", { class: "big" }, fmt.score(v.score)),
     scoreBullet(v.score, v.ci, v),
     h("p", { class: "ci" }, v.ci ? `range ${fmt.interval(v.ci)} · ` : "no range yet · ", toneTag(t.tone, t.word)),
-    h("p", { class: "sub" }, `${fmt.runs(v.runs)} · ${fmt.span(v.first_seen, v.last_seen)} · ${v.parts.map((p) => p.hash).join(" + ") || "no skill text"}`),
+    h("p", { class: "sub" }, `${fmt.runs(v.runs)} · ${fmt.span(v.first_seen, v.last_seen)}`),
+    h("p", { class: "sub" }, h("span", { class: "muted" }, "Text: "), partsText(v) || "no skill text"),
     v.low_sample ? chip(`fewer than ${MIN_RUNS} runs`, "warn") : null);
 }
 
@@ -98,28 +99,35 @@ function comparison(sa, sb) {
     ...rows.filter((r) => r.pm).map((r) => ({ label: r.label, effect: r.pm.effect, ci: r.pm.ci, tone: r.tone,
       tip: [["A", fmt.metric(r.m, r.a)], ["B", fmt.metric(r.m, r.b)], ["Weight", `×${r.pm.weight}`]] })),
   ] : [];
+  const conf = pair && pair.confounders ? pair.confounders : [];
   return h("div", {},
-    h("div", { class: "sides" }, sideCard("A", A, nameA), sideCard("B", B, nameB)),
     h("div", { class: `verdict tone-${tone}` }, h("p", {}, h("span", { class: "ticon", "aria-hidden": "true" }, TONE[tone].icon), " ", text),
-      pair && pair.confounders && pair.confounders.length ? h("div", { class: "confounders" }, h("strong", {}, pair.verdict === "confounded" ? "What else changed between A and B:" : "Also changed:"),
-        h("ul", {}, pair.confounders.map((c) => h("li", {}, c))),
-        pair.verdict === "confounded" && pair.direction ? h("p", { class: "muted" }, `Without these, the interval alone would say: ${pair.direction}.`) : null) : null),
+      conf.length ? h("details", { class: "confounders", open: conf.length <= 2 ? true : null },
+        h("summary", {}, h("strong", {}, pair.verdict === "confounded" ? `What else changed between A and B (${conf.length})` : `Also changed (${conf.length})`)),
+        h("ul", {}, conf.map((c) => h("li", {}, c)))) : null,
+      conf.length && pair.verdict === "confounded" && pair.direction ? h("p", { class: "muted" }, `Without these, the interval alone would say: ${pair.direction}.`) : null),
     scoreSettingsNote(),
+    h("div", { class: "sides" }, sideCard("A", A, nameA), sideCard("B", B, nameB)),
     crossSkill || !forestRows.length ? null : forestPlot({
       title: "B against A, with the interval of each difference", question: "What changed between the two versions, and how sure is it?",
-      sub: `${tagB} compared with ${tagA} · right of ×1, B is better · ${pct}% intervals from resampling runs by session`,
+      takeaway: () => {
+        const clear = forestRows.filter((r) => !r.bold && r.ci && (r.ci[0] > 1 || r.ci[1] < 1));
+        return clear.length ? `Clear differences: ${listWords(clear.map((r) => `${r.label.toLowerCase()} (B ${effectWords(r.effect)})`))}. Every other line crosses “no change”.`
+          : "No measure differs clearly: every line crosses “no change”, so the runs cannot tell the two versions apart.";
+      },
+      sub: `${tagB} compared with ${tagA} · dot = how much better or worse B is; line = its ${pct}% interval · right of “no change” (×1), B is better · ${pct}% intervals from resampling runs by session`,
       n: Math.min(A.runs, B.runs), minN: MIN_RUNS, rows: forestRows, leftLabel: "◀ B is worse", rightLabel: "B is better ▶",
       axisTitle: "B against A: how many times better (right) or worse (left), log scale",
       notes: `A row is coloured only when its whole interval is clear of ×1. Effects are capped at ×${DATA.method.max_ratio} as in the score. The top row is the verdict's own difference; with fewer than ${MIN_RUNS} runs on a side it has no interval.`,
     }),
-    sortTable({
+    section({ title: "Each measure, A and B", intro: "The values behind the chart, with the number of runs on each side." }, sortTable({
       caption: "Measures compared",
       cols: [{ label: "Measure", value: (r) => r.label }, { label: "A", num: true, value: (r) => r.a, cell: (r) => fmt.metric(r.m, r.a) },
         { label: "B", num: true, value: (r) => r.b, cell: (r) => fmt.metric(r.m, r.b) },
         { label: "B against A", value: (r) => r.d, cell: (r) => (crossSkill ? r.text : toneTag(r.tone, `${r.text}${r.tone === "unclear" ? " · no clear change" : r.tone === "better" ? " · better" : " · worse"}`)) },
         { label: "Runs in A", num: true, value: (r) => r.na }, { label: "Runs in B", num: true, value: (r) => r.nb }],
       rows, csvName: `compare-${nameA}-${nameOf(A)}-${nameB}-${nameOf(B)}`,
-    }).el,
+    }).el),
     note(`The verdict comes from the difference between the two versions' runs, resampled ${fmt.int(DATA.method.resamples)} times by session; it needs ${MIN_RUNS} runs on each side. A measure is marked better or worse only when its own interval is clear of no change.`));
 }
 

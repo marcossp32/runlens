@@ -55,35 +55,48 @@ function runsPage() {
     { key: "started", label: "Started", value: (r) => r.t0, cell: (r) => fmt.when(isoOf(r.t0)), csv: (r) => isoOf(r.t0) },
     { key: "title", label: "Title", value: (r) => r.title, cell: (r) => h("span", { class: "task", title: r.title || "" }, runTitle(r)) },
     { key: "repo", label: "Repo", value: (r) => r.repo },
-    { key: "branch", label: "Branch", value: (r) => r.branch },
+    { key: "branch", label: "Branch", value: (r) => r.branch, more: true },
     { key: "cost", label: "Cost", num: true, value: (r) => r.cost, cell: (r) => `${fmt.usd(r.cost)}${r.estimated ? " est." : ""}` },
     { key: "active", label: "Active", num: true, value: (r) => r.active_ms, cell: (r) => fmt.ms(r.active_ms) },
     { key: "agents", label: "Subagents", num: true, value: (r) => r.agents },
     { key: "errors", label: "Tool errors", num: true, value: (r) => (counts.get(r.run).calls ? counts.get(r.run).errors / counts.get(r.run).calls : null),
       cell: (r) => (counts.get(r.run).calls ? `${fmt.int(counts.get(r.run).errors)} of ${fmt.int(counts.get(r.run).calls)}` : "—") },
     { key: "incidents", label: "Problems", num: true, value: (r) => counts.get(r.run).incidents },
-    { key: "prompts", label: "Your messages", num: true, value: (r) => r.prompts },
-    { key: "lines", label: "Lines +/−", num: true, value: (r) => (r.added || 0) + (r.removed || 0), cell: (r) => (r.added == null ? "—" : `+${fmt.int(r.added)} −${fmt.int(r.removed)}`) },
-    { key: "prs", label: "PRs", num: true, value: (r) => (r.prs || []).length },
-    { key: "cc", label: "Claude Code", value: (r) => r.cc },
-    { key: "status", label: "Status", value: (r) => r.status, cell: (r) => `${human(r.status)}${r.stub ? " · stub" : ""}` },
+    { key: "prompts", label: "Your messages", num: true, value: (r) => r.prompts, more: true },
+    { key: "lines", label: "Lines +/−", num: true, value: (r) => (r.added || 0) + (r.removed || 0), cell: (r) => (r.added == null ? "—" : `+${fmt.int(r.added)} −${fmt.int(r.removed)}`), more: true },
+    { key: "prs", label: "PRs", num: true, value: (r) => (r.prs || []).length, more: true },
+    { key: "cc", label: "Claude Code", value: (r) => r.cc, more: true },
+    { key: "status", label: "Status", value: (r) => r.status, cell: (r) => `${human(r.status)}${r.stub ? " · stub" : ""}`, more: true },
   ];
+  const spendAll = sumOf(runs, (r) => r.cost);
+  const priciest = [...runs].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
   return h("article", { class: "page" }, head,
-    h("div", { class: "kpis" },
+    answer(`${fmt.runs(runs.length)} from ${fmt.day(isoOf(runs[runs.length - 1].t0))} to ${fmt.day(isoOf(runs[0].t0))} cost ${fmt.usd(spendAll)}, about ${fmt.usd(spendAll / runs.length)} a run. The most expensive was “${runTitle(priciest)}” (${fmt.usd(priciest.cost)}).`),
+    kpiRow([
       kpi("Runs", fmt.int(runs.length), fmt.span(isoOf(runs[runs.length - 1].t0), isoOf(runs[0].t0))),
-      kpi("Spend", fmt.usd(sumOf(runs, (r) => r.cost)), `${fmt.usd(sumOf(runs, (r) => r.cost) / runs.length)} per run`),
+      kpi("Spend", fmt.usd(spendAll), `${fmt.usd(spendAll / runs.length)} per run`),
       kpi("Active time", fmt.ms(sumOf(runs, (r) => r.active_ms)), `${fmt.ms(sumOf(runs, (r) => r.active_ms) / runs.length)} per run`),
       kpi("Subagents", fmt.int(sumOf(runs, (r) => r.agents)), `most in one run: ${fmt.int(Math.max(0, ...runs.map((r) => r.agents || 0)))}`),
-      kpi("Pull requests", fmt.int(prs), "opened during these runs")),
-    h("div", { class: "charts" },
+      kpi("Pull requests", fmt.int(prs), "opened during these runs")]),
+    section({ title: "When and how much", intro: "Every day with a run, and every run's cost on a time axis." },
       h("div", { class: "grid" },
         calendarChart({ title: "Activity by day", question: "When do I work, and what does a day cost?", sub: "one square per day, weeks across · darker = more",
+          takeaway: () => {
+            const top = [...days].sort((a, b) => b[1].value - a[1].value)[0];
+            return top ? `${plural(days.size, "active day")}; the busiest was ${fmt.dayKey(top[0])} (${fmtCal(top[1].value)}).` : null;
+          },
           days, fmt: fmtCal, valueTitle: { cost: "Spend", runs: "Runs", active: "Active time" }[metric], controls: calSel, legendText: ["less", "more"] }),
         scatterChart({ title: "Cost of each run", question: "Which runs were expensive, and when?", sub: "one mark per run · bigger marks started more subagents · hollow = cost estimated",
+          takeaway: () => {
+            const sorted = runs.map((r) => r.cost || 0).sort((a, b) => b - a);
+            const top = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 10)));
+            return spendAll ? `The costliest tenth of the runs (${fmt.int(top.length)}) account for ${fmt.pct(sumOf(top, (x) => x) / spendAll, 0)} of the spend.` : null;
+          },
           points: runs.map((r) => ({ x: r.t0, y: r.cost, label: r.run, r: 3.5 + 6 * Math.sqrt((r.agents || 0) / maxAgents), hollow: r.estimated, tip: runTip(r), href: hrefRun(r.run) })),
           x: { title: "Run started", time: true }, y: { title: "Cost per run, US$ (log scale)", fmt: fmt.usdTick, log: runs.some((r) => r.cost > 0) && Math.max(...runs.map((r) => r.cost || 0)) / Math.max(0.01, Math.min(...runs.filter((r) => r.cost > 0).map((r) => r.cost))) > 30 },
-          labelTitle: "Run", vlines: changeMarks(["cc", "model"]) })),
-      sortTable({ caption: "Runs", cols, rows: runs, sort: { key: "started", dir: -1 }, page: 25, csvName: "runs" }).el));
+          labelTitle: "Run", vlines: changeMarks(["cc", "model"]) }))),
+    section({ title: "Every run", count: fmt.runs(runs.length), intro: "Newest first. Open a run to see its skills, subagents and problems on one time axis." },
+      sortTable({ caption: "Runs", cols, rows: runs, sort: { key: "started", dir: -1 }, page: 25, csvName: "runs", moreParam: "cols" }).el));
 }
 
 // What to say when the filters leave nothing.
@@ -121,7 +134,7 @@ function changeMarks(kinds, skillUnit) {
   }
   if (skillUnit) {
     for (const v of (DATA.versions[skillUnit.id] || []).slice(1)) {
-      if (v.first_seen) out.push({ t: timeOf(v.first_seen), label: `${skillUnit.name} ${v.label}`, kind: "skill", title: `${skillUnit.name} ${v.label} first used`, rows: [["Text", v.parts.map((p) => p.hash).join(" + ")]] });
+      if (v.first_seen) out.push({ t: timeOf(v.first_seen), label: `${skillUnit.name} ${v.label}`, kind: "skill", title: `${skillUnit.name} ${v.label} first used`, rows: [["Text", partsText(v)]] });
     }
   }
   return out;
@@ -177,7 +190,7 @@ function runPage(id) {
   const layoutSel = h("select", { "aria-label": "Agent layout" }, [["tree", "One row per agent"], ["packed", "Packed by type"]].map(([v, t]) => h("option", { value: v, selected: v === layout ? true : null }, t)));
   layoutSel.addEventListener("change", () => refreshAfter({ layout: layoutSel.value }));
 
-  const skillLane = { label: "Skill", items: segments.map((s) => ({ t0: at(s.t0), t1: Math.max(at(s.t1), at(s.t0) + 20e3), css: s.skill === "(none)" ? "var(--other)" : colourOf("skill", s.skill).css,
+  const skillLane = { label: "Skill", items: segments.map((s) => ({ t0: at(s.t0), t1: Math.max(at(s.t1), at(s.t0) + 20e3), css: s.skill === "(none)" ? "var(--other)" : colourOf("skill", s.skill).css, name: human(s.skill),
     tip: { title: human(s.skill), rows: [["From", fmt.hour(at(s.t0))], ["To", fmt.hour(at(s.t1))], ["Model turns", fmt.int(s.calls)], ["Spend", fmt.usd(s.cost)]] },
     href: UNITS.has(`skill:${s.skill}`) ? hrefUnit(`skill:${s.skill}`) : null })) };
   const prompts = events.filter((e) => e.kind === "human_prompt");
@@ -220,6 +233,11 @@ function runPage(id) {
     { key: "show", label: "Open the trace", value: (x) => `runlens show ${x.id}`, cell: (x) => (x.id ? cmdLine(`runlens show ${x.id}`) : "—") },
   ];
   const wall = (end - r.t0) / 1000;
+  const runSkills = [...new Set(segments.map((s) => s.skill))];
+  const topAgent = [...byType].filter(([k]) => k !== "main session").sort((a, b) => b[1].value - a[1].value)[0];
+  const story = `${fmt.usd(r.cost)} over ${fmt.secs(wall)}${runSkills.filter((s) => s !== "(none)").length ? `, under ${listWords(runSkills.filter((s) => s !== "(none)").map(human))}` : ""}. `
+    + `${agents.length - (main ? 1 : 0) ? `${plural(agents.length - (main ? 1 : 0), "subagent")}${topAgent ? `, ${topAgent[0]} costing the most (${fmt.usd(topAgent[1].value)})` : ""}` : "No subagents"}; `
+    + `${plural(counts.incidents, "problem")} and ${plural(counts.errors, "tool error")}.`;
   return h("article", { class: "page" },
     h("header", { class: "pagehead" },
       h("a", { class: "back", href: hrefPage("runs") }, "← All runs"),
@@ -227,34 +245,36 @@ function runPage(id) {
       h("p", { class: "lede" }, `${fmt.when(isoOf(r.t0))} · ${r.repo || "no repo"}${r.branch ? ` · ${r.branch}` : ""} · Claude Code ${r.cc || "?"}`,
         chip(r.status === "complete" ? "finished" : "still open", r.status === "complete" ? "ok" : "warn"), r.stub ? chip("stub: too small to score", "warn") : null,
         r.estimated ? chip("cost estimated", "warn") : null, !RUNSET.has(r.run) ? chip("outside the current filters", "warn") : null)),
-    h("div", { class: "kpis" },
+    answer(story, counts.incidents ? "worse" : null),
+    kpiRow([
       kpi("Cost", fmt.usd(r.cost), r.estimated ? "estimated at list price" : "Claude Code's own figure"),
       kpi("Wall time", fmt.secs(wall), `active ${fmt.ms(r.active_ms)}`),
       kpi("Subagents", fmt.int(agents.length - (main ? 1 : 0)), types.length ? `${types.length} type${types.length === 1 ? "" : "s"}` : "none"),
       kpi("Tool calls", fmt.int(counts.calls), counts.calls ? `${fmt.pct(counts.errors / counts.calls)} failed${counts.denied ? ` · ${fmt.int(counts.denied)} denied` : ""}` : ""),
       kpi("Problems", fmt.int(counts.incidents), incidents.some((x) => x.policy) ? `${incidents.filter((x) => x.policy).length} more from permission rules` : "not counting permission rules"),
       kpi("Your messages", fmt.int(r.prompts), "typed during the run"),
-      kpi("Code changed", r.added == null ? "—" : `+${fmt.int(r.added)} −${fmt.int(r.removed)}`, prs.length ? `${prs.length} PR${prs.length === 1 ? "" : "s"} opened` : "lines added and removed")),
-    h("section", { class: "card cmdcard" }, h("h2", { class: "cardtitle" }, "Open the raw data"),
-      h("ul", { class: "cmds" },
-        h("li", {}, cmdLine(r.sid, "Session")),
-        h("li", {}, cmdLine(`runlens sql "SELECT * FROM v_runs WHERE session_id = '${r.sid}'"`)),
-        incidents[0] ? h("li", {}, cmdLine(`runlens show ${incidents[0].id}`), h("span", { class: "muted" }, " the first problem, with what led to it")) : null,
-        prs.map((u) => h("li", {}, h("span", { class: "muted" }, "PR "), h("a", { href: u, rel: "noopener noreferrer", target: "_blank" }, u))))),
-    h("div", { class: "charts" },
+      kpi("Code changed", r.added == null ? "—" : `+${fmt.int(r.added)} −${fmt.int(r.removed)}`, prs.length ? `${prs.length} PR${prs.length === 1 ? "" : "s"} opened` : "lines added and removed")]),
+    section({ title: "What happened, and when", intro: "Top: the active skill and each event. Middle: the money spent so far. Bottom: every subagent as a bar from its start to its end." },
       runTimeline({
         title: "The run on one time axis", question: "What happened in this run, and when?",
+        takeaway: () => {
+          const first = errors.length ? fmt.hour(at(errors[0].t)) : null;
+          return `${plural(agents.length - (main ? 1 : 0), "subagent")} in ${plural(types.length, "type")}${counts.incidents ? `, ${plural(counts.incidents, "problem")}` : ""}${errors.length ? `, the first tool error at ${first}` : ""}. Hover or tab to any mark for details.`;
+        },
         sub: "skills, your messages, problems, checks and errors on top · spend so far · every subagent as a bar, coloured by type",
         t0: r.t0, t1: end, lanes, curve, agents: timelineAgents, layout, controls: layoutSel,
-        legendItems: types.map((t) => ({ label: t, css: colourOf("agent", t).css })).concat([{ label: "main session", css: "var(--other)" },
+        legendItems: runSkills.filter((s) => s !== "(none)").map((s) => ({ label: `skill: ${human(s)}`, css: colourOf("skill", s).css }))
+          .concat(types.map((t) => ({ label: `agent: ${t}`, css: colourOf("agent", t).css }))).concat([{ label: "main session", css: "var(--other)" },
           { label: `${TONE.worse.icon} problem / error / bad check`, css: "var(--worse)", shape: "triangle" }, { label: "ok check", css: "var(--better)", kind: "dot" },
           { label: "your message", css: "var(--text2)", shape: "diamond" }]),
         agentCols: [{ label: "Type", value: (a) => a.group }, { label: "Cost", num: true, value: (a) => a.cost, cell: (a) => fmt.usd(a.cost) },
           { label: "Depth", num: true, value: (a) => a.depth }],
         notes: "Times are your local time. A bar that runs to the right edge never recorded its end. Skill segments are the main session's model turns under each skill.",
-      }),
+      })),
+    section({ title: "Where the money went", intro: "The run's spend by agent type, single agent, model and skill." },
       h("div", { class: "grid" },
-        barChart({ title: "Spend by agent type", question: "Which kind of agent did the money go to?", items: [...byType].map(([k, e]) => ({ label: k, name: k, value: e.value, rows: [["Agents", fmt.int(e.n)]],
+        barChart({ title: "Spend by agent type", question: "Which kind of agent did the money go to?",
+          takeaway: () => shareTakeaway([...byType].map(([k, e]) => ({ label: k, value: e.value })), "of the run's spend"), items: [...byType].map(([k, e]) => ({ label: k, name: k, value: e.value, rows: [["Agents", fmt.int(e.n)]],
           css: k === "main session" ? "var(--other)" : colourOf("agent", k).css })), fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Agent type" }),
         barChart({ title: "The costliest agents", question: "Which single agents cost the most?", sub: "the twelve most expensive",
           items: agents.filter((a) => a.cost > 0).sort((a, b) => b.cost - a.cost).slice(0, 12).map((a) => ({ label: agentName(a.i), value: a.cost,
@@ -264,9 +284,15 @@ function runPage(id) {
         barChart({ title: "Spend by model", question: "Which models did this run pay for?", items: spendModel.map((m) => ({ label: m.label, name: m.label, value: m.value })), ns: "model",
           fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$ (transcript)", share: true, labelTitle: "Model" }),
         barChart({ title: "Spend by skill", question: "Which skills did the work?", items: groupSum(calls, "skill", "cost").map((s) => ({ label: human(s.label), name: s.label, value: s.value,
-          href: UNITS.has(`skill:${s.label}`) ? hrefUnit(`skill:${s.label}`) : null })), ns: "skill", fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Skill" })),
-      incidents.length ? h("div", {}, h("h2", { class: "listtitle" }, `Problems · ${counts.incidents}${incidents.length > counts.incidents ? `, and ${incidents.length - counts.incidents} from permission rules` : ""}`),
-        sortTable({ caption: "Problems in this run", cols: incCols, rows: incidents, sort: { key: "t", dir: 1 }, page: 25, csvName: `run-${id}-problems` }).el) : null,
-      errors.length ? h("div", {}, h("h2", { class: "listtitle" }, `Tool errors · ${counts.errors}${counts.errors > errors.length ? ` (the first ${errors.length} listed)` : ""}`),
-        sortTable({ caption: "Tool errors in this run", cols: errCols, rows: errors, sort: { key: "t", dir: 1 }, page: 25, csvName: `run-${id}-tool-errors` }).el) : null));
+          href: UNITS.has(`skill:${s.label}`) ? hrefUnit(`skill:${s.label}`) : null })), ns: "skill", fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Skill" }))),
+    incidents.length ? section({ title: "Problems", count: `${counts.incidents}${incidents.length > counts.incidents ? `, and ${incidents.length - counts.incidents} from permission rules` : ""}`, intro: "Each problem with the command that opens its trace." },
+      sortTable({ caption: "Problems in this run", cols: incCols, rows: incidents, sort: { key: "t", dir: 1 }, page: 25, csvName: `run-${id}-problems` }).el) : null,
+    errors.length ? section({ title: "Tool errors", count: `${counts.errors}${counts.errors > errors.length ? ` (the first ${errors.length} listed)` : ""}`, intro: "Each failed tool call with the command that opens its trace." },
+      sortTable({ caption: "Tool errors in this run", cols: errCols, rows: errors, sort: { key: "t", dir: 1 }, page: 25, csvName: `run-${id}-tool-errors` }).el) : null,
+    section({ title: "Open the raw data", collapsible: true, collapsed: true, intro: "Commands that open this run's session, its database row and its first problem." },
+      h("ul", { class: "cmds" },
+        h("li", {}, cmdLine(r.sid, "Session")),
+        h("li", {}, cmdLine(`runlens sql "SELECT * FROM v_runs WHERE session_id = '${r.sid}'"`)),
+        incidents[0] ? h("li", {}, cmdLine(`runlens show ${incidents[0].id}`), h("span", { class: "muted" }, " the first problem, with what led to it")) : null,
+        prs.map((u) => h("li", {}, h("span", { class: "muted" }, "PR "), h("a", { href: u, rel: "noopener noreferrer", target: "_blank" }, u))))));
 }

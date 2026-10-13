@@ -43,12 +43,12 @@ const entityOfUnit = (u) => ({ skill: "skill", group: "group" }[u.kind] || null)
 
 // Better, worse, unclear and "too few runs", each with its icon and word.
 const TONE = {
-  better: { icon: "▲", css: "var(--better)", word: "better" },
-  worse: { icon: "▼", css: "var(--worse)", word: "worse" },
-  unclear: { icon: "≈", css: "var(--neutral)", word: "unclear" },
-  few: { icon: "○", css: "var(--neutral)", word: "too few runs" },
-  first: { icon: "•", css: "var(--neutral)", word: "first version" },
-  confounded: { icon: "?", css: "var(--neutral)", word: "confounded" },
+  better: { icon: "▲", css: "var(--better)", word: "better", help: "better: the whole likely range is on the better side" },
+  worse: { icon: "▼", css: "var(--worse)", word: "worse", help: "worse: the whole likely range is on the worse side" },
+  unclear: { icon: "≈", css: "var(--neutral)", word: "unclear", help: "no clear difference: the likely range includes no change" },
+  few: { icon: "○", css: "var(--neutral)", word: "too few runs", help: "too few runs to judge yet" },
+  first: { icon: "•", css: "var(--neutral)", word: "first version", help: "first version: nothing earlier to compare with" },
+  confounded: { icon: "?", css: "var(--neutral)", word: "confounded", help: "confounded: something else changed at the same time, so it cannot be judged" },
 };
 
 // ---- colour arithmetic: sRGB <-> OKLab, for ramps that step evenly to the eye ----

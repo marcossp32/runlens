@@ -19,19 +19,23 @@ function healthPage() {
     warn.length ? h("ul", {}, warn.map((i) => h("li", {}, h("strong", {}, i.text), ". ", i.detail))) : h("p", { class: "muted" }, "Every run ingested, every model has a price, and the queue is empty."),
     info.length ? [h("h3", {}, "Worth knowing"), h("ul", { class: "info" }, info.map((i) => h("li", {}, h("strong", {}, i.text), ". ", i.detail)))] : null);
 
-  const kp = h("div", { class: "kpis" },
+  const kp = kpiRow([
     kpi("Runs in the database", fmt.int(s.runs ?? runs.length), `${fmt.int(runs.filter((r) => r.pop).length)} finished and scored`),
     kpi("Still open", fmt.int(s.open_runs || 0), "left out of scores until they end"),
     kpi("Stubs", fmt.int(s.stub_runs || 0), "too small to score"),
     kpi("Failed ingests", fmt.int(s.runs_failed_to_ingest || 0), (H.ingest_errors || []).length ? "see the list below" : "none recorded", { tone: s.runs_failed_to_ingest ? "worse" : null }),
     kpi("Parser", `v${s.parser_version || "?"}`, s.min_parser_version && String(s.min_parser_version) !== String(s.parser_version) ? `oldest run read with v${s.min_parser_version}` : "every run read with it"),
     kpi("Last refresh", s.last_ingest ? fmt.when(s.last_ingest) : "—", `page generated ${fmt.when(DATA.generated)}`),
-    kpi("Queue", fmt.int(H.pending_count || 0), H.pending_count ? "sessions waiting: run runlens refresh" : "nothing waiting"));
+    kpi("Queue", fmt.int(H.pending_count || 0), H.pending_count ? "sessions waiting: run runlens refresh" : "nothing waiting")]);
 
   const cov = (H.coverage || []).map(([run, seen, counted, cost]) => ({ run, seen, counted, cost, r: RUN.get(run) })).filter((c) => c.counted);
   const covChart = scatterChart({
     title: "Output tokens the transcript shows, by run", question: "How much of Claude Code's own token count does each transcript hold?",
-    sub: "one mark per run · transcript output tokens ÷ Claude Code's count (cost-state)",
+    takeaway: () => {
+      const xs = cov.filter((c) => c.r).map((c) => c.seen / c.counted);
+      return xs.length ? `Typically ${fmt.pct(median(xs), 0)} (median of ${fmt.runs(xs.length)}). That is low by design; the other pages count tokens from Claude Code itself.` : null;
+    },
+    sub: "one mark per run · transcript output tokens ÷ Claude Code's count (cost-state) · higher = the transcript holds more of it",
     points: cov.filter((c) => c.r).map((c) => ({ x: c.r.t0, y: c.seen / c.counted, label: c.run, href: hrefRun(c.run),
       tip: { title: `${c.run} · ${fmt.when(isoOf(c.r.t0))}`, rows: [["Share in the transcript", fmt.pct(c.seen / c.counted)], ["In the transcript", fmt.tokens(c.seen)],
         ["Claude Code counted", fmt.tokens(c.counted)], ["Claude Code's cost", fmt.usd(c.cost)]] } })),
@@ -57,16 +61,17 @@ function healthPage() {
     { key: "at", label: "When", value: (e) => e.failed_at, cell: (e) => fmt.when(e.failed_at) },
   ];
   return h("article", { class: "page" }, head, status, kp,
-    h("div", { class: "charts" },
+    section({ title: "What to run", intro: "Commands that bring the data up to date." },
       h("section", { class: "card" }, h("h2", { class: "cardtitle" }, "Commands"),
         h("ul", { class: "cmds" },
           h("li", {}, cmdLine("runlens refresh"), h("span", { class: "muted" }, " archive and ingest new runs, drain the hook queue, rebuild this page")),
           h("li", {}, cmdLine("runlens check"), h("span", { class: "muted" }, " compare the database with the archive and with ~/.claude/projects")),
-          h("li", {}, cmdLine("runlens refresh --force"), h("span", { class: "muted" }, " read every run again (after a parser update)")))),
-      flagged.length ? h("div", {}, h("h2", { class: "listtitle" }, `Runs to keep in mind · ${flagged.length}`),
-        sortTable({ caption: "Runs to keep in mind", cols: listCols.concat([{ key: "why", label: "Why", value: why }]), rows: flagged, sort: { key: "started", dir: -1 }, csvName: "runs-to-keep-in-mind" }).el) : null,
-      (H.ingest_errors || []).length ? h("div", {}, h("h2", { class: "listtitle" }, "Failed ingests"),
-        sortTable({ caption: "Failed ingests", cols: errCols, rows: H.ingest_errors, sort: { key: "at", dir: -1 }, csvName: "ingest-errors" }).el) : null,
+          h("li", {}, cmdLine("runlens refresh --force"), h("span", { class: "muted" }, " read every run again (after a parser update)"))))),
+    flagged.length ? section({ title: "Runs to keep in mind", count: fmt.int(flagged.length), intro: "Runs that are open, too small, estimated, unpriced or read by an older parser, with the reason." },
+      sortTable({ caption: "Runs to keep in mind", cols: listCols.concat([{ key: "why", label: "Why", value: why }]), rows: flagged, sort: { key: "started", dir: -1 }, csvName: "runs-to-keep-in-mind" }).el) : null,
+    (H.ingest_errors || []).length ? section({ title: "Failed ingests", count: fmt.int(H.ingest_errors.length), intro: "Runs whose transcript could not be read; their numbers are missing everywhere." },
+      sortTable({ caption: "Failed ingests", cols: errCols, rows: H.ingest_errors, sort: { key: "at", dir: -1 }, csvName: "ingest-errors" }).el) : null,
+    h("div", { class: "charts spaced" },
       cov.length ? covChart : null,
       (H.hook_errors || []).length ? h("section", { class: "card" }, h("h2", { class: "cardtitle" }, "Newest hook errors (hooks.log)"),
         h("pre", { class: "snippet", tabindex: "0" }, H.hook_errors.join("\n"))) : null,

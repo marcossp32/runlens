@@ -107,6 +107,7 @@ const timeCol = { key: "seconds", label: "Time per invocation", num: true, value
 const errCol = { key: "error_rate", label: "Tool errors", num: true, value: (u) => u.kpi.error_rate, cell: (u) => fmt.pct(u.kpi.error_rate) };
 const outcomeCol = { key: "outcome", label: "Outcome", num: true, value: (u) => u.kpi.outcome, cell: (u) => fmt.pct(u.kpi.outcome) };
 const lastCol = { key: "last", label: "Last used", value: (u) => u.last_seen, cell: (u) => fmt.day(u.last_seen) };
+const more = (c) => ({ ...c, more: true });
 const versionsCol = {
   key: "versions", label: "Versions", num: true, value: (u) => u.recordedCount,
   cell: (u) => (u.recordedCount ? `${u.recordedCount} · now ${u.current}` : h("span", { class: "muted" }, "not recorded")),
@@ -126,7 +127,8 @@ function skillsPage() {
   return h("article", { class: "page" },
     h("header", { class: "pagehead" },
       h("h1", { tabindex: "-1" }, "Skills"),
-      h("p", { class: "lede" }, `How each skill did across ${fmt.runs(runsN)}${slicing() ? " in the filters" : span}. Each skill is compared only with its own history: 100 is ${baseWords()}, and each version is judged against the version before it. Different skills do different work, so they are never ranked against each other.`),
+      h("p", { class: "lede" }, `How each skill did across ${fmt.runs(runsN)}${slicing() ? " in the filters" : span}. Each skill is compared only with its own history: 100 is `,
+        S.base === "self" ? term(baseWords(), GLOSSARY["typical run"]) : baseWords(), ", and each version is judged against the version before it. Different skills do different work, so they are never ranked against each other."),
       scoreSettingsNote()),
     tabs("Kind of unit", [
       { id: "skills", label: `Skills · ${SKILLS.length}`, build: () => skillsPanel() },
@@ -139,23 +141,25 @@ function skillsPanel() {
   if (!SKILLS.length) return empty("No skill has run yet.");
   const sel = readSelection();
   const holder = h("div", {});
-  const draw = () => holder.replaceChildren(skillsView(sel));
-  const picker = selectorCard(sel, () => {
+  let picker = null;
+  const draw = () => holder.replaceChildren(skillsView(sel, picker));
+  picker = selectorCard(sel, () => {
     writeSelection(sel);
     applyFilters();
     renderFilterBar();
     draw();
   });
   draw();
-  return h("div", {}, picker, holder);
+  return holder;
 }
 
-function skillsView(sel) {
+// The answer and the key numbers first, then the skills and versions chooser, then the charts.
+function skillsView(sel, picker) {
   const bases = skillsOn(sel).map((u) => viewOf(u, sel)).filter((x) => enoughRuns(x.runs));
   const shown = viewsFor(sel);
   if (!shown.length) {
-    return h("div", { class: "emptybox" }, empty(F.minn ? `No skill has ${MIN_RUNS} runs or more in this slice.` : "No skill ran in this slice, so there is nothing to draw."),
-      button("Reset filters", () => refreshAfter(Object.fromEntries(FILTER_KEYS.map((k) => [k, null])))));
+    return h("div", {}, picker, h("div", { class: "emptybox" }, empty(F.minn ? `No skill has ${MIN_RUNS} runs or more in this slice.` : "No skill ran in this slice, so there is nothing to draw."),
+      button("Reset filters", () => refreshAfter(Object.fromEntries(FILTER_KEYS.map((k) => [k, null]))))));
   }
   const tones = shown.map((u) => verdict(u.score, u.ci, u).tone);
   const count = (t) => tones.filter((x) => x === t).length;
@@ -164,40 +168,47 @@ function skillsView(sel) {
   const spend = shown.reduce((n, u) => n + u.spend, 0);
   const partial = shown.some((u) => u.partial);
   const unrecorded = shown.filter((u) => (DATA.versions[u.id] || []).length && !u.recordedCount).map((u) => u.name);
-  const cols = [nameCol("Skill"), scoreCol, rangeCol, changeCol, versionsCol, runsCol, ...(OUTCOME ? [outcomeCol] : []), costCol, timeCol, errCol, lastCol];
+  const cols = [nameCol("Skill"), scoreCol, rangeCol, changeCol, more(versionsCol), runsCol, ...(OUTCOME ? [outcomeCol] : []), costCol, more(timeCol), more(errCol), more(lastCol)];
   const pct = Math.round(S.ci * 100);
   const marks = changeMarks(["cc", "model"]);
+  const rangeRows = shown.map((u, i) => ({ label: u.name, name: u.unit.name, ns: "skill", score: u.score, ci: u.ci, href: hrefUnit(u.id),
+    tone: tones[i], word: verdict(u.score, u.ci, u).word }));
   return h("div", {},
-    h("div", { class: "kpis" },
-      kpi(sel.split ? "Items" : "Skills", fmt.int(shown.length), sel.split ? `${bases.length} skills split into versions` : `of ${SKILLS.length} recorded`),
+    skillsAnswer(shown, tones),
+    kpiRow([
       kpi("Verdicts", h("span", { class: "verdicts" },
         toneTag("better", fmt.int(count("better"))), " ", toneTag("worse", fmt.int(count("worse"))), " ", toneTag("unclear", fmt.int(count("unclear") + count("few") + count("confounded") + count("first")))),
       "latest version against the one before · better · worse · other"),
-      kpi("Versions", fmt.int(versions), "recorded, shown"),
+      kpi(sel.split ? "Items" : "Skills", fmt.int(shown.length), sel.split ? `${bases.length} skills split into versions` : `of ${SKILLS.length} recorded`),
       kpi("Runs", fmt.int(sessions), slicing() ? "in the filters" : DATA.window.first ? fmt.span(DATA.window.first, DATA.window.last) : ""),
-      kpi("Model spend", fmt.usd(spend), "attributed to the skills shown")),
+      kpi("Model spend", fmt.usd(spend), "attributed to the skills shown"),
+      kpi("Versions", fmt.int(versions), "recorded, shown")]),
+    picker,
     tabs("Charts", [
       { id: "overview", label: "Overview", build: () => h("div", { class: "charts" },
         h("div", { class: "grid split-wide" },
           rangeChart({
             title: "Latest version against its own skill", question: "Is each skill's current version better or worse than usual?",
-            sub: `100 = ${baseWords()} · bar = ${pct}% range`,
-            rows: shown.map((u, i) => ({ label: u.name, name: u.unit.name, ns: "skill", score: u.score, ci: u.ci, href: hrefUnit(u.id),
-              tone: tones[i], word: verdict(u.score, u.ci, u).word })),
-            ref: 100, refLabel: S.base === "self" ? "typical run" : baseWords(), axisTitle: `Score (100 = ${baseWords()})`, labelTitle: "Skill",
+            takeaway: () => rangeTakeaway(rangeRows, "skill"),
+            sub: `100 = ${baseWords()} · dot = the current version's score; bar = its ${pct}% likely range · a bar that crosses the dashed line is not clearly different from usual · right of 100 is better`,
+            rows: rangeRows,
+            ref: 100, refLabel: S.base === "self" ? "usual level" : baseWords(), axisTitle: `Score (100 = ${baseWords()})`, labelTitle: "Skill",
             notes: partial ? "Skills with versions left out show a point score, with no range." : null,
           }),
           versionTimeline({
             title: "Score of each version over time", question: "How did each skill change, and what else changed around it?",
-            sub: "one panel per skill · shared time and score axes · dotted lines: Claude Code updates and new models",
+            takeaway: () => timelineTakeaway(bases),
+            sub: "one panel per skill, its latest verdict next to its name · shared time and score axes · higher is better · dotted lines: Claude Code updates and new models",
             facets: bases.filter((u) => u.chosen.some((v) => v.recorded && v.score != null)).map((u) => ({ label: u.name, ns: "skill", name: u.name, href: hrefUnit(u.id),
               versions: u.chosen.filter((v) => v.recorded && enoughRuns(v.runs)).map((v) => ({ label: v.label, t0: timeOf(v.first_seen), t1: timeOf(v.last_seen || v.first_seen),
                 score: v.score, ci: v.ci, runs: v.runs, tone: change(v).tone, text: change(v).text })) })),
             ref: 100, vlines: marks, emptyText: "No recorded version is selected.",
             notes: "Each segment spans the dates a version was in use; the band is its likely range. Versions of different skills are only compared through time, never by their number.",
           })),
-        sortTable({ caption: "Skills", cols, rows: shown, sort: { key: "runs", dir: -1 }, csvName: "skills" }).el,
-        note(`Latest change compares the newest version shown with the one before it, from the difference between their runs; it needs ${MIN_RUNS} runs on each side, and is “confounded” when another skill, the model, the effort, Claude Code or the project changed at the same time.${unrecorded.length ? ` No skill text was recorded for ${unrecorded.join(", ")}, so their versions are unknown.` : ""} A skill that only ever ran inside a subagent has no version of its own yet.`),
+        section({ title: "Every skill in detail", count: plural(shown.length, "skill"), intro: "One row per skill. Sort by any column; more measures are behind “More columns”." },
+          sortTable({ caption: "Skills", cols, rows: shown, sort: { key: "runs", dir: -1 }, csvName: "skills", moreParam: "cols" }).el,
+          h("details", { class: "howto-read" }, h("summary", {}, "How to read this table"),
+            h("div", { class: "howto-body" }, h("p", {}, `Latest change compares the newest version shown with the one before it, from the difference between their runs; it needs ${MIN_RUNS} runs on each side, and is “confounded” when another skill, the model, the effort, Claude Code or the project changed at the same time.${unrecorded.length ? ` No skill text was recorded for ${unrecorded.join(", ")}, so their versions are unknown.` : ""} A skill that only ever ran inside a subagent has no version of its own yet.`)))),
         h("details", { class: "more" }, h("summary", {}, `${versions} recorded versions shown`), versionTable(bases))) },
       { id: "cost", label: "Cost", build: () => costPanel(shown) },
       { id: "outcome", label: "Outcome", build: () => outcomePanel(bases) },
@@ -224,13 +235,15 @@ function costPanel(shown) {
     scatterChart({
       title: yOutcome ? "Outcome against cost per invocation" : "Score against cost per invocation",
       question: yOutcome ? "Which skills reach their outcome for the least money?" : "Which items give the most for the least money?",
-      sub: "each mark is one item · bigger marks have more runs · the line joins the items nothing else beats on both",
+      takeaway: () => frontierTakeaway(pts, yOutcome),
+      sub: `each mark is one item · bigger marks have more runs · up is better, left is cheaper · the line (the Pareto frontier) joins the items nothing else beats on both`,
+      legendInHowto: true,
       points: pts.map((u) => ({
         x: u.kpi.cost, y: yOutcome ? u.kpi.outcome : u.score, label: u.name, ns: "skill", name: u.unit.name, r: 4 + 6 * Math.sqrt(u.runs / maxRuns), href: hrefUnit(u.id), hollow: u.low_sample,
         tip: { title: u.name, rows: [["Score", fmt.score(u.score)], ["Outcome", fmt.pct(u.kpi.outcome)], ["Cost per invocation", fmt.usd(u.kpi.cost)], ["Runs", fmt.int(u.runs)]] },
       })),
       x: { title: "Cost per invocation, US$ (log scale)", log: true, fmt: fmt.usdTick },
-      y: yOutcome ? { title: "Outcome: success rate", fmt: (v) => fmt.pct(v, 0), fit: true } : { title: `Score (100 = ${baseWords()})`, fmt: fmt.score, fit: true, ref: 100, refLabel: "typical run" },
+      y: yOutcome ? { title: "Outcome: success rate (higher is better)", fmt: (v) => fmt.pct(v, 0), fit: true } : { title: `Score (100 = ${baseWords()}, higher is better)`, fmt: fmt.score, fit: true, ref: 100, refLabel: "100 = usual level" },
       frontier: { x: "low", y: "high" }, labels: true, labelTitle: "Skill",
       legendItems: [...names].map((n) => { const c = colourOf("skill", n); return { label: n, css: c.css, shape: c.shape }; }).concat([{ label: "Pareto frontier", css: "var(--text2)", kind: "line" }]),
       extraCols: [{ label: "Runs", num: true, value: (p) => p.r }],
@@ -238,9 +251,11 @@ function costPanel(shown) {
     }),
     h("div", { class: "grid" },
       barChart({ title: "Where the spend goes", question: "Which skills cost the most in total?", sub: "model spend attributed to each item",
+        takeaway: () => shareTakeaway(shown.map((u) => ({ label: u.name, value: u.spend })), "of the spend"),
         items: shown.map((u) => ({ label: u.name, name: u.unit.name, value: u.spend, href: hrefUnit(u.id) })),
         ns: "skill", fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Skill" }),
       dayColumns({ title: "Spend per day, by skill", question: "Where does the money go over time?", sub: "model spend on the day each call was made",
+        takeaway: () => peakDayTakeaway([...days.values()], fmt.usd, "spend"),
         days: [...days.values()], series: series.map((s) => ({ key: s.key, label: s.label, css: s.css })), fmt: fmt.usd, tickFmt: fmt.usdTick, yTitle: "Spend, US$" })),
     tokenCostChart("skill", [...names]));
 }
@@ -282,8 +297,10 @@ function tokenCostChart(by, only) {
   const mode = param("tokmode") === "share" ? "share" : "abs";
   const sel = h("select", { "aria-label": "Show as" }, [["abs", "US$"], ["share", "Share"]].map(([v, t]) => h("option", { value: v, selected: v === mode ? true : null }, t)));
   sel.addEventListener("change", () => refreshAfter({ tokmode: sel.value === "abs" ? null : sel.value }));
+  const typeTotals = types.map(([key, label]) => ({ label, value: list.reduce((n, r) => n + (r.parts[key] || 0), 0) }));
   return stackChart({
     title: `Cost by token type, per ${by}`, question: "Am I paying for fresh input, for the cache, or for output?",
+    takeaway: () => shareTakeaway(typeTotals, "of the cost", "Most of it goes to"),
     sub: `Claude Code's own token counts priced by type${by === "skill" ? " · a run's model cost split by each skill's share of it" : ""}`,
     rows: list.map((r) => ({ label: by === "skill" ? human(r.label) : r.label, parts: r.parts })), series: types.map(([key, label, css]) => ({ key, label, css })),
     mode, fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Cost, US$", labelTitle: by === "skill" ? "Skill" : "Model", controls: sel,
@@ -304,9 +321,15 @@ function outcomePanel(bases) {
   const o = DATA.method.outcomes[0];
   return h("div", { class: "charts" },
     rateFacets({ title: "First-pass rate over time", question: "Do the skills reach their outcome more often than before?",
+      takeaway: () => {
+        const ok = bases.filter((u) => sumOf(u.runList, (r) => r.on));
+        const best = [...ok].sort((a, b) => (b.kpi.outcome || 0) - (a.kpi.outcome || 0))[0];
+        return best ? `${plural(ok.length, "skill")} with attempts; ${best.name} passes first time most often (${fmt.pct(best.kpi.outcome, 0)}).` : null;
+      },
       sub: `${o.kind === "pr" ? "runs that opened a PR" : `${human(o.marker)} passing on the first try`} · weekly, per skill · dotted lines: new versions`,
       facets, rateTitle: "First-pass rate",
-      notes: `Each dot is a week; its size is the number of attempts, hollow under ${MIN_RUNS}. The band is the ${Math.round(S.ci * 100)}% Wilson interval of that week's rate.` }),
+      notes: h("p", {}, `Each dot is a week; its size is the number of attempts, hollow under ${MIN_RUNS}. The band is the `,
+        term(`${Math.round(S.ci * 100)}% Wilson interval`, GLOSSARY["Wilson interval"]), " of that week's rate.") }),
     sortTable({ caption: "Outcome by skill", csvName: "outcome-by-skill",
       cols: [nameCol("Skill"), { key: "o", label: "First-pass rate", num: true, value: (u) => u.kpi.outcome, cell: (u) => fmt.pct(u.kpi.outcome) },
         { key: "n", label: "Attempts", num: true, value: (u) => sumOf(u.runList, (r) => r.on) },
@@ -329,7 +352,8 @@ function measuresHeatmap(shown) {
   const cur = new Map(rows.map((u) => [u.id + u.name, u.chosen[u.chosen.length - 1]]));
   return heatmap({
     title: "Measures against the reference", question: "Where is each skill better or worse than usual?",
-    sub: `the latest version shown of each item · ratio to ${baseWords()}, above ×1 is better`,
+    takeaway: () => measuresTakeaway(rows, cols, cur),
+    sub: `the latest version shown of each item · each cell: how much better (+) or worse (−) than ${baseWords()} · blue = better, red = worse, grey = about the same`,
     rows: rows.map((u) => ({ key: u.id + u.name, label: u.name, href: hrefUnit(u.id), u })), rowTitle: "Skill",
     cols: cols.map((m) => ({ key: m.key, label: metricShort(m), sub: `weight ×${fmt.num((weightsOf(SKILLS[0] || { weights: {} })[m.key] ?? m.weight), 1)}`, m })),
     scale: "div",
@@ -338,20 +362,21 @@ function measuresHeatmap(shown) {
       const d = v && v.metrics ? v.metrics[c.key] : null;
       if (!d) return null;
       return {
-        t: Math.log(d.ratio) / LOG_CAP, raw: d.ratio, text: fmt.ratio(d.ratio), dim: d.n < MIN_RUNS,
+        t: Math.log(d.ratio) / LOG_CAP, raw: d.ratio, text: ratioWords(d.ratio), dim: d.n < MIN_RUNS,
         tip: [["Ratio to the reference", `${fmt.ratio(d.ratio)} (${d.ratio >= 1 ? "better" : "worse"})`], [metricLabel(c.m), fmt.metric(c.m, d.value)], ["Reference", fmt.metric(c.m, d.ref)],
           ["Runs", `${fmt.int(d.n)}${d.n < MIN_RUNS ? " (too few to trust)" : ""}`], ["Weight in the score", `×${d.weight}`], ["Version", v.label]],
       };
     },
     legendText: ["worse than the reference", "better", "corner mark = fewer than " + MIN_RUNS + " runs"],
-    notes: "Blue is better than the reference, red is worse, grey is about the same. The colour saturates at ×" + DATA.method.max_ratio + " either way, where the score stops counting. The weights in the column heads are the defaults; a skill may override them.",
+    notes: "Blue is better than the reference, red is worse, grey is about the same. A cell reads +20% when the measure is 1.2 times better than the reference (the ratio, ×1.2, is in the tooltip and the table). The colour saturates at ×" + DATA.method.max_ratio + " either way, where the score stops counting. The weights in the column heads are the defaults; a skill may override them.",
+    corner: "skill ↓ · measure →",
   });
 }
 
 // Every recorded version that is on, one row each.
 function versionTable(views) {
   const rows = views.flatMap((u) => u.chosen.filter((v) => v.recorded).map((v) => ({
-    id: u.id, name: u.name, label: v.label, hash: v.parts.map((p) => p.hash).join(" + "),
+    id: u.id, name: u.name, label: v.label, hash: partsText(v),
     first: v.first_seen, last: v.last_seen, runs: v.runs, score: v.score, ci: v.ci, change: change(v),
   })));
   const cols = [
@@ -446,8 +471,9 @@ function rolesPanel(list) {
   };
   const views = list.map(viewOfRole).filter((u) => u.runs && enoughRuns(u.runs));
   const t = sortTable({ caption: "Agent roles", cols: [nameCol("Agent role"), runsCol, { key: "spend", label: "Spend", num: true, value: (u) => u.spend, cell: (u) => fmt.usd(u.spend) },
-    costCol, timeCol, errCol, lastCol], rows: [], sort: { key: "spend", dir: -1 }, page: 25, csvName: "agent-roles" });
+    costCol, timeCol, more(errCol), more(lastCol)], rows: [], sort: { key: "spend", dir: -1 }, page: 25, csvName: "agent-roles" });
   const chartBox = h("div", { class: "grid" });
+  const answerBox = h("div", {});
   const apply = (write) => {
     const q = state.text.trim().toLowerCase();
     const rows = views.filter((u) => (state.once || u.runs >= 2 || u.name.endsWith("roles seen in one run")) && (!q || u.name.toLowerCase().includes(q)));
@@ -456,8 +482,10 @@ function rolesPanel(list) {
     count.textContent = `${rows.length} shown${state.once || !hidden ? "" : ` · ${hidden} seen in a single run are hidden`}`;
     const top = [...rows].sort((a, b) => b.spend - a.spend).slice(0, 20);
     const typeOf = (u) => u.id.slice(6).split("|")[0];
+    answerBox.replaceChildren(rows.length ? answer(`${plural(rows.length, "agent role")} shown spent ${fmt.usd(sumOf(rows, (u) => u.spend))}; ${top[0] ? `${top[0].name} spent the most (${fmt.usd(top[0].spend)}).` : ""}`) : empty("No agent role matches."));
     chartBox.replaceChildren(
       barChart({ title: "Spend by agent role", question: "Which subagent roles cost the most?", sub: `the ${top.length} roles shown that spent the most · colour = agent type`,
+        takeaway: () => shareTakeaway(top.map((u) => ({ label: u.name, value: u.spend })), "of this spend"),
         items: top.map((u) => ({ label: u.name, value: u.spend, href: hrefUnit(u.id), css: colourOf("agent", typeOf(u)).css, rows: [["Runs", fmt.int(u.runs)], ["Cost per invocation", fmt.usd(u.kpi.cost)]] })),
         fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", labelTitle: "Agent role" }),
       scatterChart({ title: "Cost and time per invocation, by role", question: "Which roles are slow, which are expensive, and which are both?",
@@ -484,9 +512,11 @@ function rolesPanel(list) {
   });
   apply(false);
   return h("div", { class: "charts" },
+    answerBox,
+    h("p", { class: "subanswer" }, "Agent roles are the subagents Claude Code started, grouped by type and task; roles seen in a single run are folded into one row per type. Roles have no versions, so they are described, not scored."),
     h("div", { class: "toolbar" }, search, h("label", { class: "check" }, once, " Include roles seen in a single run")),
-    count, chartBox, t.el,
-    note("Agent roles are the subagents Claude Code started, grouped by type and task; roles seen in a single run are folded into one row per type. Roles have no versions, so they are described, not scored."));
+    count, chartBox,
+    section({ title: "Every agent role", intro: "Sort by any column, or search above." }, t.el));
 }
 
 function groupsPanel(list) {
@@ -505,10 +535,106 @@ function groupsPanel(list) {
     { key: "nmembers", label: "Members", num: true, value: (u) => u.members.length, cell: (u) => h("span", { title: u.members.join(", ") }, fmt.int(u.members.length)) },
     scoreCol, rangeCol, runsCol, costCol, timeCol, errCol, lastCol];
   const auto = views.filter((u) => u.auto).length;
+  const gt = views.map((u) => verdict(u.score, u.ci, u));
   return h("div", { class: "charts" },
-    note(`A group is scored as one unit, next to each of its skills on its own: its runs are the union of its members' work, and its version is the combination of its members' versions, so it changes when any member's text changes. ${auto ? `${auto === 1 ? "One set was" : `${auto} sets were`} found in your runs: skills used together in most of their runs and edited at the same time (marked “auto”; [method] auto_groups = false turns this off).` : ""} Define your own with [[group]] in config.toml.`),
-    rangeChart({ title: "Latest version of each group against its own runs", question: "Is each flow, taken as a whole, better or worse than usual?", sub: `100 = ${baseWords()}`,
+    views.length ? answer(views.length === 1 ? `${views[0].name} (${views[0].members.length} skills): ${gt[0].sentence}` : `${plural(views.length, "group")}: ${listWords(views.map((u, i) => `${u.name} ${TONE[gt[i].tone].icon} ${gt[i].word.toLowerCase()}`))}.`, gt.length === 1 ? gt[0].tone : null) : null,
+    h("p", { class: "subanswer" }, `A group is scored as one unit, next to each of its skills on its own: its runs are the union of its members' work, and its version is the combination of its members' versions, so it changes when any member's text changes. ${auto ? `${auto === 1 ? "One set was" : `${auto} sets were`} found in your runs: skills used together in most of their runs and edited at the same time (marked “auto”; [method] auto_groups = false turns this off).` : ""} Define your own with [[group]] in config.toml.`),
+    rangeChart({ title: "Latest version of each group against its own runs", question: "Is each flow, taken as a whole, better or worse than usual?", sub: `100 = ${baseWords()} · dot = score; bar = likely range · right of 100 is better`,
+      takeaway: () => rangeTakeaway(views.map((u) => ({ label: u.name, score: u.score, ci: u.ci })), "group"),
       rows: views.map((u) => ({ label: u.name, ns: "group", score: u.score, ci: u.ci, href: hrefUnit(u.id), tone: verdict(u.score, u.ci, u).tone, word: verdict(u.score, u.ci, u).word })),
-      ref: 100, refLabel: "typical run", axisTitle: `Score (100 = ${baseWords()})`, labelTitle: "Group" }),
+      ref: 100, refLabel: "usual level", axisTitle: `Score (100 = ${baseWords()})`, labelTitle: "Group" }),
+    views.map((u) => h("p", { class: "note" }, h("strong", {}, `${u.name}: `), `members ${u.members.map((m) => m.replace(/^skill:/, "")).join(", ")}`)),
     sortTable({ caption: "Groups", cols, rows: views, sort: { key: "runs", dir: -1 }, csvName: "groups" }).el);
+}
+
+// ---- takeaways: the one line under a chart's heading, worked out from what it draws ----
+
+// The page's answer: what got better or worse, and why the rest cannot be judged yet.
+function skillsAnswer(shown, tones) {
+  const by = (t) => shown.filter((u, i) => tones[i] === t).map((u) => u.name);
+  const better = by("better"), worse = by("worse"), conf = by("confounded"), few = by("few"), first = by("first"), unclear = by("unclear");
+  const n = shown.length;
+  const head = better.length || worse.length
+    ? [better.length ? `${listWords(better)} got better` : null, worse.length ? `${listWords(worse)} got worse` : null].filter(Boolean).join("; ")
+    : `Of ${plural(n, "skill")}, none got clearly better or worse than its previous version`;
+  const rest = [];
+  if (unclear.length) rest.push(`${fmt.int(unclear.length)} show no clear change`);
+  if (conf.length) rest.push(h("span", {}, `${fmt.int(conf.length)} can't be judged because something else changed at the same time (`, term("confounded"), ")"));
+  if (few.length) rest.push(`${fmt.int(few.length)} ${few.length === 1 ? "needs" : "need"} more runs`);
+  if (first.length) rest.push(`${fmt.int(first.length)} ${first.length === 1 ? "has" : "have"} only one version`);
+  const parts = [];
+  rest.forEach((r, i) => parts.push(i === 0 ? "" : i === rest.length - 1 ? " and " : ", ", r));
+  const tone = worse.length ? "worse" : better.length ? "better" : null;
+  return h("p", { class: `answer${tone ? ` tone-${tone}` : ""}` }, `${head}.`, rest.length ? [" ", ...parts, "."] : null);
+}
+
+// Which rows sit clearly above or below 100 (their whole range on one side), in words.
+function rangeTakeaway(rows, noun) {
+  const ranged = rows.filter((r) => r.ci);
+  const above = ranged.filter((r) => r.ci[0] > 100).map((r) => r.label), below = ranged.filter((r) => r.ci[1] < 100).map((r) => r.label);
+  if (above.length || below.length) {
+    return [above.length ? `${listWords(above)} ${above.length === 1 ? "is" : "are"} clearly above ${above.length === 1 ? "its" : "their"} usual level` : null,
+      below.length ? `${listWords(below)} ${below.length === 1 ? "is" : "are"} clearly below` : null].filter(Boolean).join("; ") + ".";
+  }
+  if (!ranged.length) return `No ${noun} has enough runs for a range yet: the scores are points only.`;
+  return `No ${noun} is clearly above or below its usual level: every range crosses 100.${rows.length > ranged.length ? ` ${fmt.int(rows.length - ranged.length)} more have too few runs for a range.` : ""}`;
+}
+
+function timelineTakeaway(bases) {
+  const latest = bases.map((u) => [u, u.chosen.filter((v) => v.recorded).pop()]).filter(([, v]) => v);
+  const moved = latest.filter(([, v]) => ["better", "worse"].includes(change(v).tone));
+  if (moved.length) return `${listWords(moved.map(([u, v]) => `${u.name} ${v.label} ${change(v).text}`))}; the rest show no clear change or can't be judged yet.`;
+  const multi = latest.filter(([u]) => u.chosen.filter((v) => v.recorded).length > 1).length;
+  return `${plural(multi, "skill")} changed version in this period; none of the newest versions is clearly better or worse than the one before.`;
+}
+
+// The items nothing beats on both axes, named.
+function frontierTakeaway(pts, yOutcome) {
+  const sorted = [...pts].sort((a, b) => a.kpi.cost - b.kpi.cost);
+  const front = [];
+  let best = -Infinity;
+  for (const u of sorted) {
+    const y = yOutcome ? u.kpi.outcome : u.score;
+    if (y > best) {
+      front.push(u.name);
+      best = y;
+    }
+  }
+  return front.length ? h("span", {}, "On the ", term("Pareto frontier"), ` (nothing is both cheaper and better): ${listWords(front, 5)}.`) : null;
+}
+
+// The biggest item and its share of the total.
+function shareTakeaway(items, what, lead) {
+  const list = items.filter((i) => valid(i.value) && i.value > 0).sort((a, b) => b.value - a.value);
+  const total = sumOf(list, (i) => i.value);
+  if (!list.length || !total) return null;
+  const top = list[0];
+  return `${lead ? `${lead} ${top.label}` : top.label}: ${fmt.pct(top.value / total, 0)} ${what}${list[1] ? `, then ${list[1].label} (${fmt.pct(list[1].value / total, 0)})` : ""}.`;
+}
+
+// The busiest day of a day-by-day chart.
+function peakDayTakeaway(days, f, what) {
+  const tot = days.map((d) => ({ day: d.day, v: Object.values(d.parts || {}).reduce((a, b) => a + b, 0) })).filter((d) => d.v > 0);
+  if (!tot.length) return null;
+  const top = tot.sort((a, b) => b.v - a.v)[0];
+  return `Highest ${what} on ${fmt.dayKey(top.day)}: ${f(top.v)}, over ${plural(tot.length, "active day")}.`;
+}
+
+// A measure's ratio to the reference as a change in words: ×1.2 is "+20%", ×0.8 is "−20%" (the same distance either way).
+const ratioWords = (r) => (!valid(r) || r <= 0 ? "—" : Math.abs(Math.log(r)) < 0.005 ? "±0%" : r >= 1 ? `+${fmt.pct(r - 1, 0)}` : `−${fmt.pct(1 / r - 1, 0)}`);
+
+function measuresTakeaway(rows, cols, cur) {
+  let up = 0, down = 0, big = null;
+  for (const r of rows) {
+    const v = cur.get(r.id + r.name);
+    for (const c of cols) {
+      const d = v && v.metrics ? v.metrics[c.key] : null;
+      if (!d) continue;
+      if (d.ratio > 1.05) up += 1;
+      else if (d.ratio < 1 / 1.05) down += 1;
+      if (!big || Math.abs(Math.log(d.ratio)) > Math.abs(Math.log(big.d.ratio))) big = { d, r, c };
+    }
+  }
+  if (!big) return null;
+  return `${fmt.int(up)} cells are better than usual and ${fmt.int(down)} worse (by more than 5%). The biggest gap: ${big.r.name}, ${metricShort(big.c).toLowerCase()} ${ratioWords(big.d.ratio)}.`;
 }

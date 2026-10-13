@@ -1,11 +1,13 @@
-/* ui/filterbar.js: the one row of filters under the header. It scopes every page.
+/* ui/filterbar.js: the filters under the header. They scope every page.
 
-   Each dimension is a small menu of checkboxes (none ticked = all); the dates take a preset or a range.
-   Every change is written to the URL and the page redraws against the new slice. The bar always says how
-   many runs are left and what is filtered, with a reset. */
+   Closed, the bar is one quiet line: a "Filters" button, a chip for each active filter (a click removes it),
+   and how many runs are left. Open, it shows every control: each dimension is a small menu of checkboxes
+   (none ticked = all), the dates take a preset or a range, and two switches. Every change is written to the
+   URL and the page redraws against the new slice. */
 
 const BAR_EL = document.getElementById("filterbar");
 let barOpen = null; // the dimension whose menu was open, kept open across the redraw a change causes
+let barExpanded = false; // the controls are shown (the reader opened them); kept across redraws
 
 function refreshAfter(changes) {
   setParams(changes);
@@ -67,9 +69,13 @@ function dateControls() {
       from.focus();
       return;
     }
+    barExpanded = true;
     refreshAfter({ range: sel.value || null, from: null, to: null });
   });
-  const apply = () => refreshAfter({ range: null, from: from.value || null, to: to.value || null });
+  const apply = () => {
+    barExpanded = true;
+    refreshAfter({ range: null, from: from.value || null, to: to.value || null });
+  };
   from.addEventListener("change", apply);
   to.addEventListener("change", apply);
   return h("span", { class: "fgroup" }, h("span", { class: "fk" }, "Dates"), sel, custom);
@@ -78,27 +84,59 @@ function dateControls() {
 function toggle(label, key, on, title) {
   const cb = h("input", { type: "checkbox" });
   cb.checked = on;
-  cb.addEventListener("change", () => refreshAfter({ [key]: cb.checked ? (key === "pop" ? "all" : "1") : null }));
+  cb.addEventListener("change", () => {
+    barExpanded = true;
+    refreshAfter({ [key]: cb.checked ? (key === "pop" ? "all" : "1") : null });
+  });
   return h("label", { class: "check ftoggle", title }, cb, ` ${label}`);
+}
+
+// The active filters as chips; each one removes its filter.
+function filterChips() {
+  const out = [];
+  const chipBtn = (text, changes, what) => button(h("span", {}, text, h("span", { class: "fx", "aria-hidden": "true" }, " ×")),
+    () => refreshAfter(changes), { class: "fchip", "aria-label": `Remove the filter ${what}: ${text}`, title: "Remove this filter" });
+  if (F.range) out.push(chipBtn(`last ${RANGES[F.range]} days`, { range: null }, "dates"));
+  else if (F.from || F.to) out.push(chipBtn(F.from && F.to ? `${fmt.dayKey(F.from)} – ${fmt.dayKey(F.to)}` : F.from ? `from ${fmt.dayKey(F.from)}` : `until ${fmt.dayKey(F.to)}`, { from: null, to: null }, "dates"));
+  for (const d of FILTER_DIMS) {
+    const set = F.sets[d.key];
+    if (set) out.push(chipBtn(`${d.label.toLowerCase()} ${[...set].map(d.show || String).join(", ")}`, { [d.key]: null }, d.label.toLowerCase()));
+  }
+  if (F.minn) out.push(chipBtn(`at least ${MIN_RUNS} runs`, { minn: null }, "minimum runs"));
+  if (F.popAll) out.push(chipBtn("open and stub runs included", { pop: null }, "open and stub runs"));
+  return out;
 }
 
 function renderFilterBar() {
   if (!BAR_EL) return;
   const total = F.popAll ? EX.runs.length : populationRuns().length;
   const kept = RUNSET.size;
-  const words = filterWords();
+  const chips = filterChips();
+  if (barOpen) barExpanded = true;
   const reset = button("Reset filters", () => refreshAfter(Object.fromEntries(FILTER_KEYS.map((k) => [k, null]))), { class: "btn seg" });
-  const chips = words.length ? h("span", { class: "fchips" }, words.map((w) => h("span", { class: "fchip" }, w))) : null;
+  const panel = h("div", { class: "frow", id: "filterpanel", hidden: barExpanded ? null : true },
+    dateControls(),
+    FILTER_DIMS.map(dimMenu),
+    toggle(`Hide fewer than ${MIN_RUNS} runs`, "minn", F.minn, `Hide skills, roles and versions with fewer than ${MIN_RUNS} runs: too few for a verdict`),
+    toggle("Include open and stub runs", "pop", F.popAll, "Runs still open and stub runs never count in a score; this adds them to the run lists and diagnostics"));
+  const trigger = h("button", { type: "button", class: `ftrigger${chips.length ? " on" : ""}`, "aria-expanded": String(barExpanded), "aria-controls": "filterpanel" },
+    h("span", { class: "ficon", "aria-hidden": "true" }, barExpanded ? "▴" : "▾"), "Filters",
+    chips.length ? h("span", { class: "fbadge", "aria-label": `${chips.length} active` }, fmt.int(chips.length)) : null);
+  trigger.addEventListener("click", () => {
+    barExpanded = !barExpanded;
+    panel.hidden = !barExpanded;
+    trigger.setAttribute("aria-expanded", String(barExpanded));
+    trigger.querySelector(".ficon").textContent = barExpanded ? "▴" : "▾";
+  });
   fill(BAR_EL,
-    h("div", { class: "frow" },
-      dateControls(),
-      FILTER_DIMS.map(dimMenu),
-      toggle(`Hide fewer than ${MIN_RUNS} runs`, "minn", F.minn, `Hide skills, roles and versions with fewer than ${MIN_RUNS} runs: too few for a verdict`),
-      toggle("Include open and stub runs", "pop", F.popAll, "Runs still open and stub runs never count in a score; this adds them to the run lists and diagnostics")),
-    h("div", { class: `fstatus${filtered() ? " active" : ""}`, role: "status" },
-      h("strong", {}, `${fmt.int(kept)} of ${fmt.runs(total)}`),
-      filtered() ? [" · ", chips, " ", reset] : h("span", { class: "muted" }, F.popAll ? " · every run, open and stub included" : ` · finished runs (${fmt.int(EX.runs.length - total)} open or stub left out)`),
-      slicing() ? h("span", { class: "muted" }, " · scores, ranges and verdicts are worked out again from these runs") : null));
+    h("div", { class: "fbar" },
+      trigger,
+      h("div", { class: `fstatus${filtered() ? " active" : ""}`, role: "status" },
+        h("strong", {}, `${fmt.int(kept)} of ${fmt.runs(total)}`),
+        filtered() ? [h("span", { class: "fchips" }, chips), reset]
+          : h("span", { class: "muted fextra" }, F.popAll ? "every run, open and stub included" : `finished runs (${fmt.int(EX.runs.length - total)} open or stub left out)`),
+        slicing() ? h("span", { class: "muted fextra" }, "scores, ranges and verdicts are worked out again from these runs") : null)),
+    panel);
   // A change redraws the bar: reopen the menu the reader was using and put the focus back where it was.
   if (barOpen) {
     const box = BAR_EL.querySelector(`details[data-dim="${barOpen.dim}"]`);

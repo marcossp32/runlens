@@ -102,15 +102,3 @@ function unitRunsOf(uid) {
 // Whether a skill passes the skills filter (other units always do).
 const skillShown = (name) => !F.sets.skills || F.sets.skills.has(name);
 const enoughRuns = (n) => !F.minn || n >= MIN_RUNS;
-
-// Words for what is filtered, for the bar and for notes under charts.
-function filterWords() {
-  const parts = [];
-  if (F.range) parts.push(`last ${RANGES[F.range]} days`);
-  else if (F.from || F.to) parts.push(F.from && F.to ? `${fmt.dayKey(F.from)} – ${fmt.dayKey(F.to)}` : F.from ? `from ${fmt.dayKey(F.from)}` : `until ${fmt.dayKey(F.to)}`);
-  for (const d of FILTER_DIMS) {
-    const s = F.sets[d.key];
-    if (s) parts.push(`${d.label.toLowerCase()} ${[...s].map(d.show || String).join(", ")}`);
-  }
-  return parts;
-}

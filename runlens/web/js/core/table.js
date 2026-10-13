@@ -8,15 +8,20 @@ function compareValues(a, b, dir) {
   return dir * c;
 }
 
-/* A sortable table. cols: {key, label, num, value(row), cell(row), csv(row)}. With `page`, rows arrive in pages.
-   `csvName` adds a CSV button that exports every row (not just the page shown), with raw values. */
-function sortTable({ caption, cols, rows, sort, page = 0, csvName }) {
+/* A sortable table. cols: {key, label, num, value(row), cell(row), csv(row), more}. With `page`, rows arrive in pages.
+   `csvName` adds a CSV button that exports every row and every column (not just what is shown), with raw values.
+   Columns marked `more` start hidden behind a "More columns" toggle, so a wide table opens with what most readers
+   need; the toggle is remembered in the URL under `more=1` when `moreParam` is given. */
+function sortTable({ caption, cols, rows, sort, page = 0, csvName, moreParam }) {
   cols = cols.map((c, i) => ({ key: c.key || `c${i}`, ...c }));
   let key = sort ? sort.key : null;
   let dir = sort ? sort.dir : 1;
   let data = rows;
   let shown = page || Infinity;
+  const extra = cols.filter((c) => c.more);
+  let showMore = moreParam ? param(moreParam) === "1" : false;
   const body = h("tbody");
+  const headRow = h("tr");
   const more = h("button", { type: "button", class: "showmore" });
   more.addEventListener("click", () => {
     shown += page;
@@ -35,6 +40,7 @@ function sortTable({ caption, cols, rows, sort, page = 0, csvName }) {
     });
     return h("th", { scope: "col", class: col.num ? "num" : "" }, btn);
   });
+  const visible = () => cols.filter((c) => showMore || !c.more);
 
   function ordered() {
     const col = cols.find((c) => c.key === key);
@@ -46,9 +52,11 @@ function sortTable({ caption, cols, rows, sort, page = 0, csvName }) {
       heads[i].setAttribute("aria-sort", active ? (dir > 0 ? "ascending" : "descending") : "none");
       heads[i].querySelector(".arrow").textContent = active ? (dir > 0 ? "▲" : "▼") : "";
     });
+    const vis = visible();
+    headRow.replaceChildren(...cols.map((c, i) => (vis.includes(c) ? heads[i] : null)).filter(Boolean));
     const all = ordered();
     const slice = all.slice(0, shown);
-    body.replaceChildren(...slice.map((row) => h("tr", {}, cols.map((c, i) => {
+    body.replaceChildren(...slice.map((row) => h("tr", {}, vis.map((c, i) => {
       const content = c.cell ? c.cell(row) : (c.value(row) ?? "—");
       return i === 0 ? h("th", { scope: "row", class: c.num ? "num" : "" }, content) : h("td", { class: c.num ? "num" : "" }, content);
     }))));
@@ -56,17 +64,30 @@ function sortTable({ caption, cols, rows, sort, page = 0, csvName }) {
     const left = all.length - slice.length;
     more.hidden = left <= 0;
     more.textContent = `Show ${Math.min(page, left)} more · ${left} left`;
+    if (moreBtn) {
+      moreBtn.setAttribute("aria-pressed", String(showMore));
+      moreBtn.textContent = showMore ? "Fewer columns" : `More columns (${extra.length})`;
+      moreBtn.title = showMore ? "" : `Also show: ${extra.map((c) => c.label).join(", ")}`;
+    }
   }
 
   const count = csvName ? h("span", { class: "muted" }) : null;
+  const moreBtn = extra.length ? h("button", { type: "button", class: "tool morecols" }) : null;
+  if (moreBtn) {
+    moreBtn.addEventListener("click", () => {
+      showMore = !showMore;
+      if (moreParam) setParams({ [moreParam]: showMore ? "1" : null });
+      draw();
+    });
+  }
   draw();
-  const csv = csvName ? h("button", { type: "button", class: "tool", title: "Download every row as CSV" }, "CSV") : null;
+  const csv = csvName ? h("button", { type: "button", class: "tool", title: "Download every row and column as CSV" }, "CSV") : null;
   if (csv) csv.addEventListener("click", () => downloadCSV(csvName, cols, ordered()));
   return {
     el: h("div", { class: "tablebox" },
-      csv ? h("div", { class: "tablebar" }, count, csv) : null,
+      csv || moreBtn ? h("div", { class: "tablebar" }, count || h("span", {}), h("span", { class: "tablebar-tools" }, moreBtn, csv)) : null,
       h("div", { class: "tw", tabindex: "0", role: "region", "aria-label": caption },
-        h("table", {}, h("caption", { class: "sr" }, caption), h("thead", {}, h("tr", {}, heads)), body)),
+        h("table", {}, h("caption", { class: "sr" }, caption), h("thead", {}, headRow), body)),
       page ? more : null),
     setRows(next) {
       data = next;

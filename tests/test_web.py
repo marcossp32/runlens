@@ -252,7 +252,7 @@ ROUTES = ["#/", "#/?tab=cost", "#/?tab=outcome", "#/?tab=measures", "#/?kind=rol
           "#/diagnostics?tab=models&sub=tokens", "#/diagnostics?tab=models&sub=time", "#/diagnostics?tab=agents", "#/diagnostics?tab=flow",
           "#/method", "#/method?tab=example", "#/no/such/page",
           "#/?range=7d", "#/runs?repo=other&model=claude-opus-5-5", "#/?from=2026-09-22&to=2026-09-24&minn=1",
-          "#/?base=prev&ci=80&w=cost:0", "#/unit/skill%3Aflow?base=ver%3Av1&wu=flow%3Acost%3A3", "#/diagnostics?pop=all&effort=high"]
+          "#/?base=prev&ci=80&w=cost:0", "#/?cols=1", "#/runs?cols=1&range=30d", "#/unit/skill%3Aflow?base=ver%3Av1&wu=flow%3Acost%3A3", "#/diagnostics?pop=all&effort=high"]
 
 
 @unittest.skipUnless(find_browser(), "no headless Chromium (Chrome or Edge) found; set RUNLENS_BROWSER")
@@ -292,6 +292,61 @@ class Renders(unittest.TestCase):
         self.assertIn("Reset filters", dom)
         dom = dump(path, "#/runs?repo=other&pop=all")
         self.assertRegex(dom, r"<strong>3 of 6 runs</strong>")  # the open run counts once open runs are included
+
+    def test_filter_bar_starts_collapsed_with_chips(self):
+        path = TMP / "fbar.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/")
+        self.assertRegex(dom, r'<button[^>]*class="ftrigger"[^>]*aria-expanded="false"[^>]*aria-controls="filterpanel"')
+        self.assertRegex(dom, r'<div class="frow" id="filterpanel" hidden="">')  # every control is still there, behind the button
+        self.assertIn('data-dim="repo"', dom)
+        self.assertNotIn('class="fchip"', dom)
+        dom = dump(path, "#/runs?repo=other&range=7d")
+        self.assertRegex(dom, r'class="ftrigger on"[^>]*>.*?<span class="fbadge"[^>]*>2</span>')  # two active filters
+        self.assertEqual(len(re.findall(r'<button[^>]*class="fchip"[^>]*aria-label="Remove the filter', dom)), 2)
+
+    def test_chart_cards_have_one_menu_and_a_closed_how_to_read(self):
+        path = TMP / "cards.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        for route in ("#/", "#/?tab=cost", "#/diagnostics", "#/run/s1v1aaaa", "#/compare"):
+            with self.subTest(route=route):
+                dom = dump(path, route)
+                cards = dom.count('class="card chart-card')
+                self.assertGreater(cards, 0)
+                self.assertEqual(dom.count('<details class="menu cardmenu">'), cards, "one ⋯ menu per chart card")
+                self.assertGreaterEqual(dom.count('data-act="svg"'), cards)
+                self.assertGreaterEqual(dom.count('<details class="howto-read">'), cards, "each card explains itself, closed")
+                self.assertNotIn('<details class="howto-read" open', dom)
+                self.assertIsNone(re.search(r'class="tool"[^>]*>(SVG|PNG)</button>', dom), "no loose export buttons left on a card")
+                self.assertIn('class="card-takeaway"', dom)
+
+    def test_pages_answer_first(self):
+        path = TMP / "answer.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        for route in ("#/", "#/runs", "#/run/s1v1aaaa", "#/diagnostics", "#/diagnostics?tab=tools", "#/diagnostics?tab=agents"):
+            with self.subTest(route=route):
+                dom = dump(path, route)
+                answer = dom.find('class="answer')
+                self.assertGreater(answer, 0, f"no answer at {route}")
+                first_chart = dom.find('class="card chart-card')
+                self.assertTrue(first_chart < 0 or answer < first_chart, "the answer comes before the first chart")
+                first_card = dom.find('class="card')
+                self.assertLessEqual(len(re.findall(r'<div class="kpi[ "]', dom[:first_card if first_card > 0 else None])), 4, "at most four headline numbers")
+        dom = dump(path, "#/")
+        self.assertIn('class="term"', dom)  # jargon explained in place
+        unit = dump(path, "#/unit/skill%3Aflow")
+        self.assertIn('class="profile"', unit)
+        self.assertIn('data-score="', unit)
+
+    def test_wide_tables_keep_rare_columns_behind_a_toggle(self):
+        path = TMP / "cols.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/runs")
+        self.assertRegex(dom, r'class="tool morecols"[^>]*aria-pressed="false"[^>]*>More columns \(\d+\)')
+        self.assertNotIn(">Claude Code <", re.search(r"<thead>.*?</thead>", dom.split('aria-label="Runs"')[1], re.S).group(0))
+        dom = dump(path, "#/runs?cols=1")
+        self.assertRegex(dom, r'class="tool morecols"[^>]*aria-pressed="true"[^>]*>Fewer columns')
+        self.assertIn(">Claude Code <", re.search(r"<thead>.*?</thead>", dom.split('aria-label="Runs"')[1], re.S).group(0))
 
     def test_health_badge_and_custom_score_are_marked(self):
         path = TMP / "marks.html"

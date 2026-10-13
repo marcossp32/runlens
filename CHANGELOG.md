@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Dashboard
+- Clearer structure, nothing removed. Each page opens with its answer in plain words (for example "review-pr got better. 1 can't be judged because something else changed at the same time"), then at most four key numbers (the rest on one quiet line), then charts grouped under section headings, then the detail tables.
+- Every chart card reads the same way: the question it answers, a one-line takeaway from the data, the chart, and a closed "How to read this" that holds the encodings, method notes and caveats that used to sit under every chart. Table, CSV, SVG and PNG moved into one "⋯" menu per card.
+- The filter bar is one line until opened: a "Filters" button, a removable chip per active filter, and the count of runs left.
+- Charts that were hard to read at first glance: the score range chart says "100 = usual level" and "◀ worse · better ▶" and names each symbol in words; version timelines show each skill's latest verdict next to its name and explain the line, band and dashed line; the forest plot reads "21% better" instead of "×1.21"; measure cells read "+8%" instead of "×1.08"; the run timeline names skills on their bars; heatmaps say which axis is "from" and which is "to"; the hand-off flow keeps its colour key under "How to read this", since every block is labelled.
+- Glossary words (usual level, confounded, range, Pareto frontier, Wilson interval) explain themselves on hover, tap or keyboard focus. Versions made of several skill texts show each skill's name next to its hash.
+- One skill's page shows all versions and the current one side by side in one profile table instead of ten cards; long lists of confounders fold away. Wide tables keep their rarer columns behind "More columns" (`cols=1` in the link).
+- A clearer type scale (page 26, section 18, card 15, body 14, caption 12.5 px), an 8-point spacing scale, lighter card borders, and nested tabs drawn as pills so the two levels read apart.
+
 ## 0.2.0 - 2026-10-13
 
 An audit of the whole tool found that the numbers it showed could not be trusted: missing tokens, double counts, runs frozen half-way, wrong prices, and verdicts that ranked task types rather than skill versions. This release fixes the data first, then the method, then the outputs.

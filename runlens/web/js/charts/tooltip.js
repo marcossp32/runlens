@@ -127,3 +127,31 @@ document.addEventListener("keydown", (e) => {
 window.addEventListener("scroll", () => {
   if (tipOwner && document.activeElement !== tipOwner) hideTip();
 }, { passive: true });
+
+// Glossary terms (core/dom.js term()): their meaning in the same tooltip, on hover, tap and keyboard focus.
+let termOwner = null;
+function showTermTip(el) {
+  if (!TIP.isConnected) document.body.append(TIP);
+  hideTip();
+  termOwner = el;
+  fill(TIP, h("div", { class: "tip-title" }, el.firstChild ? el.firstChild.textContent : ""), h("div", { class: "tip-def" }, el.dataset.def));
+  TIP.hidden = false;
+  const a = el.getBoundingClientRect(), r = TIP.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+  const left = Math.max(8, Math.min(vw - r.width - 8, a.left));
+  const top = a.bottom + 6 + r.height > vh - 8 ? Math.max(8, a.top - r.height - 6) : a.bottom + 6;
+  TIP.style.left = `${left}px`;
+  TIP.style.top = `${top}px`;
+}
+function hideTermTip() {
+  if (!termOwner) return;
+  termOwner = null;
+  TIP.hidden = true;
+}
+const termOf = (e) => (e.target && e.target.closest ? e.target.closest(".term") : null);
+document.addEventListener("pointerover", (e) => { const t = termOf(e); if (t) showTermTip(t); });
+document.addEventListener("pointerout", (e) => { const t = termOf(e); if (t && t === termOwner && !t.contains(e.relatedTarget)) hideTermTip(); });
+document.addEventListener("focusin", (e) => { const t = termOf(e); if (t) showTermTip(t); });
+document.addEventListener("focusout", (e) => { if (termOf(e) === termOwner) hideTermTip(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTermTip(); });
+window.addEventListener("scroll", hideTermTip, { passive: true });

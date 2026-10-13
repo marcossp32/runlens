@@ -81,7 +81,7 @@ function flipPair(p) {
 // A tone as an icon and a word; the icon carries the meaning when colour cannot.
 function toneTag(tone, text) {
   const t = TONE[tone] || TONE.unclear;
-  return h("span", { class: `tone tone-${tone}` }, h("span", { class: "ticon", "aria-hidden": "true" }, t.icon), " ", text || t.word);
+  return h("span", { class: `tone tone-${tone}`, title: t.help ? t.help.charAt(0).toUpperCase() + t.help.slice(1) : null }, h("span", { class: "ticon", "aria-hidden": "true" }, t.icon), " ", text || t.word);
 }
 
 function scoreCell(score, ci, few, x) {

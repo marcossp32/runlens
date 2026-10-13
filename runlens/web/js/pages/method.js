@@ -23,6 +23,7 @@ function workedExample() {
       h("li", {}, `Take 100 × e to that power: ${fmt.num(100 * Math.exp(acc / (wsum || 1)), 1)}.`)),
     h("p", {}, `So the score is ${fmt.score(v.score)}`, v.ci ? `, with a range of ${fmt.interval(v.ci)}.` : "."),
     waterfallChart({ title: `The same sum, step by step: ${unit.name} ${nameOf(v)}`, question: "How does each measure take the score from 100 to its value?",
+      takeaway: `Each bar is one measure's push: right raises the score, left lowers it. Together they take ${unit.name} ${nameOf(v)} from 100 to ${fmt.score(v.score)}.`,
       sub: "each step is weight × ln(ratio) ÷ total weight; the steps multiply", score: v.score, base: "the skill's typical run", n: v.runs, minN: MIN_RUNS,
       rows: [...parts].sort((a, b) => Math.abs(b.share) - Math.abs(a.share)).map((p) => ({ label: metricLabel(p.m), share: p.share,
         tip: [["Ratio", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`]] })) }),
@@ -83,10 +84,11 @@ function methodPage() {
       h("dt", {}, "How it works"), h("dd", {}, "This page.")),
     h("h2", {}, "Filters, settings and sharing"),
     h("ul", {},
-      li("The filter bar under the header narrows every page to some dates, repos, branches, models, effort levels, skills or Claude Code versions. It always says how many runs are left. Scores, ranges and verdicts are then worked out again from those runs, in this page, the same way runlens does."),
+      li("The filter bar under the header narrows every page to some dates, repos, branches, models, effort levels, skills or Claude Code versions: “Filters” opens it, each active filter shows as a chip you can click to remove, and it always says how many runs are left. Scores, ranges and verdicts are then worked out again from those runs, in this page, the same way runlens does."),
       li("Score, in the header, sets what 100 means (the skill's typical run, the version before, its first version or a chosen version), the weight of each measure for every skill or for one, and the confidence level. When they differ from config.toml the button says “custom” and pages that show a score say how it was made."),
       li("Every view is in the address bar: the page, the tab, the filters and the score settings. “Copy link” copies it. Views saves a view under a name in this browser; views listed in config.toml under [[dashboard.view]] are there for everyone."),
-      li("Each chart has a table view and exports its data as CSV, and its drawing as SVG or PNG. Each table exports as CSV."),
+      li("Each chart opens with the question it answers and a one-line answer from your data. “How to read this”, under the chart, explains its marks and caveats. Its “⋯” menu shows the data as a table and downloads it as CSV, and the drawing as SVG or PNG. Each table exports as CSV; wide tables keep their rarer columns behind “More columns”."),
+      li("Words with a dotted underline explain themselves: hover, tap or tab to them."),
       li("Use Tab to reach a chart, then the arrow keys to move between its marks; the details show as you go. Enter opens what a mark links to."),
       li("Settings keeps the theme, the density and the number format in this browser only.")));
 
