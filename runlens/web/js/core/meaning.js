@@ -25,7 +25,7 @@ function verdict(score, ci, x) {
       case "not enough runs":
         return { tone: "few", word: "Not enough runs", sentence: `Not enough runs to compare with ${vs}: a verdict needs ${MIN_RUNS} runs on each side.` };
       case "confounded":
-        return { tone: "confounded", word: "Confounded", sentence: `Not comparable with ${vs}: ${(x.confounders || []).join("; ") || "something else"} changed at the same time, so a change cannot be put down to the skill text.` };
+        return { tone: "confounded", word: "Confounded", sentence: `Not comparable with ${vs}: something else changed at the same time${(x.confounders || []).length ? ` (${x.confounders.join("; ")})` : ""}, so a change cannot be put down to the skill text.` };
       default:
         // A version with no verdict is a first version; a unit with none has a single version so far.
         return x.label && x.vid ? { tone: "first", word: "First version", sentence: "The first version: there is nothing earlier to compare it with." }
