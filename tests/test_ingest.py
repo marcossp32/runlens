@@ -165,6 +165,35 @@ class Ingest(Sandbox):
         self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 2)
         del good
 
+    def test_main_session_work_after_a_skill_goes_back_to_the_outermost(self):
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000001")
+        r.rec(type="user", message={"role": "user", "content": "/flow"}, promptSource="typed")
+        n = 0
+
+        def turn(attr, load=None):
+            nonlocal n
+            n += 1
+            if load:
+                r.rec(type="user", isMeta=True, message={"role": "user", "content":
+                      f"Base directory for this skill: C:\\skills\\{load}\n\n# {load}"})
+            r.turn(f"m{n}", f"t{n}", cmd=f"echo {n}", attr=attr)
+
+        # the attribution sequence of a real /m-feature run (issue #1)
+        turn("flow", load="flow")
+        turn(None)
+        turn("grill", load="grill")
+        turn("research", load="research")
+        turn(None)
+        turn("plan", load="plan")
+        turn(None)
+        turn("review", load="review")
+        turn(None)
+        r.end()
+        r.write()
+        self.assertEqual(self.refresh(), 1, self.out)
+        got = [s for s, in self.q("SELECT skill FROM tool_calls WHERE session_id = ? ORDER BY seq", r.sid)]
+        self.assertEqual(got, ["flow", "flow", "grill", "research", "flow", "plan", "flow", "review", "flow"])
+
     def test_a_run_that_fails_to_parse_is_recorded_and_the_rest_ingest(self):
         simple_run(self.projects, "cccccccc-0000-0000-0000-000000000001")
         broken = simple_run(self.projects, "cccccccc-0000-0000-0000-000000000002")

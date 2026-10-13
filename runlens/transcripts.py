@@ -15,7 +15,7 @@ from .fs import fs_path
 # Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
 # 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
 #    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
 # https://platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Cache writes are 1.25x (5m) and 2x (1h)
@@ -231,18 +231,27 @@ def list_cost(a, overrides=None):
 class SkillStack:
     """Which skill an agent is working under.
 
-    Claude Code records `attributionSkill` on main-session turns but not inside
-    subagents, and when a nested skill ends it records None instead of the outer
-    skill. So: a skill load pushes, an explicit attribution wins, and a change
-    from a skill to None pops back to the outer skill. The outermost skill an
-    agent loaded is never popped.
+    Inside subagents Claude Code records no `attributionSkill`, so a skill load
+    pushes and the outermost skill an agent loaded is never popped.
+
+    In the main session it records the skill on each turn and None after every
+    skill the session invokes ends, so skills invoked there run one after
+    another under the outermost one rather than nested in each other: a new
+    skill replaces the one on top (never the outermost), and a change from a
+    skill to None goes back to the outermost skill.
     """
 
-    def __init__(self):
-        self.stack, self.prev = [], None
+    def __init__(self, main=False):
+        self.stack, self.prev, self.main = [], None, main
 
     def push(self, skill):
-        if skill and (not self.stack or self.stack[-1] != skill):
+        if not skill or skill in self.stack[-1:]:
+            return
+        if self.main and skill in self.stack:
+            del self.stack[self.stack.index(skill) + 1:]
+        elif self.main and len(self.stack) > 1:
+            self.stack[-1] = skill
+        else:
             self.stack.append(skill)
 
     def on_attribution(self, attr):
@@ -252,9 +261,10 @@ class SkillStack:
             if attr in self.stack:
                 del self.stack[self.stack.index(attr) + 1:]
             else:
-                self.stack.append(attr)
+                self.push(attr)
         elif self.prev and len(self.stack) > 1:
-            self.stack.pop()  # the outermost skill stays: Claude Code also drops it to None mid-run
+            # the outermost skill stays: Claude Code also drops it to None mid-run
+            del self.stack[1 if self.main else -1:]
         self.prev = attr
         return self.stack[-1] if self.stack else None
 
@@ -308,7 +318,7 @@ def parse_run(main, info, cfg, now=None):
         msg_rows, calls, mentions = {}, {}, []
         stamps, agent_skills = [], set()
         seq = 0
-        skills = SkillStack()
+        skills = SkillStack(main=is_main)
         inherited = inherited_uuids(main, f, meta_by_agent.get(agent_id, {}))
         for r in iter_records(f, stats):
             msg = as_dict(r.get("message"))

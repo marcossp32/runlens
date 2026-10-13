@@ -22,6 +22,7 @@ HOME = Path(sys.argv[1] if len(sys.argv) > 1 else "demo-home").resolve()
 os.environ["RUNLENS_HOME"] = str(HOME)  # before runlens is imported: it reads this once
 
 from runlens import store  # noqa: E402
+from runlens.transcripts import PARSER_VERSION  # noqa: E402
 
 rng = random.Random(2)  # a seed whose history shows a clear "better" and a "confounded" verdict
 extra = random.Random(11)  # for fields added later, so they do not shift the rest of the history
@@ -139,7 +140,7 @@ for day in range(DAYS):
         run = {"session_id": sid, "project": repo, "cwd": f"/work/{repo}", "git_branch": "main" if docs else f"feature/{task.split()[0].lower()}-{day}",
                "cc_version": f"2.1.{280 + day}" if day < CC_UPDATE else f"2.2.{day - CC_UPDATE}", "title": task, "skills": flow, "started": t,
                "cost_estimated": False, "lines_added": 0, "lines_removed": 0, "status": "complete", "ended_by": "session_end", "is_stub": False,
-               "entrypoint": "cli", "parser_version": 2, "bad_lines": 0, "unpriced_models": []}
+               "entrypoint": "cli", "parser_version": PARSER_VERSION, "bad_lines": 0, "unpriced_models": []}
         main_cost = sub_cost = active = 0.0
         n_agents = prompts = seq = n_calls = 0
         rows["events"].append({"session_id": sid, "agent_id": "main", "ts": t, "kind": "human_prompt", "detail": task, "source": "typed"})
@@ -307,6 +308,6 @@ end = max(r["ended"] for r in rows["runs"])
 con.execute("INSERT INTO ingest_errors VALUES (?, ?, ?, ?, ?, ?)",
             ["9f0c1d2e-0000-4000-8000-000000000000", "/archive/acme-shop/9f0c1d2e.jsonl", "parse", "JSONDecodeError: Unterminated string",
              "line 4121, column 88", end])
-store.set_meta(con, parser_version=2, last_ingest=datetime.now(timezone.utc).isoformat())  # a fresh refresh: the demo is never stale
+store.set_meta(con, parser_version=PARSER_VERSION, last_ingest=datetime.now(timezone.utc).isoformat())  # a fresh refresh: the demo is never stale
 con.close()
 print(f"made-up history in {HOME}: {len(rows['runs'])} runs, {len(rows['api_calls'])} model calls, {len(texts)} skill versions")

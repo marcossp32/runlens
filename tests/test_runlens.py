@@ -378,6 +378,20 @@ class RunlensTest(unittest.TestCase):
         self.assertEqual(st.on_attribution("outer"), "outer")
         self.assertEqual(st.on_attribution(None), "outer")   # the outermost skill is never popped
 
+    def test_main_session_skills_are_siblings(self):
+        # Claude Code records None after each skill the main session invokes ends; they run one after another
+        st = transcripts.SkillStack(main=True)
+        self.assertEqual(st.on_attribution("flow"), "flow")
+        self.assertEqual(st.on_attribution(None), "flow")
+        for step in ("grill", "research", "plan"):
+            st.push(step)
+            self.assertEqual(st.on_attribution(step), step)
+            self.assertEqual(st.on_attribution(None), "flow")   # back to the outermost, not an earlier sibling
+        st.push("grill")
+        st.push("plan")                                          # loaded before the first turn under grill
+        self.assertEqual(st.stack, ["flow", "plan"])
+        self.assertEqual(st.on_attribution("flow"), "flow")
+
     def test_idle_detection(self):
         parts = config.ANALYSIS["idle_parts"]
         self.assertTrue(transcripts.is_idle("sleep 60; echo tick", parts))

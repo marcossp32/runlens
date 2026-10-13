@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Data
+- Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
+
 ### Dashboard
 - Clearer structure, nothing removed. Each page opens with its answer in plain words (for example "review-pr got better. 1 can't be judged because something else changed at the same time"), then at most four key numbers (the rest on one quiet line), then charts grouped under section headings, then the detail tables.
 - Every chart card reads the same way: the question it answers, a one-line takeaway from the data, the chart, and a closed "How to read this" that holds the encodings, method notes and caveats that used to sit under every chart. Table, CSV, SVG and PNG moved into one "⋯" menu per card.
