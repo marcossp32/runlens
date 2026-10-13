@@ -84,7 +84,7 @@ h3{font-size:14px;margin:0}
 .ticon{display:inline-block;min-width:1em;text-align:center}
 .tone-better .ticon,.tone-better .kicon{color:var(--better)}
 .tone-worse .ticon,.tone-worse .kicon{color:var(--worse)}
-.tone-unclear .ticon,.tone-few .ticon,.tone-first .ticon{color:var(--neutral)}
+.tone-unclear .ticon,.tone-few .ticon,.tone-first .ticon,.tone-confounded .ticon{color:var(--neutral)}
 .tone{white-space:nowrap}
 .verdicts{display:inline-flex;gap:10px;flex-wrap:wrap;font-size:18px}
 

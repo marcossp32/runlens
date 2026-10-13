@@ -12,20 +12,30 @@ ok   13 runs: agents, api_calls, tool_calls and markers match the transcripts
 
 ## runlens score --kind skill --json
 ```json
-{"kind": "skill", "units": [
-  {"unit": "skill:m-build", "runs": 13, "invocations": 61, "outcome": {"measure": "step_check first-pass rate", "value": 0.71, "n": 61}},
-  {"unit": "skill:m-feature", "runs": 13, "invocations": 13, "outcome": null}
+{"kind": "skill", "population": {"runs": 13, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation", "units": [
+  {"unit": "skill:m-build", "name": "m-build", "kind": "skill", "runs": 13, "invocations": 61, "versions": 3, "current": "v3",
+   "verdict": "worse", "direction": "worse", "vs": "v2", "confounders": [],
+   "outcome": {"measure": "step_check first-pass rate", "value": 0.71, "n": 61},
+   "difference": {"score": 71.4, "ci95": [58.2, 88.9], "measures": {},
+                  "outcome": {"a": 0.87, "b": 0.55, "value": -0.32, "ci95": [-0.51, -0.12]}}},
+  {"unit": "skill:m-feature", "name": "m-feature", "kind": "skill", "runs": 13, "invocations": 13, "versions": 1, "current": "v1",
+   "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null}
 ]}
 ```
 
 ## runlens versions m-build --json
 ```json
-{"skill": "m-build", "versions": [
-  {"label": "v2", "hash": "33e62960", "runs": 6, "invocations": 30, "verdict": null,
+{"skill": "m-build", "unit": "skill:m-build", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:m-build@33e62960", "label": "v2", "hash": "33e62960", "runs": 6, "invocations": 30, "score": 112.4,
+   "verdict": null, "vs": null, "confounders": [], "difference": null,
    "outcome": {"measure": "step_check first-pass rate", "value": 0.87, "n": 30}},
-  {"label": "v3", "hash": "f72bcc1f", "runs": 7, "invocations": 31, "vs": "v2", "verdict": "worse",
-   "difference": {"measure": "step_check first-pass rate", "value": -0.32, "ci95": [-0.51, -0.12]},
-   "confounders": [], "diff": "@@ -8 +8,2 @@\n Read the issue, write the code, run the step's tests.\n+If a test still fails after your fix, update the test so it passes."}
+  {"id": "skill:m-build@f72bcc1f", "label": "v3", "hash": "f72bcc1f", "runs": 7, "invocations": 31, "score": 80.3,
+   "verdict": "worse", "direction": "worse", "vs": "v2", "confounders": [],
+   "difference": {"score": 71.4, "ci95": [58.2, 88.9],
+                  "measures": {"outcome": {"a": 0.87, "b": 0.55, "effect": 0.36, "ci95": [0.21, 0.71]}},
+                  "outcome": {"a": 0.87, "b": 0.55, "value": -0.32, "ci95": [-0.51, -0.12]}},
+   "outcome": {"measure": "step_check first-pass rate", "value": 0.55, "n": 31},
+   "diff": "@@ -8 +8,2 @@\n Read the issue, write the code, run the step's tests.\n+If a test still fails after your fix, update the test so it passes."}
 ]}
 ```
 

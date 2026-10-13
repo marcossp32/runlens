@@ -14,5 +14,8 @@ ok   12 other runs match the transcripts
 
 ## runlens score --kind skill --json
 ```json
-{"kind": "skill", "units": [{"unit": "skill:m-build", "runs": 13, "invocations": 61}]}
+{"kind": "skill", "population": {"runs": 13, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation",
+ "units": [{"unit": "skill:m-build", "name": "m-build", "kind": "skill", "runs": 13, "invocations": 61, "versions": 2, "current": "v2",
+            "verdict": "no clear change", "direction": "no clear change", "vs": "v1", "confounders": [], "outcome": null,
+            "difference": {"score": 104.0, "ci95": [88.1, 121.9], "measures": {}}}]}
 ```

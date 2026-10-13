@@ -34,7 +34,7 @@ Run `runlens refresh` (add `--since` / `--skill` from the arguments), then `runl
 
 ## 2. Pick where to look
 
-Run `runlens score --kind skill --json`, then `runlens versions <skill> --json` for each skill in scope. Read the verdict of each version against the previous one, and the outcome measure (for example a marker's first-pass rate) with its run count.
+Run `runlens score --kind skill --json`, then `runlens versions <skill> --json` for each skill in scope. For each version read `verdict` against the version named in `vs`, its `runs` and `invocations`, `difference` (score with the earlier version = 100, its `ci95`, and the outcome change if one is configured), `confounders`, and `outcome` (for example a marker's first-pass rate) with its `n`.
 
 Pick, in this order: versions whose verdict is `worse`; then skills whose outcome measure is falling or low within their own history; then the skills with the most incidents. Branches:
 - **`not enough runs`**: report the run counts and say the comparison is not meaningful yet. You may still read incidents in step 3, but make no claim that the version is better or worse.
@@ -64,11 +64,11 @@ Find the skill's files: `runlens sql "SELECT DISTINCT skill_dir FROM skill_loads
 
 Propose the smallest edit that removes the cause, in the skill's own style, and say why it should work. A rule that restates what the skill already says is not an edit.
 
-Record each proposal with `runlens proposals add` (`--help` lists the fields): the skill, the version hash it edits, the hypothesis, the measure that should move and in which direction, and the evidence incident ids. To check it on controlled re-runs instead of waiting for new runs, `runlens export-eval --incident <id> ...` writes eval cases for `claude plugin eval` and skill-creator; give the human the command from its README.
+Record each proposal with `runlens proposals add` (`--help` lists the fields): the skill, the version hash it edits, the hypothesis, the measure that should move (`score`, `outcome`, `cost`, `error_rate`, `incidents`, ...) and in which direction, and the evidence incident ids. To check it on controlled re-runs instead of waiting for new runs, `runlens export-eval --incident <id> ...` writes eval cases for `claude plugin eval` and skill-creator; give the human the command from its README.
 
 ## 7. Verify earlier proposals
 
-`runlens verify --json` checks recorded proposals against the runs since. Report each as confirmed, refuted or not enough runs, using its verdict as given. An edit "helped" only on a `verify` or eval result, never on impressions.
+`runlens verify --json` checks recorded proposals against the runs since. Report each as confirmed, refuted, not enough runs or confounded (with its `confounders`), using its verdict as given. An edit "helped" only on a `verify` or eval result, never on impressions.
 
 ## 8. Validate, then deliver
 
@@ -87,6 +87,6 @@ Mode <n>   · <name> · <incidents> incidents in <runs> runs · <skill and versi
   Cause    · <skill>/<file>:<line> "<quote>" | missing: <instruction> | agent judgment | environment
   Edit     · <proposed diff>
   Measure  · <measure and direction> · proposal <id> · eval: <export-eval folder, if made>
-Verified   · <proposal id>: confirmed | refuted | not enough runs
+Verified   · <proposal id>: confirmed | refuted | not enough runs | confounded by <...>
 Labels     · <paired labels, kappa, verified and unverified categories>
 ```

@@ -13,14 +13,15 @@ const DAY = 864e5;
 
 // Each measure in words a reader knows: a label, a one-line help, and a short name for tight spaces.
 const PLAIN = {
-  cost: ["Cost per run", "Model spend for this unit, averaged over its runs.", "Cost"],
-  seconds: ["Time per run", "Working time attributed to it.", "Time"],
-  error_rate: ["Tool errors", "Share of its tool calls that failed.", "Tool errors"],
-  incidents: ["Problems per run", "Error streaks, repeated calls, interrupts and similar.", "Problems"],
-  interventions: ["Your messages per run", "Messages you sent while it was the active skill.", "Your messages"],
+  outcome: ["Outcome", "The result your config counts as success, such as a check that passes first time or a PR opened.", "Outcome"],
+  cost: ["Cost per invocation", "Model spend each time it was used (a typical value: the geometric mean).", "Cost"],
+  seconds: ["Time per invocation", "Working time each time it was used (a typical value).", "Time"],
+  error_rate: ["Tool errors", "Share of its tool calls that failed. Calls your permission rules denied do not count.", "Tool errors"],
+  incidents: ["Problems per 100 tool calls", "Repeated calls, interrupts, failed subagents and similar.", "Problems"],
+  interventions: ["Your messages per invocation", "Messages you sent while it was the active skill.", "Your messages"],
   idle_rate: ["Waiting calls", "Share of its tool calls that only wait or print.", "Waiting"],
-  api_error_rate: ["API errors", "Share of its model turns that hit an API error.", "API errors"],
-  bad_markers: ["Failed checks per run", "Checks that your config marks as failed.", "Failed checks"],
+  api_error_rate: ["API errors", "Share of its model turns that hit an API error (limits are not errors).", "API errors"],
+  bad_markers: ["Failed checks per invocation", "Checks that your config marks as failed.", "Failed checks"],
 };
 const metricLabel = (m) => (PLAIN[m.key] ? PLAIN[m.key][0] : m.label);
 const metricHelp = (m) => (PLAIN[m.key] ? PLAIN[m.key][1] : m.what);

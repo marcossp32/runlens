@@ -332,10 +332,10 @@ function rangeChart(spec) {
       const lo = Math.min(...xs), hi = Math.max(...xs), pad = Math.max(4, (hi - lo) * 0.06);
       const tk = ticks(lo - pad, hi + pad, Math.max(3, Math.floor((x1 - x0) / 70)));
       const x = scaleLinear(Math.min(lo - pad, tk[0]), Math.max(hi + pad, tk[tk.length - 1]), x0, x1);
-      const root = svgRoot(w, H, `${spec.title}: ${scored.length} rows; ${spec.ref} is an average run`);
+      const root = svgRoot(w, H, `${spec.title}: ${scored.length} rows; ${spec.ref} is ${spec.refLabel || "the reference"}`);
       const yEnd = top + (ranged.length + bare.length) * R + gap;
       axisX(root, { scale: x, ticks: tk, fmt: fmt.score, x0, x1, y: yEnd, grid: true, gridTop: top - 6, ref: spec.ref, title: spec.axisTitle });
-      root.append(svg("text", { class: "reflabel", x: x(spec.ref), y: top - 12, "text-anchor": "middle" }, "average"));
+      root.append(svg("text", { class: "reflabel", x: x(spec.ref), y: top - 12, "text-anchor": "middle" }, spec.refLabel || "reference"));
       const row = (r, i, yOff) => {
         const y = yOff + i * R + R / 2;
         const t = TONE[r.tone] || TONE.unclear;

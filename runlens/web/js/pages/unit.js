@@ -3,36 +3,36 @@
    The header names the period of every number: "All versions" and "Current version vN" are separate rows,
    so an all-time score is never shown beside a latest-version profile without saying so. */
 
-// A score on a fixed log strip from 50 to 200: the dot, its likely range and the average at 100.
-function scoreBullet(score, ci) {
+// A score on a fixed log strip from 50 to 200: the dot, its range and the typical run at 100.
+function scoreBullet(score, ci, judged) {
   const W = 150, H = 20, lo = 50, hi = 200;
   const x = (v) => 4 + ((Math.log(Math.min(hi, Math.max(lo, v))) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (W - 8);
-  const t = TONE[verdict(score, ci).tone];
+  const t = TONE[verdict(score, ci, judged).tone] || TONE.unclear;
   return svg("svg", { class: "bullet", width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img",
-    "aria-label": score == null ? "No score" : `Score ${fmt.score(score)}${ci ? `, likely ${fmt.interval(ci)}` : ""}, on a scale from 50 to 200 where 100 is average` },
+    "aria-label": score == null ? "No score" : `Score ${fmt.score(score)}${ci ? `, likely ${fmt.interval(ci)}` : ""}, on a scale from 50 to 200 where 100 is its typical run` },
   svg("line", { class: "track", x1: 4, x2: W - 4, y1: H / 2, y2: H / 2 }),
   svg("line", { class: "ref", x1: x(100), x2: x(100), y1: 2, y2: H - 2 }),
   ci ? svg("line", { class: "range", x1: x(ci[0]), x2: x(ci[1]), y1: H / 2, y2: H / 2, style: `stroke:${t.css}` }) : null,
   score != null ? svg("circle", { class: ci ? "dot" : "dot hollow", cx: x(score), cy: H / 2, r: 5, style: ci ? `fill:${t.css}` : `stroke:${t.css}` }) : null);
 }
 
-function periodRow(title, sub, score, ci, k, tag) {
-  const v = verdict(score, ci);
+function periodRow(title, sub, score, ci, k, tag, judged) {
+  const v = verdict(score, ci, judged);
   return h("section", { class: "period", "aria-label": title },
     h("h2", { class: "period-title" }, title, h("span", { class: "muted" }, ` · ${sub}`)),
     h("div", { class: "kpis" },
-      kpi("Score", fmt.score(score), tag || h("span", {}, ci ? `likely ${fmt.interval(ci)} · ` : "", toneTag(v.tone, v.word)), { extra: scoreBullet(score, ci) }),
-      kpi("Cost per run", fmt.usd(k.cost), "model spend"),
-      kpi("Time per run", fmt.secs(k.seconds), "working time"),
+      kpi("Score", fmt.score(score), tag || h("span", {}, ci ? `likely ${fmt.interval(ci)} · ` : "", toneTag(v.tone, v.word)), { extra: scoreBullet(score, ci, judged) }),
+      kpi("Cost per invocation", fmt.usd(k.cost), "typical model spend"),
+      kpi("Time per invocation", fmt.secs(k.seconds), "typical working time"),
       kpi("Tool errors", fmt.pct(k.error_rate), "of its tool calls"),
-      kpi("Problems per run", fmt.num(k.incidents, 2), "error streaks, repeats, interrupts")));
+      kpi("Problems", fmt.num(k.incidents, 2), "per 100 tool calls")));
 }
 
 function unitPage(id) {
   const u = UNITS.get(id);
   const versions = DATA.versions[id] || [];
   const runs = DATA.runs[id] || [];
-  const v = verdict(u.score, u.ci);
+  const v = verdict(u.score, u.ci, u);
   const few = u.low_sample ? ` Only ${fmt.runs(u.runs)} so far, so it can still move.` : "";
   const members = u.kind === "group" ? ` Members: ${u.members.join(", ")}.` : "";
   const cur = versions.find((x) => x.label === u.current) || null;
@@ -46,10 +46,12 @@ function unitPage(id) {
       h("a", { class: "back", href: hrefPage("skills") }, "← All skills"),
       h("h1", { tabindex: "-1" }, key, u.name, " ", chip(KIND[u.kind], "kind")),
       h("p", { class: `summary tone-${v.tone}` }, h("span", { class: "ticon", "aria-hidden": "true" }, TONE[v.tone].icon), " ",
-        versions.length > 1 ? "All versions together. " : "", v.sentence + few + members)),
-    periodRow(versions.length > 1 ? "All versions" : u.kind === "agent" ? "All runs" : "Its only version", `${fmt.runs(u.runs)} · ${fmt.span(u.first_seen, u.last_seen)}`, u.score, u.ci, u.kpi),
+        versions.length > 1 ? `Current version ${u.current}. ` : "", v.sentence + few + members)),
+    periodRow(versions.length > 1 ? "All versions" : u.kind === "agent" ? "All runs" : "Its only version", `${fmt.runs(u.runs)} · ${fmt.span(u.first_seen, u.last_seen)}`,
+      u.kind === "agent" ? null : 100, null, u.kpi, h("span", { class: "muted" }, u.kind === "agent" ? "described, not scored" : "the reference: 100 is this unit's typical run"),
+      u.kind === "agent" ? u : {}),
     showCurrent ? periodRow(`Current version ${cur.label}`, `${fmt.runs(cur.runs)} · ${fmt.span(cur.first_seen, cur.last_seen)}`, cur.score, cur.ci, kpiOf(curRuns, u.kind),
-      h("span", {}, cur.ci ? `likely ${fmt.interval(cur.ci)} · ` : "", c.text ? toneTag(c.tone, `${c.text} than ${versions[versions.indexOf(cur) - 1].label}`) : toneTag(verdict(cur.score, cur.ci).tone, verdict(cur.score, cur.ci).word))) : null,
+      h("span", {}, cur.ci ? `range ${fmt.interval(cur.ci)} · ` : "", toneTag(c.tone || verdict(cur.score, cur.ci, cur).tone, verdict(cur.score, cur.ci, cur).word)), cur) : null,
     tabs("Details", [
       { id: "versions", label: "Versions", build: () => versionsPanel(u, versions) },
       { id: "drivers", label: "What drives the score", build: () => driversPanel(u, versions) },
@@ -66,11 +68,11 @@ function versionsPanel(u, versions) {
   const list = h("ol", { class: "vlist" }, [...versions].reverse().map((v) => versionRow(u, versions, v)));
   return h("div", { class: "grid wide-first" },
     versionTimeline({
-      title: "Each version over time", sub: "segment = dates in use · band = 90% likely range · 100 = average run",
+      title: "Each version over time", sub: "segment = dates in use · band = its range · 100 = this unit's typical run",
       facets: [{ label: u.name, versions: versions.filter((v) => v.recorded).map((v) => ({ label: v.label, t0: timeOf(v.first_seen), t1: timeOf(v.last_seen || v.first_seen),
         score: v.score, ci: v.ci, runs: v.runs, tone: change(v).tone, text: change(v).text })) }],
       ref: 100,
-      notes: "The first version is marked as such, not as “no change”. A version is only called better or worse than the one before when their likely ranges do not overlap.",
+      notes: `The first version is marked as such, not as “no change”. A version is called better or worse than the one before only from the difference between their runs, with at least ${MIN_RUNS} runs on each side and nothing else changed at the same time.`,
     }),
     h("div", {}, h("h2", { class: "listtitle" }, "Versions, newest first"), list));
 }
@@ -86,7 +88,8 @@ function versionRow(u, versions, v) {
     h("div", { class: "vscore" },
       h("strong", {}, fmt.score(v.score)), " ",
       h("span", { class: "ci" }, v.ci ? fmt.interval(v.ci) : "no range"), " ",
-      prev ? (c.text ? toneTag(c.tone, c.text) : null) : toneTag("first", "first version")),
+      prev ? (c.text ? toneTag(c.tone, `${c.text}${v.vs ? ` against ${v.vs}` : ""}`) : null) : toneTag("first", "first version")),
+    v.confounders && v.confounders.length ? h("div", { class: "vmeta" }, `Confounders: ${v.confounders.join("; ")}`) : null,
     prev ? changesDetails(v, prev) : null);
 }
 
@@ -131,13 +134,13 @@ function driversPanel(u, versions) {
         title: `What moves the score of ${nameOf(v)}`, sub: `${fmt.runs(v.runs)} · score ${fmt.score(v.score)} · each bar is weight × ln(ratio) ÷ total weight`,
         n: v.runs, minN: MIN_RUNS,
         rows: parts.map((p) => ({ label: metricLabel(p.m), value: p.share, ratio: p.d.ratio, prev: prevShare.get(p.m.key), text: fmt.signedPct(effect(p.share), 1),
-          tip: [["Effect on the score", fmt.signedPct(effect(p.share), 1)], ["This version", fmt.metric(p.m, p.d.value)], ["Average run", fmt.metric(p.m, p.d.ref)],
-            ["Ratio to average", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`], ["Runs", fmt.int(p.d.n)],
+          tip: [["Effect on the score", fmt.signedPct(effect(p.share), 1)], ["This version", fmt.metric(p.m, p.d.value)], ["Typical run", fmt.metric(p.m, p.d.ref)],
+            ["Ratio to typical", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`], ["Runs", fmt.int(p.d.n)],
             ...(prevShare.has(p.m.key) ? [[`Effect in ${prev.label}`, fmt.signedPct(effect(prevShare.get(p.m.key)), 1)]] : [])] })),
         tickFmt: (t) => fmt.signedPct(effect(t), 0), axisTitle: "Effect on the score",
         legendItems: [{ label: `${TONE.better.icon} raises the score`, css: TONE.better.css, kind: "rect" }, { label: `${TONE.worse.icon} lowers it`, css: TONE.worse.css, kind: "rect" },
           ...(prev ? [{ label: `${prev.label}, the version before`, css: "var(--text)", kind: "line" }] : [])],
-        extraCols: [{ label: "Ratio to average", num: true, value: (r) => r.ratio }],
+        extraCols: [{ label: "Ratio to typical", num: true, value: (r) => r.ratio }],
         notes: `The effects multiply: together they take the score from 100 to ${fmt.score(v.score)}.`,
       }),
       breakdownTable(v),
@@ -149,7 +152,7 @@ function driversPanel(u, versions) {
   });
   draw();
   return h("div", {}, h("label", { class: "inline" }, "Version ", select), holder,
-    note("Weights: cost counts three times; time, tool errors, problems and your messages count twice; the rest once."));
+    note(`Weights for this unit: ${Object.entries(u.weights || {}).map(([k, w]) => `${metricLabel(metricByKey.get(k) || { key: k, label: k })} ×${w}`).join(", ") || "the defaults"}. Change them under [weights] in config.toml.`));
 }
 
 function breakdownTable(v) {
@@ -157,7 +160,7 @@ function breakdownTable(v) {
   const cols = [
     { label: "Measure", value: (r) => metricLabel(r.m), cell: (r) => h("span", {}, metricLabel(r.m), h("span", { class: "sub block" }, metricHelp(r.m))) },
     { label: "This version", num: true, value: (r) => r.d.value, cell: (r) => fmt.metric(r.m, r.d.value) },
-    { label: "Average run", num: true, value: (r) => r.d.ref, cell: (r) => fmt.metric(r.m, r.d.ref) },
+    { label: "Typical run", num: true, value: (r) => r.d.ref, cell: (r) => fmt.metric(r.m, r.d.ref) },
     { label: "Ratio", num: true, value: (r) => r.d.ratio, cell: (r) => fmt.ratio(r.d.ratio) },
     { label: "Weight", num: true, value: (r) => r.d.weight },
     { label: "Effect on the score", num: true, value: (r) => r.share, cell: (r) => toneTag(r.share > 0.001 ? "better" : r.share < -0.001 ? "worse" : "unclear", fmt.signedPct(effect(r.share), 1)) },

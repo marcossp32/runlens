@@ -48,13 +48,13 @@ function versionOptions(id, selected) {
 }
 
 function sideCard(label, v, name) {
-  const t = verdict(v.score, v.ci);
+  const t = verdict(v.score, v.ci, v);
   return h("article", { class: "sidecard" },
     h("p", { class: "kicker" }, label),
     h("h2", {}, `${name} · ${nameOf(v)}`),
     h("div", { class: "big" }, fmt.score(v.score)),
-    scoreBullet(v.score, v.ci),
-    h("p", { class: "ci" }, v.ci ? `likely range ${fmt.interval(v.ci)} · ` : "no range yet · ", toneTag(t.tone, t.word)),
+    scoreBullet(v.score, v.ci, v),
+    h("p", { class: "ci" }, v.ci ? `range ${fmt.interval(v.ci)} · ` : "no range yet · ", toneTag(t.tone, t.word)),
     h("p", { class: "sub" }, `${fmt.runs(v.runs)} · ${fmt.span(v.first_seen, v.last_seen)} · ${v.parts.map((p) => p.hash).join(" + ") || "no skill text"}`),
     v.low_sample ? chip(`fewer than ${MIN_RUNS} runs`, "warn") : null);
 }
@@ -65,51 +65,56 @@ function comparison(sa, sb) {
   if (sa.id === sb.id && sa.key === sb.key) return empty("Pick two different versions to compare.");
   const nameA = UNITS.get(sa.id).name, nameB = UNITS.get(sb.id).name;
   const tagA = `A · ${nameA} ${nameOf(A)}`, tagB = `B · ${nameB} ${nameOf(B)}`;
-  const ov = overlaps(A.ci, B.ci);
-  let tone, text;
-  if (A.score == null || B.score == null) [tone, text] = ["few", "At least one side has no score yet."];
-  else if (ov === null) [tone, text] = ["few", `One side has too few runs for a likely range (${fmt.runs(Math.min(A.runs, B.runs))}), so no difference is called.`];
-  else if (ov) [tone, text] = ["unclear", `No clear difference: their likely ranges overlap (${fmt.score(A.score)}, ${fmt.interval(A.ci)} against ${fmt.score(B.score)}, ${fmt.interval(B.ci)}).`];
-  else [tone, text] = [B.score > A.score ? "better" : "worse", `B is clearly ${B.score > A.score ? "higher" : "lower"}: the likely ranges do not overlap (${fmt.score(A.score)} against ${fmt.score(B.score)}).`];
   const crossSkill = sa.id !== sb.id;
+  const pair = crossSkill ? null : pairOf(sa.id, A.label, B.label);
+  let tone, text;
+  if (crossSkill) [tone, text] = ["unclear", "These are different units. Different skills do different work, so runlens shows their figures side by side but does not call one better than the other."];
+  else if (!pair) [tone, text] = ["few", "These two versions were not compared (only consecutive versions are, when a unit has many)."];
+  else {
+    const j = verdict(null, null, { ...pair, vs: `${nameOf(A)} (A)` });
+    const d = pair.difference;
+    tone = j.tone;
+    text = `B against A: ${pair.verdict}${d && d.score != null ? ` · ${fmt.score(d.score)} with A = 100${d.ci ? `, ${Math.round((DATA.method.confidence || 0.95) * 100)}% interval ${fmt.interval(d.ci)}` : ""}` : ""}. ${j.sentence}`;
+  }
 
   const ms = METRICS.filter((m) => A.metrics[m.key] && B.metrics[m.key]);
   const rows = ms.map((m) => {
     const a = A.metrics[m.key], b = B.metrics[m.key];
-    const f = DATA.method.floor * a.ref;
-    const lr = Math.log((a.value + f) / (b.value + f)); // above 0: B is lower, which is better for every measure
+    const pm = pair && pair.difference && pair.difference.measures ? pair.difference.measures[m.key] : null;
+    const lr = pm ? Math.log(pm.effect) : 0; // above 0: B is better on this measure
     const d = a.value ? b.value / a.value - 1 : null;
+    const clear = pm && pm.ci && (pm.ci[0] > 1 || pm.ci[1] < 1);
     return { m, a: a.value, b: b.value, na: a.n, nb: b.n, value: lr, d,
       label: metricLabel(m), text: d == null ? (b.value ? "up from 0" : "both 0") : `${fmt.signedPct(d, Math.abs(d) < 0.1 ? 1 : 0)}`,
-      tone: Math.abs(lr) < 0.02 ? "unclear" : lr > 0 ? "better" : "worse" };
+      tone: !pm ? "unclear" : clear ? (lr > 0 ? "better" : "worse") : "unclear" };
   });
   return h("div", {},
     h("div", { class: "sides" }, sideCard("A", A, nameA), sideCard("B", B, nameB)),
     h("p", { class: `verdict tone-${tone}` }, h("span", { class: "ticon", "aria-hidden": "true" }, TONE[tone].icon), " ", text,
-      crossSkill ? " These are different units: their scores are each measured against the average run, so the comparison says which did better against that average, not which is the better tool for one job." : ""),
-    h("div", { class: "grid" },
+      pair && pair.verdict !== "confounded" && pair.confounders && pair.confounders.length ? ` Confounders: ${pair.confounders.join("; ")}.` : ""),
+    crossSkill ? null : h("div", { class: "grid" },
       divergingBars({
-        title: "B against A, measure by measure", sub: `${tagB} compared with ${tagA} · every measure is a cost, a time or a failure count, so lower is better`,
+        title: "B against A, measure by measure", sub: `${tagB} compared with ${tagA} · right of the line, B is better on that measure`,
         n: Math.min(A.runs, B.runs), minN: MIN_RUNS, rows,
         ticks: (() => {
           const lim = Math.max(...rows.map((r) => Math.abs(r.value)), 0.05) * 1.1;
           return [4, 3, 2, 1.5, 1.2, 1, 1 / 1.2, 1 / 1.5, 1 / 2, 1 / 3, 1 / 4].map((q) => -Math.log(q)).filter((v) => Math.abs(v) <= lim)
             .filter((v, i, all) => all.length <= 7 || [0, Math.log(2), -Math.log(2), Math.log(4), -Math.log(4), Math.log(1.5), -Math.log(1.5)].some((k) => Math.abs(k - v) < 1e-9));
         })(),
-        tickFmt: (t) => fmt.signedPct(Math.exp(-t) - 1, 0), axisTitle: "B compared with A (change in the measure)",
-        leftLabel: "◀ B is higher (worse)", rightLabel: "B is lower (better) ▶",
+        tickFmt: (t) => `×${fmt.num(Math.exp(t), 2)}`, axisTitle: "B against A: how many times better (right) or worse (left)",
+        leftLabel: "◀ B is worse", rightLabel: "B is better ▶",
         extraCols: [{ label: "A", num: true, value: (r) => r.a }, { label: "B", num: true, value: (r) => r.b }],
-        notes: "Each bar is the change from A to B on a log scale, so halving and doubling are the same length. A change under 2% counts as about the same.",
+        notes: "Each bar is B's effect on a log scale, so halving and doubling are the same length, capped at ×" + DATA.method.max_ratio + " as in the score. A bar is coloured only when that measure's own interval is clear of no change.",
       })),
     sortTable({
       caption: "Measures compared",
       cols: [{ label: "Measure", value: (r) => r.label }, { label: "A", num: true, value: (r) => r.a, cell: (r) => fmt.metric(r.m, r.a) },
         { label: "B", num: true, value: (r) => r.b, cell: (r) => fmt.metric(r.m, r.b) },
-        { label: "B against A", value: (r) => r.d, cell: (r) => toneTag(r.tone, `${r.text}${r.tone === "unclear" ? " · about the same" : r.tone === "better" ? " · lower" : " · higher"}`) },
+        { label: "B against A", value: (r) => r.d, cell: (r) => (crossSkill ? r.text : toneTag(r.tone, `${r.text}${r.tone === "unclear" ? " · no clear change" : r.tone === "better" ? " · better" : " · worse"}`)) },
         { label: "Runs in A", num: true, value: (r) => r.na }, { label: "Runs in B", num: true, value: (r) => r.nb }],
       rows, csvName: `compare-${nameA}-${nameOf(A)}-${nameB}-${nameOf(B)}`,
     }).el,
-    note("The verdict checks whether the two likely ranges overlap. That is a cautious check: it can miss a real difference, but it rarely invents one."));
+    note(`The verdict comes from the difference between the two versions' runs, resampled ${fmt.int(DATA.method.resamples)} times by session; it needs ${MIN_RUNS} runs on each side. A measure is marked better or worse only when its own interval is clear of no change.`));
 }
 
 function comparePage() {
@@ -148,7 +153,7 @@ function comparePage() {
   return h("article", { class: "page" },
     h("header", { class: "pagehead" },
       h("h1", { tabindex: "-1" }, "Compare two versions"),
-      h("p", { class: "lede" }, "Pick any two skills, roles or groups, and any of their versions. By default this is the latest pair of versions with enough runs on both sides.")),
+      h("p", { class: "lede" }, "Pick two versions of one skill or group to see the verdict and each measure. Two different units are shown side by side, without a verdict. By default this is the latest pair of versions with enough runs on both sides.")),
     h("div", { class: "pick" }, build("a"), build("b"), h("div", { class: "pickbar" }, swap)),
     results);
 }

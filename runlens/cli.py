@@ -9,6 +9,10 @@
   summary    one table per run and per skill in the terminal
   report     write the HTML diagnosis report
   dashboard  write the HTML benchmark dashboard: scores, versions, diffs and comparisons
+  score      each skill's (or role's, or group's) current version against its previous one
+  versions   every version of one skill: runs, invocations, outcome, verdict, confounders, diff
+  proposals  record a proposed skill edit (add) or list them (list)
+  verify     check recorded proposals against the runs since: confirmed, refuted, not enough runs, confounded
   show       print the timeline around an incident or tool call
   incidents  list incidents
   classify   label incidents with a failure taxonomy, using `claude -p`
@@ -24,6 +28,9 @@ import argparse
 import sys
 
 from . import config
+
+
+HIDDEN = {"drain"}
 
 
 def main(argv=None):
@@ -55,13 +62,34 @@ def main(argv=None):
     p.add_argument("--yes", action="store_true", help="convert and delete the old folders; without it, a dry run")
     p.add_argument("--keep-excluded", action="store_true",
                    help="also keep files the default exclude list drops (browser profiles, databases, node_modules)")
-    sub.add_parser("drain", help=argparse.SUPPRESS)
+    sub.add_parser("drain")  # the hook's detached worker: kept out of --help by the metavar set below
     sub.add_parser("summary")
     p = sub.add_parser("report")
     p.add_argument("--out", help=f"output file (default {config.HOME / 'report.html'})")
     p.add_argument("--session", action="append", help="limit the report to these runs")
     p = sub.add_parser("dashboard")
     p.add_argument("--out", help=f"output file (default {config.HOME / 'dashboard.html'})")
+    p = sub.add_parser("score")
+    p.add_argument("--kind", choices=["skill", "agent", "group"], default="skill")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("versions")
+    p.add_argument("skill", help="skill name, or a unit id such as group:my-flow")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("proposals")
+    psub = p.add_subparsers(dest="action", required=True, metavar="action")
+    pa = psub.add_parser("add", help="record a proposal; prints its id")
+    pa.add_argument("--skill", required=True)
+    pa.add_argument("--hypothesis", required=True, help="what the edit should change, and why")
+    pa.add_argument("--measure", required=True,
+                    help="score, outcome, cost, seconds, error_rate, incidents, interventions, idle_rate, api_error_rate or bad_markers")
+    pa.add_argument("--direction", required=True, choices=["lower", "higher"])
+    pa.add_argument("--evidence", nargs="*", default=[], help="incident ids behind it")
+    pa.add_argument("--base-version", help="hash of the skill text being edited (default: its current version)")
+    pl = psub.add_parser("list", help="list recorded proposals")
+    pl.add_argument("--json", action="store_true")
+    p = sub.add_parser("verify")
+    p.add_argument("id", nargs="?", help="proposal id (default: every proposal)")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("show")
     p.add_argument("id", help="incident id or tool_use id")
     p.add_argument("--steps", type=int, default=12)
@@ -109,6 +137,8 @@ def main(argv=None):
     p.add_argument("query")
     output_flags(p)
 
+    # argparse prints help=SUPPRESS subcommands as "==SUPPRESS==", so hidden ones are left out of the metavar instead.
+    sub.metavar = "{" + ",".join(c for c in sub.choices if c not in HIDDEN) + "}"
     a = ap.parse_args(argv)
     cfg = config.load(a.config)
     flt = lambda: {"since": a.since, "skills": a.skill, "projects": a.project, "sessions": a.session}
@@ -155,6 +185,8 @@ def main(argv=None):
     elif a.command == "dashboard":
         from .dashboard import write_dashboard
         print(write_dashboard(cfg, a.out))
+    elif a.command in ("score", "versions", "proposals", "verify"):
+        return method_command(a, cfg)
     elif a.command == "show":
         from .show import show
         return show(a.id, a.steps, a.after)
@@ -206,6 +238,84 @@ def main(argv=None):
         finally:
             con.close()
     return 0
+
+
+def method_command(a, cfg):
+    """score, versions, proposals and verify: the method's verdicts as text, or as the JSON the retro skill reads."""
+    import json
+    from . import bench, proposals
+    from .store import connect
+    listing = a.command == "proposals" and a.action == "list"
+    con = connect(read_only=a.command in ("score", "versions") or listing)
+    dump = lambda obj: print(json.dumps(obj, ensure_ascii=False, indent=2, default=str))
+    try:
+        if listing:
+            rows = proposals.listing(con)
+            if a.json:
+                dump({"proposals": rows})
+            else:
+                cols = ["id", "skill", "base_version", "measure", "direction", "verdict", "hypothesis"]
+                print(_table(cols, [[r[c] for c in cols] for r in rows]))
+            return 0
+        model = bench.compute(bench.load(con), cfg=cfg)
+        if a.command == "score":
+            out = bench.score_summary(model, a.kind)
+            dump(out) if a.json else print(_score_text(out))
+        elif a.command == "versions":
+            out = bench.versions_summary(model, proposals.unit_id(a.skill))
+            if out is None:
+                raise ValueError(f"no finished, non-stub runs of {a.skill!r}; `runlens score` lists the units")
+            dump(out) if a.json else print(_versions_text(out))
+        elif a.command == "proposals":
+            p = proposals.add(con, model, a.skill, a.hypothesis, a.measure, a.direction, a.evidence, a.base_version)
+            print(f"{p['id']} recorded: {p['skill']} {p['base_version']}")
+        else:
+            results = proposals.verify(con, model, a.id)
+            if a.json:
+                dump({"proposals": results})
+            else:
+                cols = ["id", "skill", "measure", "direction", "verdict", "observed", "runs_before", "runs_after"]
+                print(_table(cols, [[r.get(c) for c in cols] for r in results]))
+                for r in results:
+                    if r["confounders"]:
+                        print(f"{r['id']} confounded by: {'; '.join(r['confounders'])}")
+    finally:
+        con.close()
+    return 0
+
+
+def _num(x, d=1):
+    return "-" if x is None else f"{x:.{d}f}"
+
+
+def _diff_text(d):
+    if not d:
+        return "-"
+    return f"{_num(d['score'])} [{_num(d['ci95'][0])}, {_num(d['ci95'][1])}]" if d["ci95"] else _num(d["score"])
+
+
+def _outcome_text(o):
+    return f"{o['value']:.0%} of {o['n']}" if o and o["value"] is not None else "-"
+
+
+def _score_text(out):
+    pop = out["population"]
+    head = (f"{pop['runs']} finished runs ({pop['open']} open and {pop['stub']} stub runs left out). Each unit's current "
+            "version against its previous one (difference: 100 = no change); units are not ranked against each other.")
+    cols = ["unit", "runs", "invocations", "current", "verdict", "vs", "difference", "outcome", "cost/inv"]
+    rows = [[u["unit"], u["runs"], u["invocations"], u["current"] or "-", u["verdict"] or "-", u["vs"] or "-",
+             _diff_text(u["difference"]), _outcome_text(u["outcome"]), _num(u["typical"].get("cost"), 2)] for u in out["units"]]
+    notes = [f"{u['unit']}: confounded by {'; '.join(u['confounders'])}" for u in out["units"] if u["verdict"] == "confounded"]
+    return "\n".join([head, _table(cols, rows)] + notes)
+
+
+def _versions_text(out):
+    cols = ["version", "hash", "runs", "invocations", "score", "verdict", "vs", "difference", "outcome", "cost/success"]
+    rows = [[v["label"], v["hash"], v["runs"], v["invocations"], _num(v["score"]), v["verdict"] or "first", v["vs"] or "-",
+             _diff_text(v["difference"]), _outcome_text(v["outcome"]), _num(v["cost_per_success_usd"], 2)] for v in out["versions"]]
+    notes = [f"{v['label']}: confounded by {'; '.join(v['confounders'])}" for v in out["versions"] if v["confounders"]]
+    return "\n".join([f"{out['skill']}: score 100 = its own typical run; difference = the version against the one before "
+                      "(100 = no change)", _table(cols, rows)] + notes)
 
 
 def output_flags(p):

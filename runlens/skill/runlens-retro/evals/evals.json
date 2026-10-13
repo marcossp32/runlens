@@ -1,6 +1,6 @@
 {
   "skill_name": "runlens-retro",
-  "_note": "skill-creator format (https://agentskills.io/skill-creation/evaluating-skills). Each scenario replays canned runlens output from evals/files/<scenario>/commands.md, so the branches of the retro can be tested without a database. The JSON shapes of score/versions/proposals/verify follow the CLI contract and must be kept in step with it.",
+  "_note": "skill-creator format (https://agentskills.io/skill-creation/evaluating-skills). Each scenario replays canned runlens output from evals/files/<scenario>/commands.md, so the branches of the retro can be tested without a database. The JSON shapes of score/versions/proposals/verify follow the CLI contract (runlens score|versions|verify --json) and must be kept in step with it; fields a scenario does not need are left out.",
   "evals": [
     {
       "id": 1,

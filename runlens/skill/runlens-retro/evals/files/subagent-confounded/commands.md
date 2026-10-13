@@ -12,7 +12,12 @@ ok   13 runs match the transcripts
 
 ## runlens score --kind skill --json
 ```json
-{"kind": "skill", "units": [{"unit": "skill:m-feature", "runs": 13, "invocations": 13}, {"unit": "skill:m-build", "runs": 13, "invocations": 61}]}
+{"kind": "skill", "population": {"runs": 13, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation", "units": [
+  {"unit": "skill:m-feature", "name": "m-feature", "kind": "skill", "runs": 13, "invocations": 13, "versions": 1, "current": "v1",
+   "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null},
+  {"unit": "skill:m-build", "name": "m-build", "kind": "skill", "runs": 13, "invocations": 61, "versions": 1, "current": "v1",
+   "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null}
+]}
 ```
 
 ## runlens sql "SELECT agent_id = 'main' AS in_main, count(*) FROM skill_loads WHERE skill = 'm-scan' GROUP BY 1"
@@ -23,10 +28,13 @@ false    56
 
 ## runlens versions m-scan --json
 ```json
-{"skill": "m-scan", "unit": "invocation", "versions": [
-  {"label": "v1", "hash": "9e8d7c6b", "runs": 7, "invocations": 30, "verdict": null},
-  {"label": "v2", "hash": "5a4b3c2d", "runs": 6, "invocations": 26, "vs": "v1", "verdict": "confounded",
-   "confounders": ["Claude Code 2.1.283 -> 2.1.293", "model mix: opus share 0.9 -> 0.2"]}
+{"skill": "m-scan", "unit": "skill:m-scan", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:m-scan@9e8d7c6b", "label": "v1", "hash": "9e8d7c6b", "runs": 7, "invocations": 30, "score": 91.0,
+   "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null},
+  {"id": "skill:m-scan@5a4b3c2d", "label": "v2", "hash": "5a4b3c2d", "runs": 6, "invocations": 26, "score": 110.0,
+   "verdict": "confounded", "direction": "better", "vs": "v1",
+   "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
+   "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}, "outcome": null}
 ]}
 ```
 

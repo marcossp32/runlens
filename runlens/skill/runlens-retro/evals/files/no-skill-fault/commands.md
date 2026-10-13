@@ -12,14 +12,20 @@ ok   13 runs match the transcripts
 
 ## runlens score --kind skill --json
 ```json
-{"kind": "skill", "units": [{"unit": "skill:m-prove", "runs": 13, "invocations": 46, "outcome": null}]}
+{"kind": "skill", "population": {"runs": 13, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation",
+ "units": [{"unit": "skill:m-prove", "name": "m-prove", "kind": "skill", "runs": 13, "invocations": 46, "versions": 2, "current": "v2",
+            "verdict": "not enough runs", "direction": null, "vs": "v1", "confounders": [], "outcome": null,
+            "difference": {"score": 97.2, "ci95": null, "measures": {}}}]}
 ```
 
 ## runlens versions m-prove --json
 ```json
-{"skill": "m-prove", "versions": [
-  {"label": "v1", "hash": "a1b2c3d4", "runs": 9, "invocations": 31, "verdict": null},
-  {"label": "v2", "hash": "e5f6a7b8", "runs": 4, "invocations": 15, "vs": "v1", "verdict": "not enough runs", "confounders": []}
+{"skill": "m-prove", "unit": "skill:m-prove", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:m-prove@a1b2c3d4", "label": "v1", "hash": "a1b2c3d4", "runs": 9, "invocations": 31, "score": 101.3,
+   "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null},
+  {"id": "skill:m-prove@e5f6a7b8", "label": "v2", "hash": "e5f6a7b8", "runs": 4, "invocations": 15, "score": 97.0,
+   "verdict": "not enough runs", "direction": null, "vs": "v1", "confounders": [],
+   "difference": {"score": 95.8, "ci95": null, "measures": {}}, "outcome": null}
 ]}
 ```
 

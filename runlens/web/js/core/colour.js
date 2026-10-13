@@ -50,6 +50,7 @@ const TONE = {
   unclear: { icon: "≈", css: "var(--neutral)", word: "unclear" },
   few: { icon: "○", css: "var(--neutral)", word: "too few runs" },
   first: { icon: "•", css: "var(--neutral)", word: "first version" },
+  confounded: { icon: "?", css: "var(--neutral)", word: "confounded" },
 };
 
 // ---- colour arithmetic: sRGB <-> OKLab, for ramps that step evenly to the eye ----
