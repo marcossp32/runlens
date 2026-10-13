@@ -3,7 +3,6 @@
    name declared here is visible to every later module and to nothing outside the page. */
 
 const DATA = JSON.parse(document.getElementById("data").textContent);
-const DIAG = DATA.diag || null;
 const UNITS = new Map(DATA.units.map((u) => [u.id, u]));
 const METRICS = DATA.method.metrics;
 const MIN_RUNS = DATA.method.min_runs;
@@ -66,3 +65,51 @@ const median = (xs) => {
 };
 const timeOf = (iso) => (iso ? Date.parse(iso) : NaN);
 const dayMs = (key) => Date.parse(`${key}T00:00:00Z`);
+
+// ---- per-run facts (explorer.py): what the filters slice and the run pages explore ----
+// Tables arrive as {c: columns, r: rows, d: {column: values}}; a coded column holds a position in d.
+function decodeTable(t) {
+  if (!t || !t.c) return [];
+  const d = t.d || {};
+  return t.r.map((row) => {
+    const o = {};
+    t.c.forEach((c, i) => { o[c] = d[c] ? d[c][row[i]] : row[i]; });
+    return o;
+  });
+}
+const EX = (() => {
+  const raw = DATA.explore || {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) out[k] = v && v.c ? decodeTable(v) : v;
+  for (const k of ["runs", "calls", "days", "tools", "durations", "errors", "agents", "incidents", "markers", "events", "stops", "apierr",
+    "compactions", "segments", "flow", "toolerr", "tokens"]) out[k] = out[k] || [];
+  out.curves = out.curves || {};
+  out.health = out.health || null;
+  out.duration_edges = out.duration_edges || [];
+  for (const r of out.runs) {
+    r.t0 = r.started * 1000;
+    r.t1 = r.ended != null ? r.t0 + r.ended * 1000 : r.t0;
+    r.pop = r.status === "complete" && !r.stub;
+    r.models = r.models || [];
+    r.efforts = r.efforts || [];
+    r.skills = r.skills || [];
+  }
+  return out;
+})();
+const RUN = new Map(EX.runs.map((r) => [r.run, r]));
+// A time inside a run (seconds from its start) as epoch milliseconds.
+const atRun = (run, t) => {
+  const r = RUN.get(run);
+  return r && t !== null && t !== undefined ? r.t0 + t * 1000 : NaN;
+};
+// A local calendar day as "YYYY-MM-DD": the reader's day, which is how dates are picked in the filter bar.
+function localDay(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const localMidnight = (key) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d).getTime();
+};
+// "claude-opus-5-5" reads as "opus-5-5" where space is tight; the full name stays in tooltips and tables.
+const shortModel = (m) => String(m || "?").replace(/^claude-/, "");

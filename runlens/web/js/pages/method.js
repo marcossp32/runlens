@@ -22,6 +22,10 @@ function workedExample() {
       h("li", {}, `Divide by the total weight, ${fmt.num(wsum, 2)}: ${fmt.num(acc / (wsum || 1), 3)}.`),
       h("li", {}, `Take 100 × e to that power: ${fmt.num(100 * Math.exp(acc / (wsum || 1)), 1)}.`)),
     h("p", {}, `So the score is ${fmt.score(v.score)}`, v.ci ? `, with a range of ${fmt.interval(v.ci)}.` : "."),
+    waterfallChart({ title: `The same sum, step by step: ${unit.name} ${nameOf(v)}`, question: "How does each measure take the score from 100 to its value?",
+      sub: "each step is weight × ln(ratio) ÷ total weight; the steps multiply", score: v.score, base: "the skill's typical run", n: v.runs, minN: MIN_RUNS,
+      rows: [...parts].sort((a, b) => Math.abs(b.share) - Math.abs(a.share)).map((p) => ({ label: metricLabel(p.m), share: p.share,
+        tip: [["Ratio", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`]] })) }),
     h("p", {}, `The verdict is separate: ${j.sentence}`));
 }
 
@@ -70,14 +74,18 @@ function methodPage() {
 
   const pages = () => h("div", { class: "prose" },
     h("dl", { class: "defs" },
-      h("dt", {}, "Skills"), h("dd", {}, "Every skill on one screen: its latest version against its own typical run, each version on a real time axis, and its figures. Skills are shown side by side, never ranked. Agent roles and groups are on the other tabs."),
-      h("dt", {}, "A skill, role or group"), h("dd", {}, "Open one from any table or chart. Its versions with their verdicts and what changed, what moves its score, and every run."),
-      h("dt", {}, "Compare"), h("dd", {}, "Two versions of one skill or group, measure by measure, with the verdict. Two different units side by side, without one."),
-      h("dt", {}, "Diagnostics"), h("dd", {}, "Everything else that was recorded: each run, problems and tool errors, tools, models, tokens and effort, subagents, how skills hand over, and your config's checks."),
+      h("dt", {}, "Skills"), h("dd", {}, "Every skill on one screen: its latest version against its own history, each version on a real time axis with Claude Code updates and new models marked, cost (with the Pareto frontier of cost against outcome, spend per day and cost by token type), the outcome over time, and every measure. Skills are shown side by side, never ranked. Agent roles and groups are on the other tabs."),
+      h("dt", {}, "A skill, role or group"), h("dd", {}, "Open one from any table or chart. Its versions with their verdicts and what changed, a waterfall of what moves its score, every run as a dot by version, and its outcome over time."),
+      h("dt", {}, "Runs"), h("dd", {}, "Every run on a calendar and a time axis. Open one to see its skills, your messages, problems, checks, tool errors, spend and every subagent on one time axis, and the commands that open the raw trace."),
+      h("dt", {}, "Compare"), h("dd", {}, "Two versions of one skill or group: the verdict, what else changed between them, and a forest plot of each difference with its interval. Two different units side by side, without a verdict."),
+      h("dt", {}, "Diagnostics"), h("dd", {}, "Everything else that was recorded: problems over time and per 100 tool calls, tool durations, models by effort, token types and stop reasons, subagents, how runs move from skill to skill, and your config's checks over time."),
+      h("dt", {}, "Data health"), h("dd", {}, "Whether the data is complete and current: failed ingests, open and stub runs, models without a price, the parser version, the hook queue and how many tokens the transcripts hold. The header badge links there when something needs fixing."),
       h("dt", {}, "How it works"), h("dd", {}, "This page.")),
-    h("h2", {}, "Reading and sharing"),
+    h("h2", {}, "Filters, settings and sharing"),
     h("ul", {},
-      li("Every view is in the address bar: the page, the tab, the selection and the pair being compared. “Copy link” copies it, so a link opens exactly this view."),
+      li("The filter bar under the header narrows every page to some dates, repos, branches, models, effort levels, skills or Claude Code versions. It always says how many runs are left. Scores, ranges and verdicts are then worked out again from those runs, in this page, the same way runlens does."),
+      li("Score, in the header, sets what 100 means (the skill's typical run, the version before, its first version or a chosen version), the weight of each measure for every skill or for one, and the confidence level. When they differ from config.toml the button says “custom” and pages that show a score say how it was made."),
+      li("Every view is in the address bar: the page, the tab, the filters and the score settings. “Copy link” copies it. Views saves a view under a name in this browser; views listed in config.toml under [[dashboard.view]] are there for everyone."),
       li("Each chart has a table view and exports its data as CSV, and its drawing as SVG or PNG. Each table exports as CSV."),
       li("Use Tab to reach a chart, then the arrow keys to move between its marks; the details show as you go. Enter opens what a mark links to."),
       li("Settings keeps the theme, the density and the number format in this browser only.")));

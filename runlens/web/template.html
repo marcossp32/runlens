@@ -10,17 +10,25 @@
 <body>
 <a class="skip" href="#app">Skip to content</a>
 <header class="top">
-  <a class="brand" href="#/">runlens <span>benchmarks</span></a>
-  <nav aria-label="Main">
-    <a href="#/" data-page="skills">Skills</a>
-    <a href="#/compare" data-page="compare">Compare</a>
-    <a href="#/diagnostics" data-page="diagnostics">Diagnostics</a>
-    <a href="#/method" data-page="method">How it works</a>
-  </nav>
-  <div class="topbar">
-    <button type="button" id="copylink" class="ghost">Copy link</button>
-    <details id="settings" class="settings"><summary class="ghost">Settings</summary></details>
+  <div class="topline">
+    <a class="brand" href="#/">runlens <span>benchmarks</span></a>
+    <nav aria-label="Main">
+      <a href="#/" data-page="skills">Skills</a>
+      <a href="#/runs" data-page="runs">Runs</a>
+      <a href="#/compare" data-page="compare">Compare</a>
+      <a href="#/diagnostics" data-page="diagnostics">Diagnostics</a>
+      <a href="#/health" data-page="health">Data health</a>
+      <a href="#/method" data-page="method">How it works</a>
+    </nav>
+    <a id="healthbadge" class="healthbadge" href="#/health" hidden></a>
+    <div class="topbar">
+      <details id="views" class="menu"><summary class="ghost">Views</summary></details>
+      <details id="scorepanel" class="menu"><summary class="ghost">Score</summary></details>
+      <button type="button" id="copylink" class="ghost">Copy link</button>
+      <details id="settings" class="menu settings"><summary class="ghost">Settings</summary></details>
+    </div>
   </div>
+  <div id="filterbar" class="filterbar" role="region" aria-label="Filters"></div>
   <p id="status" class="sr" role="status" aria-live="polite"></p>
 </header>
 <main id="app" tabindex="-1">

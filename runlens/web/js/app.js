@@ -8,21 +8,35 @@ const app = document.getElementById("app");
 const PAGES = {
   skills: { title: "Skills", render: () => skillsPage() },
   unit: { title: "Unit", render: (path) => (UNITS.has(path[1]) ? unitPage(path[1]) : null) },
+  runs: { title: "Runs", render: () => runsPage() },
+  run: { title: "Run", render: (path) => (RUN.has(path[1]) ? runPage(path[1]) : null) },
   compare: { title: "Compare", render: () => comparePage() },
   diagnostics: { title: "Diagnostics", render: () => diagnosticsPage() },
+  health: { title: "Data health", render: () => healthPage() },
   method: { title: "How it works", render: () => methodPage() },
 };
 
 let currentPage = null;
+let booted = false;
 function route() {
   readHash();
+  if (!booted) {
+    booted = true;
+    restoreScoreSettings();
+  }
+  readScoreSettings();
+  applyFilters();
+  renderFilterBar();
+  renderScorePanel();
+  renderViewsMenu();
+  renderHealthBadge();
   let page = pageOf(ROUTE.path);
   let view = PAGES[page] ? PAGES[page].render(ROUTE.path) : null;
   if (!view) {
     page = "skills";
     view = PAGES.skills.render(ROUTE.path);
   }
-  const samePage = page === currentPage && page !== "unit";
+  const samePage = page === currentPage && page !== "unit" && page !== "run";
   const y = window.scrollY;
   hideTip();
   app.replaceChildren(view);
@@ -43,7 +57,7 @@ function route() {
 function settingsMenu() {
   const box = document.getElementById("settings");
   if (!box) return;
-  const panel = h("div", { class: "settings-panel" },
+  const panel = h("div", { class: "menu-panel settings-panel" },
     Object.keys(PREF_CHOICES).map((key) => {
       const sel = h("select", { id: `pref-${key}` }, PREF_CHOICES[key].map((v) => h("option", { value: v, selected: PREFS[key] === v ? true : null }, PREF_LABELS[key][v])));
       sel.addEventListener("change", () => {

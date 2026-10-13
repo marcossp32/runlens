@@ -438,9 +438,10 @@ def shift(a, b):
 
 
 def _top_change(a, b):
-    """The member of a mix whose share moved most, as 'name x% → y%'."""
+    """The member of a mix whose share moved most, as 'name x% → y%'. On a tie, the one that grew."""
     ta, tb = sum(a.values()) or 1, sum(b.values()) or 1
-    k = max(set(a) | set(b), key=lambda x: abs(a[x] / ta - b[x] / tb))
+    moved = lambda x: b[x] / tb - a[x] / ta
+    k = max(sorted(set(a) | set(b)), key=lambda x: (round(abs(moved(x)), 9), moved(x) > 0))
     return f"{k} {a[k] / ta:.0%} → {b[k] / tb:.0%}"
 
 
@@ -475,15 +476,20 @@ def confounders_of(side_a, side_b, own_skills, ctx):
     for field, what in (("models", "model mix (share of cost)"), ("efforts", "effort mix (share of turns)")):
         a, b = mix(side_a, field), mix(side_b, field)
         if shift(a, b) >= MIX_SHIFT:
-            out.append(f"{what}: {_top_change(a, b)}")
+            top_a, top_b = a.most_common(1)[0][0], b.most_common(1)[0][0]
+            if field == "cc" and top_a != top_b:
+                out.append(f"Claude Code {top_a} → {top_b}")
+            else:  # the most common value is the same on both sides: name the one whose share moved
+                out.append(f"{what}: {_top_change(a, b)}")
     runs = ctx["sessions"]
     for field, what in (("cc", "Claude Code version"), ("repo", "project mix")):
         a = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_a)
         b = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_b)
         if shift(a, b) >= MIX_SHIFT:
-            if field == "cc":
-                out.append(f"Claude Code {a.most_common(1)[0][0]} → {b.most_common(1)[0][0]}")
-            else:
+            top_a, top_b = a.most_common(1)[0][0], b.most_common(1)[0][0]
+            if field == "cc" and top_a != top_b:
+                out.append(f"Claude Code {top_a} → {top_b}")
+            else:  # the most common value is the same on both sides: name the one whose share moved
                 out.append(f"{what}: {_top_change(a, b)}")
     return out
 
@@ -1054,149 +1060,10 @@ def load(con):
     }
 
 
-def diagnostics(con, price_overrides=None):
-    """The rest of what the database records, as small aggregates for the Diagnostics page."""
-    import duckdb
-
-    def rows(sql):
-        try:
-            cur = con.execute(sql)
-        except duckdb.CatalogException:  # an older database may lack a table or column; that part is then empty
-            return []
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, r)) for r in cur.fetchall()]
-
-    out = {
-        "runs": rows("""
-            SELECT r.session_id[:8] AS run, r.started, regexp_extract(r.cwd, '[^\\\\/]+$') AS repo, r.git_branch AS branch,
-                   r.cc_version, r.title, r.cost_usd AS cost, r.cost_estimated AS estimated, r.active_ms,
-                   r.human_prompts AS prompts, r.n_agents AS agents, r.lines_added, r.lines_removed,
-                   r.status, r.is_stub,
-                   (SELECT count(*) FROM incidents i WHERE i.session_id = r.session_id AND NOT coalesce(i.policy, false)) AS incidents,
-                   (SELECT count(*) FROM tool_calls t WHERE t.session_id = r.session_id) AS tool_calls,
-                   (SELECT count(*) FROM tool_calls t WHERE t.session_id = r.session_id AND t.is_error AND t.denied IS NULL) AS tool_errors,
-                   (SELECT count(*) FROM tool_calls t WHERE t.session_id = r.session_id AND t.denied IS NOT NULL) AS denied
-            FROM runs r ORDER BY r.started"""),
-        "incidents": rows("""SELECT type, coalesce(skill, '(none)') AS skill, count(*) AS incidents, sum(n) AS occurrences
-                             FROM incidents WHERE NOT coalesce(policy, false) GROUP BY 1, 2"""),
-        "incident_roles": rows("""SELECT coalesce(role, '?') AS role, count(*) AS incidents FROM incidents
-                                  WHERE NOT coalesce(policy, false) GROUP BY 1 ORDER BY 2 DESC LIMIT 12"""),
-        "tool_errors": rows("""SELECT coalesce(error_class, 'other') AS class, tool, count(*) AS errors
-                               FROM tool_calls WHERE is_error AND denied IS NULL GROUP BY 1, 2"""),
-        "tools": rows("""SELECT tool, count(*) AS calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS errors,
-                                count(*) FILTER (WHERE denied IS NOT NULL) AS denied,
-                                median(duration_ms) AS median_ms, quantile_cont(duration_ms, 0.95) AS p95_ms,
-                                sum(duration_ms) AS total_ms
-                         FROM tool_calls GROUP BY 1 ORDER BY calls DESC"""),
-        "idle": rows("""SELECT coalesce(skill, '(none)') AS skill, count(*) FILTER (WHERE idle) AS idle_calls, count(*) AS calls
-                        FROM tool_calls GROUP BY 1 ORDER BY 2 DESC"""),
-        "models": rows("""SELECT model, count(*) AS calls, sum(cost_usd) AS cost, sum(output_tokens) AS output,
-                                 sum(thinking_tokens) AS thinking, sum(input_tokens) AS input,
-                                 sum(cache_write_5m) AS cache_write_5m, sum(cache_write_1h) AS cache_write_1h,
-                                 sum(input_tokens + cache_write_5m + cache_write_1h) AS fresh_input,
-                                 sum(cache_read_tokens) AS cache_read
-                          FROM api_calls GROUP BY 1 ORDER BY cost DESC"""),
-        # Claude Code's own per-model totals: the transcript misses most output tokens, cost-state does not.
-        "token_totals": rows("""SELECT model, count(DISTINCT session_id) AS runs, sum(input_tokens) AS input,
-                                       sum(output_tokens) AS output, sum(thinking_tokens) AS thinking,
-                                       sum(cache_read_tokens) AS cache_read, sum(cache_write_tokens) AS cache_write,
-                                       sum(web_search_requests) AS web_searches, sum(cost_usd) AS cost
-                                FROM model_usage GROUP BY 1 ORDER BY cost DESC NULLS LAST"""),
-        "efforts": rows("""SELECT coalesce(effort, '(default)') AS effort, count(*) AS calls, sum(cost_usd) AS cost
-                           FROM api_calls GROUP BY 1 ORDER BY cost DESC"""),
-        "agent_types": rows("""SELECT coalesce(agent_type, '?') AS agent_type, count(*) AS agents, sum(cost_usd) AS cost,
-                                      sum(tool_calls) AS tool_calls, sum(tool_errors) AS tool_errors, max(peak_context) AS peak_context,
-                                      sum(compactions) AS compactions,
-                                      count(*) FILTER (WHERE status NOT IN ('completed', 'async_launched', 'running')) AS not_completed
-                               FROM agents WHERE agent_id <> 'main' GROUP BY 1 ORDER BY cost DESC NULLS LAST"""),
-        "agent_status": rows("""SELECT coalesce(status, '(none)') AS status, count(*) AS agents FROM agents
-                                WHERE agent_id <> 'main' GROUP BY 1 ORDER BY 2 DESC"""),
-        "flow": rows("""WITH s AS (SELECT session_id, ts, coalesce(skill, '(none)') AS skill,
-                               lag(coalesce(skill, '(none)')) OVER (PARTITION BY session_id ORDER BY ts) AS prev
-                        FROM api_calls WHERE agent_id = 'main')
-                        SELECT prev AS source, skill AS target, count(*) AS transitions FROM s
-                        WHERE prev IS NOT NULL AND prev <> skill GROUP BY 1, 2"""),
-        "markers": rows("""SELECT marker, value, bad, coalesce(skill, '(none)') AS skill, count(*) AS n
-                           FROM markers GROUP BY ALL"""),
-        "events": rows("""SELECT kind, count(*) AS n FROM events WHERE kind NOT IN ('turn', 'human_prompt')
-                          GROUP BY 1 ORDER BY 2 DESC"""),
-        "labels": rows("SELECT category, count(*) AS n FROM labels GROUP BY 1 ORDER BY 2 DESC"),
-        # models, effort and thinking
-        "model_effort": rows("""SELECT model, coalesce(effort, '(default)') AS effort, count(*) AS calls, sum(cost_usd) AS cost,
-                                       avg(output_tokens) AS avg_output, avg(thinking_tokens) AS avg_thinking, avg(thinking_ms) AS avg_thinking_ms
-                                FROM api_calls GROUP BY 1, 2"""),
-        "model_skill": rows("""SELECT model, coalesce(skill, '(none)') AS skill, count(*) AS calls, sum(cost_usd) AS cost
-                               FROM api_calls GROUP BY 1, 2"""),
-        "model_day": rows("""SELECT strftime(ts, '%Y-%m-%d') AS day, model, sum(cost_usd) AS cost, count(*) AS calls
-                             FROM api_calls WHERE ts IS NOT NULL GROUP BY 1, 2 ORDER BY 1"""),
-        "api_errors": rows("""SELECT model, count(*) FILTER (WHERE api_error) AS errors,
-                                     count(*) FILTER (WHERE api_limit) AS limits, count(*) AS calls FROM api_calls GROUP BY 1"""),
-        # the subagents that runs generated
-        "agents_by_run": rows("""SELECT session_id[:8] AS run, coalesce(agent_type, '?') AS agent_type, count(*) AS n, sum(cost_usd) AS cost
-                                 FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2"""),
-        "agents_by_skill": rows("""SELECT s AS skill, coalesce(agent_type, '?') AS agent_type, count(*) AS n, sum(cost_usd) AS cost
-                                   FROM (SELECT agent_type, cost_usd, unnest(skills) AS s FROM agents WHERE agent_id <> 'main')
-                                   GROUP BY 1, 2"""),
-        "agent_shape": rows("""SELECT spawn_depth AS depth, coalesce(background, false) AS background, count(*) AS n
-                               FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2"""),
-        "agent_models": rows("""SELECT coalesce(agent_type, '?') AS agent_type, coalesce(model, '?') AS model, count(*) AS n, sum(cost_usd) AS cost
-                                FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2"""),
-        "agent_roles": rows("""SELECT coalesce(agent_type, '?') AS agent_type, coalesce(role, '?') AS role, count(*) AS agents,
-                                      sum(cost_usd) AS cost, avg(epoch(ended - started)) AS avg_seconds, avg(tool_calls) AS avg_tools,
-                                      max(peak_context) AS peak_context
-                               FROM agents WHERE agent_id <> 'main' GROUP BY 1, 2 ORDER BY cost DESC NULLS LAST LIMIT 25"""),
-        "agent_time": rows("""SELECT coalesce(agent_type, '?') AS agent_type, avg(epoch(ended - started)) AS avg_s,
-                                     median(epoch(ended - started)) AS median_s, quantile_cont(epoch(ended - started), 0.95) AS p95_s
-                              FROM agents WHERE agent_id <> 'main' AND ended IS NOT NULL GROUP BY 1"""),
-        # skills a subagent loaded for itself: they get no unit of their own, so they are listed here
-        "agent_skills": rows("""SELECT l.skill, coalesce(a.agent_type, '?') AS agent_type, count(*) AS loads,
-                                       count(DISTINCT l.session_id || a.agent_id) AS agents, sum(a.cost_usd) AS cost
-                                FROM skill_loads l JOIN agents a ON a.session_id = l.session_id AND a.agent_id = l.agent_id
-                                WHERE l.agent_id <> 'main' GROUP BY 1, 2 ORDER BY loads DESC"""),
-        "agent_day": rows("""SELECT strftime(started, '%Y-%m-%d') AS day, count(*) AS n, sum(cost_usd) AS cost FROM agents
-                             WHERE agent_id <> 'main' AND started IS NOT NULL GROUP BY 1 ORDER BY 1"""),
-    }
-    out["token_cost"] = token_cost(rows, price_overrides)
-    return out
-
-
-TOKEN_TYPES = ("input", "output", "cache_read", "cache_write_5m", "cache_write_1h")
-
-
-def token_cost(rows, price_overrides=None):
-    """Cost by token type and model. Token counts come from Claude Code's own totals (model_usage), which the
-    transcript undercounts; cache writes are split into 5-minute and 1-hour by the transcript's own split. Each
-    model's list-price parts are scaled to the cost Claude Code recorded, so the parts add up to the real cost."""
-    from .transcripts import model_key, price_of
-    usage = rows("""SELECT model, sum(input_tokens) AS input, sum(output_tokens) AS output, sum(cache_read_tokens) AS cache_read,
-                           sum(cache_write_tokens) AS cache_write, sum(cost_usd) AS cost FROM model_usage GROUP BY 1""")
-    split = {model_key(r["model"]): r for r in rows("""SELECT model, sum(cache_write_5m) AS w5, sum(cache_write_1h) AS w1
-                                                       FROM api_calls GROUP BY 1""")}
-    out = []
-    for u in usage:
-        p = price_of(u["model"], price_overrides)
-        if p is None:
-            continue
-        s = split.get(model_key(u["model"])) or {}
-        w5, w1 = s.get("w5") or 0, s.get("w1") or 0
-        share_1h = w1 / (w5 + w1) if (w5 + w1) else 0.0
-        tokens = {"input": u["input"] or 0, "output": u["output"] or 0, "cache_read": u["cache_read"] or 0,
-                  "cache_write_5m": (u["cache_write"] or 0) * (1 - share_1h), "cache_write_1h": (u["cache_write"] or 0) * share_1h}
-        rate = dict(zip(("input", "output", "cache_read", "cache_write_5m", "cache_write_1h"), p))
-        listed = {t: tokens[t] * rate[t] / 1e6 for t in TOKEN_TYPES}
-        total = sum(listed.values())
-        k = (u["cost"] / total) if (u["cost"] and total) else 1.0
-        for t in TOKEN_TYPES:
-            out.append({"model": u["model"], "type": t, "tokens": round(tokens[t]), "cost": listed[t] * k})
-    return out
-
-
 def build(con, cfg=None, resamples=None):
-    """The dashboard model: `compute` on the database, plus the Diagnostics aggregates.
+    """The dashboard model: `compute` on the database (the page's per-run facts come from explorer.build).
     `cfg` is config.toml as loaded by config.load (a bare list of [[group]] tables is accepted too)."""
     if isinstance(cfg, (list, tuple)):
         cfg = {"group": list(cfg)}
     cfg = cfg or {}
-    model = compute(load(con), resamples=resamples, cfg=cfg)
-    model["diag"] = diagnostics(con, cfg.get("prices"))
-    return model
+    return compute(load(con), resamples=resamples, cfg=cfg)

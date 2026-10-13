@@ -43,6 +43,10 @@ An audit of the whole tool found that the numbers it showed could not be trusted
 - A skill that a subagent loads for itself is credited to the skill that spawned it; the agent diagnostics list such skills under "Skills inside".
 - Built from modules into one page: charts drawn at their real width, one colour per skill everywhere, validated light and dark palettes, better/worse not shown by red and green alone, keyboard tooltips, view state in the URL, CSV/SVG/PNG export.
 - Pages follow the new method: within-skill verdicts, per-measure effects with intervals, confounders and data health. The gauge, radar, treemap and two-slice donuts are gone.
+- A filter bar on every page (dates, repo, branch, model, effort, skills, Claude Code version) and a Score menu (baseline, weights, confidence). With custom settings the page re-runs the method on the runs kept and marks the result "custom".
+- New pages: Runs (calendar and cost scatter) and one run on one time axis with every subagent, its spend so far and its problems; Data health, with a badge in the header.
+- New charts: score waterfalls, forest plots of version differences, Pareto frontiers of outcome against cost, cost by token type, calendar heatmaps, weekly rates with Wilson intervals, skill hand-off flows, event lanes.
+- Saved views in the browser, and shared ones from `[[dashboard.view]]` in config.toml.
 
 ### Privacy and storage
 - Evidence is stored once per content, limited to files modified during the run, capped by `max_mb`, and never includes browser profiles, databases, `node_modules` or `.git` objects. The old example copied 1.5 GB per run.

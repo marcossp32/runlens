@@ -4,10 +4,6 @@
 
 runlens archives every Claude Code session (and the subagents it spawned) into a local DuckDB database. It credits cost, time, tool errors, incidents and your interruptions to the skill that was active, keeps every version of each skill's text, and compares each version only with the same skill's previous version. Everything stays on your machine; the dashboard is one static HTML file.
 
-<!-- TODO(images): the orchestrator wires the final screenshots. Intended files in docs/images/:
-     overview-light.jpg, overview-dark.jpg (the skills overview), skill-page.jpg (one skill: versions and diff),
-     compare.jpg (two versions: verdict, per-measure effects, confounders), diagnostics.jpg, data-health.jpg,
-     how-it-works.jpg. All from demo data (scripts/make_demo.py). -->
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.jpg">
@@ -121,22 +117,34 @@ The question runlens answers is *did a change to this skill make its runs better
 
 `runlens dashboard` writes `~/.runlens/dashboard.html` (`--out` to choose the path): one static page with the data embedded. It opens offline from any folder, needs no server and makes no network requests. The hook rebuilds it after it ingests runs unless `[dashboard] auto = false`; after a manual `runlens refresh`, run `runlens dashboard`.
 
-<!-- TODO(web): page names may still change; descriptions are kept generic until the dashboard settles.
-     Confirm the data-health page, the filter bar and the run explorer once the dashboard work lands. -->
-
 | Page | It answers |
 |---|---|
-| **Overview** of skills, agent roles and groups | How is each skill doing now, and did its latest version change anything? Each skill's current version against its previous one, with the verdict and run counts, side by side and not ranked |
-| **One skill, role or group** | Why? Its versions over time with their diffs, each measure against the skill's typical run, and its runs one by one |
-| **Compare** | Is version B really different from A? The verdict, each measure's effect with its interval, the outcome change and the confounders |
-| **Diagnostics** | What else happened? Runs, problems and tool errors, tools, models and effort, token and cache cost, subagents, skill hand-offs, markers and labels |
-| **Data health** | Can you trust the numbers? Open and stub runs, failed ingests, unpriced models, token coverage, parser version and last refresh |
+| **Skills**: skills, agent roles and groups | How is each skill doing now, and did its latest version change anything? Each skill's current version against its own history, with the verdict, its range and a timeline of its versions, side by side and never ranked. Tabs for cost (outcome against cost with the Pareto frontier, spend per day, cost by token type), outcome and each measure |
+| **One skill, role or group** | Why? Its versions over time with their diffs, a waterfall of what moved the score, the outcome over time, and its runs one by one |
+| **Runs** and **one run** | What happened in this run, and when? Every run on a calendar and a cost scatter; one run on one time axis (skills, your messages, problems, checks, tool errors, spend so far, every subagent nested under the one that started it), its cost by agent, model, token type and skill, and copyable `runlens show` / `runlens sql` commands for the raw data |
+| **Compare** | Is version B really different from A? The verdict, a forest plot of each measure's difference with its interval, and the confounders |
+| **Diagnostics** | What else happened? Problems over time and per 100 tool calls, tools and their errors, models, effort and tokens, subagents, skill hand-offs, markers and labels |
+| **Data health** | Can you trust the numbers? Open and stub runs, failed ingests, unpriced models, token coverage, the pending queue and hook errors, with the command that fixes each. A badge in the header counts the issues |
 | **How it works** | The method, with a worked example on one of your own skills |
 
-<p align="center"><img alt="One skill: its versions with the score of each and the diff from the one before" src="docs/images/skill-page.jpg" width="760"></p>
-<p align="center"><img alt="Comparing two versions: verdict, per-measure effects and confounders" src="docs/images/compare.jpg" width="760"></p>
+Every page sits under one **filter bar**: dates, repo, branch, model, effort, skills and Claude Code version, with the count of runs left always shown. The **Score** menu sets the baseline (the skill's typical run, the previous version, the first version or a chosen one), the weight of each measure and the confidence level. When filters or score settings differ from the defaults, the page works the scores, ranges and verdicts out again from the runs kept, with the same method as `runlens score`, and marks them "custom". Every chart offers its data as a table, CSV, SVG and PNG.
 
-The page state is in the URL, so a link reproduces a view; `[[dashboard.view]]` in the config adds named views to the page. **The dashboard contains transcript text** (each skill version's text, run arguments and task titles): keep it on your machine and check it before you share it.
+<p align="center"><img alt="One skill: its versions over time with their ranges, and the diff from the version before" src="docs/images/skill-page.jpg" width="760"></p>
+<p align="center"><img alt="Two versions: the verdict, and a forest plot of each difference with its interval" src="docs/images/compare.jpg" width="760"></p>
+<p align="center"><img alt="One run on one time axis: skills, problems, checks, errors, spend so far and every subagent" src="docs/images/run-explorer.jpg" width="760"></p>
+
+<details>
+<summary>More screenshots: cost, diagnostics, data health, the Score menu, how it works</summary>
+
+<p align="center"><img alt="Cost: outcome against cost with the Pareto frontier, spend per day by skill, cost by token type" src="docs/images/skills-cost.jpg" width="760"></p>
+<p align="center"><img alt="Diagnostics: problems over time, per 100 tool calls by skill, and a kind by skill heatmap" src="docs/images/diagnostics.jpg" width="760"></p>
+<p align="center"><img alt="Data health: what to fix, open and stub runs, failed ingests, commands to run" src="docs/images/data-health.jpg" width="760"></p>
+<p align="center"><img alt="The Score menu: baseline, confidence and weights, marked custom" src="docs/images/score-panel.jpg" width="760"></p>
+<p align="center"><img alt="How it works: the worked example and its waterfall" src="docs/images/how-it-works.jpg" width="760"></p>
+
+</details>
+
+The page state (page, filters, score settings) is in the URL, so a link reproduces a view. **Views** keeps named views in the browser, and `[[dashboard.view]]` tables in config.toml (a `name` and a `hash`, the part of a dashboard link after `#`) add shared ones. **The dashboard contains transcript text** (each skill version's text, run arguments and task titles): keep it on your machine and check it before you share it.
 
 ## CLI reference
 

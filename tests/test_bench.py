@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import duckdb
 
-from runlens import bench
+from runlens import bench, explorer
 
 T0 = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
 
@@ -344,6 +344,9 @@ class Verdicts(unittest.TestCase):
         model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"),
                               cfg={"method": {"cc_version": "patch"}}, resamples=200)
         self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code 2.1.290 → 2.1.291"])
+        # A shift that leaves the most common version in place names the version whose share moved.
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: "2.2.1" if v == 1 and i < 2 else "2.1.290"), resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code version: 2.2 0% → 33%"])
 
     def test_cli_summaries_follow_the_contract(self):
         model = bench.compute(history([("aaa", 5), ("bbb", 5)], cost=lambda v, i: 1 + i), resamples=200)
@@ -425,28 +428,31 @@ class NullSimulation(unittest.TestCase):
         self.assertGreaterEqual(self.verdicts(40, [10, 12], scale_b=1 / 4, seed=2).count("better") / 40, 0.25)
 
 
-class Diagnostics(unittest.TestCase):
+class Explorer(unittest.TestCase):
     def test_a_missing_table_leaves_that_part_empty(self):
         con = duckdb.connect()
-        con.execute("CREATE TABLE api_calls (model VARCHAR, cost_usd DOUBLE, output_tokens BIGINT, thinking_tokens BIGINT, input_tokens BIGINT,"
-                    " cache_write_5m BIGINT, cache_write_1h BIGINT, cache_read_tokens BIGINT, effort VARCHAR, api_error BOOLEAN, api_limit BOOLEAN,"
-                    " skill VARCHAR, ts TIMESTAMPTZ, thinking_ms BIGINT, agent_id VARCHAR, session_id VARCHAR)")
-        con.execute("INSERT INTO api_calls VALUES ('claude-opus-5-5', 1.0, 10, 0, 5, 100, 300, 1000, 'high', false, false, 'flow', now(), 0, 'main', 's')")
-        con.execute("CREATE TABLE model_usage (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT, thinking_tokens BIGINT,"
-                    " cache_read_tokens BIGINT, cache_write_tokens BIGINT, web_search_requests INTEGER, cost_usd DOUBLE)")
-        con.execute("INSERT INTO model_usage VALUES ('s', 'claude-opus-5-5[1m]', 1000, 2000, 0, 50000, 4000, 0, 2.5)")
-        d = bench.diagnostics(con)
-        self.assertEqual(d["runs"], [])  # no runs table: empty, not an error
-        self.assertEqual(d["models"][0]["cache_write_1h"], 300)
-        parts = {r["type"]: r for r in d["token_cost"]}
-        self.assertAlmostEqual(sum(r["cost"] for r in d["token_cost"]), 2.5)  # scaled to what Claude Code recorded
-        self.assertEqual(round(parts["cache_write_1h"]["tokens"]), 3000)      # cache writes split 1:3 as in the transcript
+        facts = explorer.build(con)  # an empty database: every part empty, not an error
+        self.assertEqual(facts["runs"]["r"], [])
+        self.assertEqual(facts["calls"]["r"], [])
 
-    def test_other_errors_are_not_swallowed(self):
+    def test_token_cost_adds_up_to_what_claude_code_recorded(self):
         con = duckdb.connect()
-        con.close()
-        with self.assertRaises(duckdb.Error):
-            bench.diagnostics(con)
+        con.execute("CREATE TABLE api_calls (session_id VARCHAR, model VARCHAR, cache_write_5m BIGINT, cache_write_1h BIGINT)")
+        con.execute("INSERT INTO api_calls VALUES ('s', 'claude-opus-5-5', 100, 300)")
+        con.execute("CREATE TABLE model_usage (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
+                    " cache_read_tokens BIGINT, cache_write_tokens BIGINT, cost_usd DOUBLE)")
+        con.execute("INSERT INTO model_usage VALUES ('s', 'claude-opus-5-5[1m]', 1000, 2000, 50000, 4000, 2.5)")
+
+        def rows(sql):
+            cur = con.execute(sql)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        t = explorer.token_cost(rows, {"s": "s"})
+        types = t["d"]["type"]
+        parts = {types[r[2]]: r for r in t["r"]}
+        self.assertAlmostEqual(sum(r[4] for r in t["r"]), 2.5, places=4)  # scaled to what Claude Code recorded
+        self.assertEqual(parts["cache_write_1h"][3], 3000)                # cache writes split 1:3 as in the transcript
 
 
 if __name__ == "__main__":

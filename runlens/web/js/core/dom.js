@@ -99,3 +99,35 @@ function fitText(text, max, size = 12, weight = 400) {
   }
   return lo ? `${s.slice(0, lo)}…` : "…";
 }
+
+// Copy text to the clipboard; falls back to a hidden field where the Clipboard API is not allowed (file://).
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    const input = h("textarea", { "aria-hidden": "true", class: "sr" });
+    input.value = text;
+    document.body.append(input);
+    input.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (err) {
+      ok = false;
+    }
+    input.remove();
+    return ok;
+  }
+}
+
+// A command to run in a terminal, with a button that copies it.
+function cmdLine(text, label) {
+  const btn = h("button", { type: "button", class: "tool", "aria-label": `Copy: ${text}` }, "Copy");
+  btn.addEventListener("click", async () => {
+    const ok = await copyText(text);
+    btn.textContent = ok ? "Copied" : "Select and copy";
+    setTimeout(() => { btn.textContent = "Copy"; }, 1800);
+  });
+  return h("span", { class: "cmd" }, label ? h("span", { class: "muted" }, `${label} `) : null, h("code", {}, text), btn);
+}

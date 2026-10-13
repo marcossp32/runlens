@@ -4,7 +4,8 @@
    the difference, with enough runs on each side and nothing else changed at the same time. A score is read
    against the unit's own typical run (100); units are never ranked against each other. */
 
-const pctOf = () => Math.round((DATA.method.confidence || 0.95) * 100);
+// The confidence level in force: the score settings' (core/scoring.js), else the model's.
+const pctOf = () => Math.round((S.ci || DATA.method.confidence || 0.95) * 100);
 
 // A verdict in words. `x` is a unit, a version or a pair from the model; without one (an old model), the
 // interval is read against 100.
@@ -26,7 +27,9 @@ function verdict(score, ci, x) {
       case "confounded":
         return { tone: "confounded", word: "Confounded", sentence: `Not comparable with ${vs}: ${(x.confounders || []).join("; ") || "something else"} changed at the same time, so a change cannot be put down to the skill text.` };
       default:
-        return { tone: "first", word: "Only one version", sentence: "There is no earlier version to compare with yet." };
+        // A version with no verdict is a first version; a unit with none has a single version so far.
+        return x.label && x.vid ? { tone: "first", word: "First version", sentence: "The first version: there is nothing earlier to compare it with." }
+          : { tone: "first", word: "Only one version", sentence: "There is no earlier version to compare with yet." };
     }
   }
   // No verdict object: describe where the score sits against the typical run (100). This is a description

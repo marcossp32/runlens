@@ -29,11 +29,20 @@ function periodRow(title, sub, score, ci, k, tag, judged) {
 }
 
 function unitPage(id) {
-  const u = UNITS.get(id);
-  const versions = DATA.versions[id] || [];
-  const runs = DATA.runs[id] || [];
+  const base = UNITS.get(id);
+  const sc = scoreUnit(base);
+  // The unit as scored under the current filters and settings (the model's own with the defaults).
+  const u = { ...base, score: sc.score, ci: sc.ci, verdict: sc.verdict, direction: sc.direction, vs: sc.vs, difference: sc.difference,
+    confounders: sc.confounders, delta: sc.delta, kpi: sc.kpi, runs: sc.runs, current: sc.current, low_sample: sc.runs < MIN_RUNS,
+    weights: sc.weights };
+  const versions = sc.versions;
+  const runs = sc.rows;
+  if (!runs.length) {
+    return h("article", { class: "page" }, h("header", { class: "pagehead" }, h("a", { class: "back", href: hrefPage("skills") }, "← All skills"),
+      h("h1", { tabindex: "-1" }, base.name, " ", chip(KIND[base.kind], "kind"))), emptyFiltered());
+  }
   const v = verdict(u.score, u.ci, u);
-  const few = u.low_sample ? ` Only ${fmt.runs(u.runs)} so far, so it can still move.` : "";
+  const few = u.low_sample ? ` Only ${fmt.runs(u.runs)} ${slicing() ? "in the filters" : "so far"}, so it can still move.` : "";
   const members = u.kind === "group" ? ` Members: ${u.members.join(", ")}.` : "";
   const cur = versions.find((x) => x.label === u.current) || null;
   const curRuns = cur ? runs.filter((r) => r.version === cur.label) : [];
@@ -45,10 +54,11 @@ function unitPage(id) {
     h("header", { class: "pagehead" },
       h("a", { class: "back", href: hrefPage("skills") }, "← All skills"),
       h("h1", { tabindex: "-1" }, key, u.name, " ", chip(KIND[u.kind], "kind")),
-      h("p", { class: `summary tone-${v.tone}` }, h("span", { class: "ticon", "aria-hidden": "true" }, TONE[v.tone].icon), " ",
-        versions.length > 1 ? `Current version ${u.current}. ` : "", v.sentence + few + members)),
+      h("p", { class: `summary tone-${v.tone}`, "data-score": valid(u.score) ? u.score.toFixed(3) : null, "data-verdict": u.verdict || null }, h("span", { class: "ticon", "aria-hidden": "true" }, TONE[v.tone].icon), " ",
+        versions.length > 1 ? `Current version ${u.current}. ` : "", v.sentence + few + members),
+      scoreSettingsNote()),
     periodRow(versions.length > 1 ? "All versions" : u.kind === "agent" ? "All runs" : "Its only version", `${fmt.runs(u.runs)} · ${fmt.span(u.first_seen, u.last_seen)}`,
-      u.kind === "agent" ? null : 100, null, u.kpi, h("span", { class: "muted" }, u.kind === "agent" ? "described, not scored" : "the reference: 100 is this unit's typical run"),
+      u.kind === "agent" ? null : 100, null, u.kpi, h("span", { class: "muted" }, u.kind === "agent" ? "described, not scored" : S.base === "self" ? "the reference: 100 is this unit's typical run" : `scores read against ${baseWords()}`),
       u.kind === "agent" ? u : {}),
     showCurrent ? periodRow(`Current version ${cur.label}`, `${fmt.runs(cur.runs)} · ${fmt.span(cur.first_seen, cur.last_seen)}`, cur.score, cur.ci, kpiOf(curRuns, u.kind),
       h("span", {}, cur.ci ? `range ${fmt.interval(cur.ci)} · ` : "", toneTag(c.tone || verdict(cur.score, cur.ci, cur).tone, verdict(cur.score, cur.ci, cur).word)), cur) : null,
@@ -56,6 +66,12 @@ function unitPage(id) {
       { id: "versions", label: "Versions", build: () => versionsPanel(u, versions) },
       { id: "drivers", label: "What drives the score", build: () => driversPanel(u, versions) },
       { id: "runs", label: "Runs", build: () => runsPanel(u, runs, versions) },
+      base.outcome ? { id: "outcome", label: "Outcome", build: () => h("div", { class: "charts" }, rateFacets({
+        title: `${base.outcome.measure ? human(base.outcome.measure) : "Outcome"} over time`, question: "Does it reach its outcome more often than before?",
+        sub: "weekly first-pass rate · dotted lines: new versions",
+        facets: [{ label: u.name, points: runs.filter((r) => r.on).map((r) => ({ t: timeOf(r.started), k: r.os || 0, n: r.on })),
+          vlines: versions.slice(1).filter((x) => x.first_seen).map((x) => ({ t: timeOf(x.first_seen), label: x.label, kind: "skill" })) }],
+        rateTitle: "First-pass rate", notes: `Dot size is the week's attempts, hollow under ${MIN_RUNS}; the band is the ${Math.round(S.ci * 100)}% Wilson interval.` })) } : null,
     ], { param: "tab" }));
 }
 
@@ -71,7 +87,7 @@ function versionsPanel(u, versions) {
       title: "Each version over time", sub: "segment = dates in use · band = its range · 100 = this unit's typical run",
       facets: [{ label: u.name, versions: versions.filter((v) => v.recorded).map((v) => ({ label: v.label, t0: timeOf(v.first_seen), t1: timeOf(v.last_seen || v.first_seen),
         score: v.score, ci: v.ci, runs: v.runs, tone: change(v).tone, text: change(v).text })) }],
-      ref: 100,
+      ref: 100, vlines: changeMarks(["cc", "model"]), question: "How did each version score, and what else changed meanwhile?",
       notes: `The first version is marked as such, not as “no change”. A version is called better or worse than the one before only from the difference between their runs, with at least ${MIN_RUNS} runs on each side and nothing else changed at the same time.`,
     }),
     h("div", {}, h("h2", { class: "listtitle" }, "Versions, newest first"), list));
@@ -128,23 +144,19 @@ function driversPanel(u, versions) {
     const prev = versions[versions.indexOf(v) - 1];
     const prevShare = new Map(prev && prev.metrics ? contributions(prev).map((c) => [c.m.key, c.share]) : []);
     const parts = contributions(v).sort((a, b) => Math.abs(b.share) - Math.abs(a.share));
-    const spend = versions.map((x) => ({ label: nameOf(x), value: sumOf((DATA.runs[u.id] || []).filter((r) => r.version === x.label), (r) => r.cost) }));
+    const spend = versions.map((x) => ({ label: nameOf(x), value: sumOf(unitRunsOf(u.id).filter((r) => r.version === x.label), (r) => r.cost) }));
     fill(holder,
-      divergingBars({
-        title: `What moves the score of ${nameOf(v)}`, sub: `${fmt.runs(v.runs)} · score ${fmt.score(v.score)} · each bar is weight × ln(ratio) ÷ total weight`,
-        n: v.runs, minN: MIN_RUNS,
-        rows: parts.map((p) => ({ label: metricLabel(p.m), value: p.share, ratio: p.d.ratio, prev: prevShare.get(p.m.key), text: fmt.signedPct(effect(p.share), 1),
-          tip: [["Effect on the score", fmt.signedPct(effect(p.share), 1)], ["This version", fmt.metric(p.m, p.d.value)], ["Typical run", fmt.metric(p.m, p.d.ref)],
-            ["Ratio to typical", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`], ["Runs", fmt.int(p.d.n)],
+      waterfallChart({
+        title: `What moves the score of ${nameOf(v)}`, question: "Which measure moves the score, and by how much?",
+        sub: `${fmt.runs(v.runs)} · from 100 (${baseWords()}) to ${fmt.score(v.score)} · each step is weight × ln(ratio) ÷ total weight`,
+        n: v.runs, minN: MIN_RUNS, score: v.score, base: baseWords(),
+        rows: parts.map((p) => ({ label: metricLabel(p.m), share: p.share,
+          tip: [["This version", fmt.metric(p.m, p.d.value)], ["Reference", fmt.metric(p.m, p.d.ref)], ["Ratio", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`], ["Runs", fmt.int(p.d.n)],
             ...(prevShare.has(p.m.key) ? [[`Effect in ${prev.label}`, fmt.signedPct(effect(prevShare.get(p.m.key)), 1)]] : [])] })),
-        tickFmt: (t) => fmt.signedPct(effect(t), 0), axisTitle: "Effect on the score",
-        legendItems: [{ label: `${TONE.better.icon} raises the score`, css: TONE.better.css, kind: "rect" }, { label: `${TONE.worse.icon} lowers it`, css: TONE.worse.css, kind: "rect" },
-          ...(prev ? [{ label: `${prev.label}, the version before`, css: "var(--text)", kind: "line" }] : [])],
-        extraCols: [{ label: "Ratio to typical", num: true, value: (r) => r.ratio }],
-        notes: `The effects multiply: together they take the score from 100 to ${fmt.score(v.score)}.`,
+        notes: `The steps multiply: together they take the score from 100 to ${fmt.score(v.score)}. A measure with weight 0 is shown in the table and moves nothing.`,
       }),
       breakdownTable(v),
-      versions.length > 1 ? barChart({ title: "Spend by version", sub: "model spend of each version's runs", items: spend, sort: false, fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Version" }) : null);
+      versions.length > 1 ? barChart({ title: "Spend by version", question: "How much did each version cost in total?", sub: "model spend of each version's runs", items: spend, sort: false, fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Version" }) : null);
   };
   select.addEventListener("change", () => {
     setParams({ ver: select.value === u.current ? null : select.value });
@@ -152,7 +164,7 @@ function driversPanel(u, versions) {
   });
   draw();
   return h("div", {}, h("label", { class: "inline" }, "Version ", select), holder,
-    note(`Weights for this unit: ${Object.entries(u.weights || {}).map(([k, w]) => `${metricLabel(metricByKey.get(k) || { key: k, label: k })} ×${w}`).join(", ") || "the defaults"}. Change them under [weights] in config.toml.`));
+    note(`Weights for this unit${customWeights() ? " (your settings)" : ""}: ${Object.entries(u.weights || {}).map(([k, w]) => `${metricLabel(metricByKey.get(k) || { key: k, label: k })} ×${w}`).join(", ") || "the defaults"}. Change them in Score, at the top, or under [weights] in config.toml.`));
 }
 
 function breakdownTable(v) {
@@ -183,25 +195,30 @@ function runsPanel(u, runs, versions) {
     const m = metricByKey.get(select.value) || wanted;
     const val = (r) => runMetrics(r, u.kind)[m.key];
     const vlist = versions.length ? versions : [{ label: "all", recorded: true }];
-    const boundaries = versions.slice(1).filter((v) => v.first_seen).map((v) => ({ t: timeOf(v.first_seen), label: nameOf(v) }));
+    const boundaries = versions.slice(1).filter((v) => v.first_seen).map((v) => ({ t: timeOf(v.first_seen), label: nameOf(v), kind: "skill", title: `${u.name} ${v.label} first used` }));
     const isCur = (r) => !versions.length || r.version === cur;
     fill(charts,
-      stripPlot({
-        title: `${metricLabel(m)}, every run by version`, sub: "each dot is one run · the line is the median",
-        groups: [...vlist].reverse().map((v) => ({ label: versions.length ? `${nameOf(v)}${v.label === cur ? " (current)" : ""}` : "All runs", css: v.label === cur || !versions.length ? "var(--c1)" : "var(--other)",
-          values: runs.filter((r) => !versions.length || r.version === v.label).map((r) => ({ v: val(r), tip: tipOf(r) })) })),
+      dotStack({
+        title: `${metricLabel(m)}, every run by version`, question: "Is a version really different, or is it one odd run?",
+        sub: "each dot is one run · the tall line is the median, the short one the middle half of the runs",
+        groups: [...vlist].reverse().filter((v) => enoughRuns(versions.length ? v.runs : runs.length)).map((v) => ({ label: versions.length ? `${nameOf(v)}${v.label === cur ? " (current)" : ""}` : "All runs",
+          css: v.label === cur || !versions.length ? "var(--c1)" : "var(--other)",
+          values: runs.filter((r) => !versions.length || r.version === v.label).map((r) => ({ v: val(r), tip: tipOf(r), href: RUN.has(r.session) ? hrefRun(r.session) : null })) })),
         fmt: (x) => fmt.metric(m, x), tickFmt: (x) => fmt.metricTick(m, x), axisTitle: metricLabel(m),
       }),
       h("div", { class: "grid" },
         scatterChart({
-          title: `${metricLabel(m)}, run by run over time`, sub: "vertical lines mark when a new version was first used",
-          points: runs.filter((r) => r.started).map((r) => ({ x: timeOf(r.started), y: val(r), label: r.task || r.session, css: isCur(r) ? "var(--c1)" : "var(--other)", tip: tipOf(r) })),
-          x: { title: "Run started", time: true }, y: { title: metricLabel(m), fmt: (x) => fmt.metricTick(m, x) }, vlines: boundaries, labelTitle: "Run",
+          title: `${metricLabel(m)}, run by run over time`, question: "Did the measure move when the skill, the model or Claude Code changed?",
+          sub: "dotted lines: a new version, a Claude Code update, a model's first use",
+          points: runs.filter((r) => r.started).map((r) => ({ x: timeOf(r.started), y: val(r), label: r.task || r.session, css: isCur(r) ? "var(--c1)" : "var(--other)", tip: tipOf(r),
+            href: RUN.has(r.session) ? hrefRun(r.session) : null })),
+          x: { title: "Run started", time: true }, y: { title: metricLabel(m), fmt: (x) => fmt.metricTick(m, x) }, vlines: boundaries.concat(changeMarks(["cc", "model"])), labelTitle: "Run",
           legendItems: versions.length > 1 ? [{ label: `current version (${cur})`, css: "var(--c1)", kind: "dot" }, { label: "earlier versions", css: "var(--other)", kind: "dot" }] : null,
         }),
         scatterChart({
-          title: "Cost against time per run", sub: "one mark per run",
-          points: runs.map((r) => ({ x: r.seconds / 60, y: r.cost, label: r.task || r.session, css: isCur(r) ? "var(--c1)" : "var(--other)", tip: tipOf(r) })),
+          title: "Cost against time per run", question: "Do the expensive runs simply run longer?", sub: "one mark per run",
+          points: runs.map((r) => ({ x: r.seconds / 60, y: r.cost, label: r.task || r.session, css: isCur(r) ? "var(--c1)" : "var(--other)", tip: tipOf(r),
+            href: RUN.has(r.session) ? hrefRun(r.session) : null })),
           x: { title: "Time per run, minutes", fmt: (x) => `${fmt.num(x, x < 10 ? 1 : 0)} min` }, y: { title: "Cost per run, US$", fmt: fmt.usdTick }, labelTitle: "Run",
           legendItems: versions.length > 1 ? [{ label: `current version (${cur})`, css: "var(--c1)", kind: "dot" }, { label: "earlier versions", css: "var(--other)", kind: "dot" }] : null,
         })));
@@ -212,7 +229,7 @@ function runsPanel(u, runs, versions) {
   });
   draw();
   const cols = [
-    { key: "started", label: "Started", value: (r) => r.started, cell: (r) => fmt.when(r.started) },
+    { key: "started", label: "Started", value: (r) => r.started, cell: (r) => (RUN.has(r.session) ? h("a", { href: hrefRun(r.session) }, fmt.when(r.started)) : fmt.when(r.started)) },
     { key: "task", label: "Task", value: (r) => r.task, cell: (r) => h("span", { class: "task", title: r.task || "" }, r.task || "—") },
     { key: "version", label: "Version", value: (r) => r.version },
     { key: "cost", label: "Cost", num: true, value: (r) => r.cost, cell: (r) => fmt.usd(r.cost) },

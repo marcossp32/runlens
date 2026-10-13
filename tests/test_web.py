@@ -1,7 +1,9 @@
 """Tests for the dashboard page: how its script is assembled, what it may contain, and that every page renders.
 
-The rendering test opens the generated file in a headless Chromium (Chrome, Chromium or Edge) and is skipped
+The rendering tests open the generated file in a headless Chromium (Chrome, Chromium or Edge) and are skipped
 when none is installed; RUNLENS_BROWSER can point at one. The syntax test needs node and is skipped without it.
+The recompute tests build the made-up demo history (scripts/make_demo.py) in a separate process, so they never
+touch the database other tests use, and check that the page works a score out exactly as bench.py does.
 
 Run: python -m unittest tests.test_web -v
 """
@@ -11,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,15 +22,13 @@ from unittest import mock
 TMP = Path(tempfile.mkdtemp(prefix="runlens-web-"))
 os.environ.setdefault("RUNLENS_HOME", str(TMP / "home"))
 
-from runlens import dashboard  # noqa: E402
+from runlens import bench, dashboard, explorer  # noqa: E402
 
 WEB = dashboard.WEB
-METRICS = [
-    {"key": "cost", "label": "Cost per run", "unit": "usd", "weight": 3, "kinds": ["skill", "agent", "group"], "what": "Model spend."},
-    {"key": "seconds", "label": "Time per run", "unit": "s", "weight": 2, "kinds": ["skill", "agent", "group"], "what": "Time."},
-    {"key": "error_rate", "label": "Tool error rate", "unit": "rate", "weight": 2, "kinds": ["skill", "agent", "group"], "what": "Errors."},
-    {"key": "interventions", "label": "Human prompts per run", "unit": "count", "weight": 2, "kinds": ["skill", "group"], "what": "Prompts."},
-]
+ROOT = Path(__file__).resolve().parent.parent
+METRICS = [{**{k: v for k, v in m.items() if k != "kinds"}, "kinds": list(m["kinds"])} for m in bench.MEASURES if m["key"] != "outcome"]
+EVIL = "</script><b>x</b>"
+T0 = 1_790_000_000  # 2026-09-21, epoch seconds
 
 
 def metrics(ratio, n):
@@ -35,83 +36,107 @@ def metrics(ratio, n):
             for m in METRICS if "skill" in m["kinds"]}
 
 
-def run(day, version, cost, task="</script><b>x</b>"):
-    return {"started": f"2026-10-0{day}T10:00:00+02:00", "session": f"s{day}{version}", "task": task, "version": version, "repo": "r",
-            "cost": cost, "seconds": 600.0, "calls": 10, "call_errors": 1, "idle": 0, "turns": 5, "api_errors": 0,
-            "incidents": 1, "interventions": 0, "bad": 0}
+def run(day, version, cost, session=None, task=EVIL):
+    """A run row as bench.run_row writes it: the display fields and every measure's num and den."""
+    return {"started": f"2026-10-0{day}T10:00:00+02:00", "session": session or f"s{day}{version}aaaa"[:8], "task": task, "version": version,
+            "repo": "r", "inv": 2, "invocations": 2, "cost": cost, "seconds": 600.0, "lc": 2 * (cost / 2 + 0.01), "ls": 2 * 6.0,
+            "calls": 10, "call_errors": 1, "idle": 0, "turns": 5, "api_errors": 0, "incidents": 1, "interventions": 0, "bad": 0, "lines": 12}
 
 
-def version(label, key, day0, day1, score, ci, n, delta=None, overlap=None, uid="skill:flow"):
-    return {"id": uid, "label": label, "key": key, "parts": [{"skill": "flow", "hash": key}], "recorded": True,
-            "first_seen": f"2026-10-0{day0}T10:00:00+02:00", "last_seen": f"2026-10-0{day1}T10:00:00+02:00",
-            "runs": n, "low_sample": n < 5, "score": score, "ci": ci, "metrics": metrics(score / 100, n),
-            "changes": [], "delta": delta, "overlap": overlap}
+def version(label, key, day0, day1, score, ci, n, uid="skill:flow"):
+    return {"id": uid, "vid": f"{uid}@{key}", "label": label, "key": key, "parts": [{"skill": uid.split(":")[1], "hash": key}], "recorded": True,
+            "first_seen": f"2026-10-0{day0}T10:00:00+02:00", "last_seen": f"2026-10-0{day1}T10:00:00+02:00", "runs": n, "invocations": 2 * n,
+            "low_sample": n < 5, "score": score, "ci": ci, "metrics": metrics(score / 100, n), "outcome": None,
+            "kpi": {"spend": 3.0, "cost_per_success": None, "cost_per_kloc": None, "lines": 30, "invocations": 2 * n},
+            "changes": [], "verdict": None, "direction": None, "vs": None, "difference": None, "confounders": [], "delta": None, "overlap": None}
+
+
+def unit(uid, kind, name, runs, score, ci, current, weights=True):
+    keys = [m["key"] for m in METRICS if kind in m["kinds"]]
+    return {"id": uid, "kind": kind, "name": name, "members": [], "runs": runs, "invocations": 2 * runs, "versions": 1, "current": current,
+            "score": score, "ci": ci, "verdict": None, "direction": None, "vs": None, "difference": None, "confounders": [], "delta": None,
+            "low_sample": runs < 5, "outcome": None, "first_seen": "2026-10-01T10:00:00+02:00", "last_seen": "2026-10-06T10:00:00+02:00",
+            "kpi": {"cost": 1.2, "seconds": 600.0, "error_rate": 0.1, "incidents": 10.0, "interventions": 0.0, "spend": 7.0, "invocations": 2 * runs},
+            "baseline": {k: 0.1 for k in keys}, "pseudo": {k: 2.0 for k in keys},
+            "weights": {k: float(bench.MEASURE[k]["weight"]) for k in keys} if weights else {}}
+
+
+def explore():
+    """Per-run facts in the shape explorer.build writes, with hostile titles to prove they stay text."""
+    t = explorer.table
+    runs = [[f"s{d}{'v1' if d <= 3 else 'v2'}aaaa"[:8], f"session-{d}", T0 + d * 86400, 3600, "r" if d % 2 else "other", "main", "2.1.0" if d < 4 else "2.2.0",
+             EVIL, "complete" if d < 6 else "open", 0, "session_end", 2.0 * d, int(d == 6), 0, 3_600_000, 1_000_000, 500_000, 1, d, 10, 2,
+             ["https://example.com/pr/1"] if d == 2 else [], [], 2, 0, "cli", ["claude-opus-5-5"], ["high"], ["flow"]] for d in range(1, 7)]
+    ids = [r[0] for r in runs]
+    return {
+        "duration_edges": explorer.DURATION_EDGES,
+        "runs": t(("run", "sid", "started", "ended", "repo", "branch", "cc", "title", "status", "stub", "ended_by", "cost", "estimated",
+                   "unknown_cost", "active_ms", "api_ms", "tool_ms", "prompts", "agents", "added", "removed", "prs", "unpriced", "parser",
+                   "bad_lines", "entry", "models", "efforts", "skills"), runs),
+        "calls": t(("run", "model", "effort", "skill", "calls", "cost", "input", "cw5", "cw1", "cread", "output", "thinking", "think_ms", "errors", "limits", "unpriced"),
+                   [[r, "claude-opus-5-5", "high", "flow", 30, 2.0, 1000, 200, 100, 9000, 500, 50, 900, 0, 1, 0] for r in ids], codes=("run", "model", "effort", "skill")),
+        "days": t(("run", "day", "model", "skill", "cost", "calls"), [[r, f"2026-09-2{i + 2}", "claude-opus-5-5", "flow", 2.0, 30] for i, r in enumerate(ids)]),
+        "tools": t(("run", "tool", "skill", "calls", "errors", "denied", "ms"), [[r, "Read", "flow", 40, 2, 1, 5000] for r in ids]),
+        "durations": t(("run", "tool", "bins"), [[r, "Read", [0, 1, 5, 10, 8, 4, 2, 1, 0, 0, 0, 0]] for r in ids]),
+        "errors": t(("run", "tool", "class", "skill", "n"), [[r, "Read", "not_found", "flow", 2] for r in ids]),
+        "agents": t(("run", "i", "parent", "type", "role", "model", "t0", "t1", "cost", "status", "depth", "bg", "tools", "errors", "stopped", "peak", "compactions", "stop"),
+                    [x for r in ids for x in ([r, 0, None, "main", "main", None, 0, 3600, 1.0, None, 0, 0, None, None, 0, None, None, None],
+                                                [r, 1, 0, "Explore", EVIL, "claude-sonnet-5-5", 60, 600, 0.5, "completed", 1, 0, 10, 1, 0, 50000, 0, "end_turn"],
+                                                [r, 2, 1, "Explore", "scan", "claude-haiku-5-5", 120, None, 0.1, "running", 2, 1, 3, 0, 0, 20000, 0, None])]),
+        "incidents": t(("run", "t", "type", "skill", "agent", "role", "id", "detail", "policy", "n", "label"),
+                       [[r, 300, "idle_loop", "flow", 0, "main", f"inc{i}", EVIL, 0, 3, "tool_misuse"] for i, r in enumerate(ids)]),
+        "markers": t(("run", "t", "marker", "value", "bad", "skill"), [[r, 900, "step_check", "PASS" if i % 2 else "FAIL", int(not i % 2), "flow"] for i, r in enumerate(ids)]),
+        "events": t(("run", "t", "kind", "agent", "value", "source"), [[r, 30, "human_prompt", 0, None, "typed"] for r in ids]),
+        "stops": t(("run", "model", "stop", "n"), [[r, "claude-opus-5-5", "end_turn", 10] for r in ids]),
+        "apierr": t(("run", "model", "kind", "status", "limit", "n"), [[ids[0], "claude-opus-5-5", "rate_limit", 429, 1, 1]]),
+        "compactions": t(("run", "t", "agent", "trigger", "pre", "post", "ms", "skill"), [[ids[1], 1200, 0, "auto", 170000, 20000, 30000, "flow"]]),
+        "segments": t(("run", "skill", "t0", "t1", "cost", "calls"), [x for r in ids for x in ([r, "flow", 10, 1800, 1.5, 20], [r, "once_only", 1900, 3500, 0.5, 8])]),
+        "flow": t(("run", "source", "target", "n"), [[r, "flow", "once_only", 1] for r in ids]),
+        "curves": {r: [[0, 0.0], [1800, 1.0], [3500, 2.0]] for r in ids},
+        "toolerr": t(("run", "t", "agent", "tool", "class", "id"), [[r, 700, 1, "Read", "not_found", f"toolu_{i}"] for i, r in enumerate(ids)]),
+        "tokens": t(("run", "model", "type", "tokens", "cost"), [[r, "claude-opus-5-5", ty, 1000, 0.4] for r in ids for ty in explorer.TOKEN_TYPES]),
+        "health": {"summary": {"runs": 6, "open_runs": 1, "stub_runs": 0, "estimated_cost_runs": 1, "unknown_model_cost_runs": 0,
+                               "unpriced_models": ["claude-new-9"], "runs_failed_to_ingest": 1, "min_parser_version": 2, "parser_version": "2",
+                               "last_ingest": "2026-10-07T09:00:00+02:00", "unreadable_lines": 0, "output_token_coverage": 0.16},
+                   "ingest_errors": [{"run": "deadbeef", "sid": "deadbeef-1", "path": EVIL, "stage": "parse", "error": EVIL, "detail": EVIL, "failed_at": "2026-10-07T09:00:00"}],
+                   "coverage": [[r, 100, 600, 2.0] for r in ids], "pending": [], "pending_count": 0, "hook_errors": [EVIL]},
+    }
 
 
 def model():
-    """A small model in the shape bench.build returns, with a hostile task text to prove nothing runs as markup."""
-    units = [
-        {"id": "skill:flow", "kind": "skill", "name": "flow", "members": [], "runs": 6, "versions": 2, "current": "v2",
-         "score": 112.0, "ci": [101.0, 125.0], "low_sample": False, "delta": 9.0, "overlap": True,
-         "kpi": {"cost": 1.2, "seconds": 600.0, "error_rate": 0.1, "interventions": 0.0}, "first_seen": "2026-10-01T10:00:00+02:00",
-         "last_seen": "2026-10-06T10:00:00+02:00"},
-        {"id": "skill:once_only", "kind": "skill", "name": "once_only", "members": [], "runs": 1, "versions": 1, "current": "v1",
-         "score": 90.0, "ci": None, "low_sample": True, "delta": None, "overlap": None,
-         "kpi": {"cost": 3.0, "seconds": 900.0, "error_rate": None, "interventions": 1.0}, "first_seen": "2026-10-02T10:00:00+02:00",
-         "last_seen": "2026-10-02T10:00:00+02:00"},
-        {"id": "agent:Explore · scan", "kind": "agent", "name": "Explore · scan", "members": [], "runs": 2, "versions": 0, "current": None,
-         "score": 100.0, "ci": None, "low_sample": True, "delta": None, "overlap": None,
-         "kpi": {"cost": 0.5, "seconds": 60.0, "error_rate": 0.0, "interventions": None}, "first_seen": "2026-10-03T10:00:00+02:00",
-         "last_seen": "2026-10-04T10:00:00+02:00"},
-    ]
-    versions = {
-        "skill:flow": [version("v1", "a1", 1, 3, 103.0, [92.0, 115.0], 3), version("v2", "b2", 4, 6, 112.0, [101.0, 125.0], 3, 9.0, True)],
-        "skill:once_only": [version("v1", "c3", 2, 2, 90.0, None, 1, uid="skill:once_only")],
-    }
-    runs = {"skill:flow": [run(d, "v1" if d <= 3 else "v2", 1.0 + d / 10) for d in range(1, 7)],
-            "skill:once_only": [run(2, "v1", 3.0)], "agent:Explore · scan": [run(3, "v1", 0.4), run(4, "v1", 0.6)]}
-    diag = {
-        "runs": [{"run": f"r{d}", "started": f"2026-10-0{d}T10:00:00+02:00", "repo": "r", "branch": "main", "cc_version": "2.1",
-                  "title": "<img src=x onerror=alert(1)>", "cost": 2.0 * d, "estimated": d == 6, "active_ms": 3.6e6, "prompts": 1,
-                  "agents": d, "lines_added": 10, "lines_removed": 2, "incidents": 1, "tool_calls": 20, "tool_errors": 2} for d in range(1, 7)],
-        "incidents": [{"type": "idle_loop", "skill": "flow", "incidents": 2, "occurrences": 4}],
-        "incident_roles": [{"role": "main", "incidents": 2}],
-        "tool_errors": [{"class": "not_found", "tool": "Read", "errors": 2}],
-        "tools": [{"tool": "Read", "calls": 40, "errors": 2, "median_ms": 30.0, "p95_ms": 900.0, "total_ms": 5000.0}],
-        "idle": [{"skill": "flow", "idle_calls": 1, "calls": 40}],
-        "models": [{"model": "claude-opus-5-5", "calls": 30, "cost": 7.2, "output": 1000, "thinking": 50, "fresh_input": 3000, "cache_read": 90000}],
-        "efforts": [{"effort": "high", "calls": 30, "cost": 7.2}],
-        "agent_types": [{"agent_type": "Explore", "agents": 2, "cost": 1.0, "tool_calls": 10, "tool_errors": 1, "peak_context": 50000,
-                         "compactions": 0, "not_completed": 0}],
-        "agent_status": [{"status": "completed", "agents": 2}],
-        "flow": [{"source": "flow", "target": "once_only", "transitions": 1}],
-        "markers": [{"marker": "step_check", "value": "PASS", "bad": False, "skill": "flow", "n": 3}],
-        "events": [{"kind": "away_summary", "n": 1}], "labels": [],
-        "model_effort": [{"model": "claude-opus-5-5", "effort": "high", "calls": 30, "cost": 7.2, "avg_output": 30.0, "avg_thinking": 2.0, "avg_thinking_ms": 900.0}],
-        "model_skill": [{"model": "claude-opus-5-5", "skill": "flow", "calls": 30, "cost": 7.2}],
-        "model_day": [{"day": "2026-10-01", "model": "claude-opus-5-5", "cost": 3.0, "calls": 10}, {"day": "2026-10-04", "model": "claude-opus-5-5", "cost": 4.2, "calls": 20}],
-        "api_errors": [{"model": "claude-opus-5-5", "errors": 0, "calls": 30}],
-        "agents_by_run": [{"run": "r3", "agent_type": "Explore", "n": 2, "cost": 1.0}],
-        "agents_by_skill": [{"skill": "flow", "agent_type": "Explore", "n": 2, "cost": 1.0}],
-        "agent_shape": [{"depth": 1, "background": False, "n": 2}],
-        "agent_models": [{"agent_type": "Explore", "model": "sonnet", "n": 2, "cost": 1.0}],
-        "agent_roles": [{"agent_type": "Explore", "role": "scan", "agents": 2, "cost": 1.0, "avg_seconds": 30.0, "avg_tools": 5.0, "peak_context": 50000}],
-        "agent_time": [{"agent_type": "Explore", "avg_s": 30.0, "median_s": 28.0, "p95_s": 40.0}],
-        "agent_skills": [], "agent_day": [{"day": "2026-10-03", "n": 2, "cost": 1.0}],
-    }
+    """A small model in the shape dashboard.model_of returns, with hostile text to prove nothing runs as markup."""
+    units = [unit("skill:flow", "skill", "flow", 6, 112.0, [101.0, 125.0], "v2"),
+             unit("skill:once_only", "skill", "once_only", 1, 90.0, None, "v1"),
+             unit("agent:Explore|scan", "agent", "Explore · scan", 2, None, None, None)]
+    units[0].update(versions=2, verdict="no clear change", direction="no clear change", vs="v1", delta=9.0,
+                    difference={"score": 109.0, "ci": [95.0, 125.0], "measures": {}, "outcome": None})
+    v2 = version("v2", "b2", 4, 6, 112.0, [101.0, 125.0], 3)
+    v2.update(verdict="no clear change", direction="no clear change", vs="v1", delta=9.0, difference=units[0]["difference"])
+    versions = {"skill:flow": [version("v1", "a1", 1, 3, 103.0, [92.0, 115.0], 3), v2],
+                "skill:once_only": [version("v1", "c3", 2, 2, 90.0, None, 1, uid="skill:once_only")]}
+    pairs = {"skill:flow": [{"a": "v1", "b": "v2", "vs_previous": True, "runs_a": 3, "runs_b": 3, "invocations_a": 6, "invocations_b": 6,
+                             "verdict": "not enough runs", "direction": None, "confounders": ["Claude Code 2.1 → 2.2"],
+                             "difference": {"score": 109.0, "ci": None, "outcome": None,
+                                            "measures": {"cost": {"a": 1.0, "b": 0.8, "effect": 1.25, "ci": None, "weight": 2}}}}]}
+    ex = explore()
+    sid = [r[0] for r in ex["runs"]["r"]]
+    runs = {"skill:flow": [run(d, "v1" if d <= 3 else "v2", 1.0 + d / 10, session=sid[d - 1]) for d in range(1, 7)],
+            "skill:once_only": [run(2, "v1", 3.0, session=sid[1])], "agent:Explore|scan": [run(3, "all", 0.4, session=sid[2]), run(4, "all", 0.6, session=sid[3])]}
     return {
-        "generated": "2026-10-07T09:00+02:00",
-        "window": {"first": "2026-10-01T10:00:00+02:00", "last": "2026-10-06T10:00:00+02:00", "runs": 6},
-        "texts": True,
-        "method": {"metrics": METRICS, "shrink": 2, "max_ratio": 2.0, "floor": 0.01, "turn_cap": 600, "resamples": 2000, "min_runs": 5},
-        "reference": {"skill": {"cost": 1.0, "seconds": 1.0, "error_rate": 1.0, "interventions": 1.0}, "agent": {"cost": 1.0}},
-        "units": units, "versions": versions, "runs": runs, "diag": diag,
+        "generated": "2026-10-07T09:00+02:00", "texts": True,
+        "window": {"first": "2026-10-01T10:00:00+02:00", "last": "2026-10-06T10:00:00+02:00", "runs": 6, "excluded": {"open": 0}},
+        "population": {"runs": 6, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"},
+        "method": {"metrics": METRICS, "shrink": 2, "max_ratio": 2.0, "floor": 0.5, "turn_cap": 600, "resamples": 500, "min_runs": 5,
+                   "confidence": 0.95, "mix_shift": 0.3, "cc_version": "minor", "outcomes": [], "verdicts": list(bench.VERDICTS)},
+        "units": units, "versions": versions, "pairs": pairs, "runs": runs,
+        "explore": ex, "views": [{"name": EVIL, "hash": "#/runs"}],
     }
 
 
 def empty_model():
     m = model()
-    m.update(units=[], versions={}, runs={}, diag=None, window={"first": None, "last": None, "runs": 0})
+    m.update(units=[], versions={}, pairs={}, runs={}, explore={}, views=[],
+             window={"first": None, "last": None, "runs": 0, "excluded": {}})
     return m
 
 
@@ -128,6 +153,14 @@ def find_browser():
     return None
 
 
+def dump(path, route, budget=5000):
+    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile."""
+    prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
+    cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
+           f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+
+
 class Assembly(unittest.TestCase):
     def test_every_module_is_listed_once_and_exists(self):
         on_disk = sorted(p.relative_to(WEB / "js").as_posix() for p in (WEB / "js").rglob("*.js"))
@@ -139,9 +172,10 @@ class Assembly(unittest.TestCase):
         self.assertEqual(mods[0], "core/boot.js")  # counts errors from everything after it
         self.assertEqual(mods[-1], "app.js")  # starts the router once every page exists
         kinds = [m.split("/")[0] if "/" in m else "app" for m in mods]
-        rank = {"core": 0, "charts": 1, "pages": 2, "app": 3}
-        self.assertEqual(kinds, sorted(kinds, key=rank.get), "core, then charts, then pages, then app")
-        for a, b in (("core/data.js", "core/colour.js"), ("core/prefs.js", "core/format.js"), ("charts/frame.js", "charts/kit.js")):
+        rank = {"core": 0, "charts": 1, "ui": 2, "pages": 3, "app": 4}
+        self.assertEqual(kinds, sorted(kinds, key=rank.get), "core, then charts, then ui, then pages, then app")
+        for a, b in (("core/data.js", "core/colour.js"), ("core/prefs.js", "core/format.js"), ("charts/frame.js", "charts/kit.js"),
+                     ("charts/kit.js", "charts/kit2.js"), ("core/meaning.js", "core/scoring.js"), ("core/filters.js", "core/scoring.js")):
             self.assertLess(mods.index(a), mods.index(b))
 
     def test_script_is_one_strict_function(self):
@@ -166,6 +200,24 @@ class Assembly(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
 
 
+class Model(unittest.TestCase):
+    def test_views_from_config(self):
+        cfg = {"dashboard": {"view": [{"name": "Last week", "hash": "#/?range=7d"}, {"name": "Runs", "hash": "/runs"},
+                                      {"name": "", "hash": "#/"}, {"hash": "#/x"}, "not a table"]}}
+        self.assertEqual(dashboard.views(cfg), [{"name": "Last week", "hash": "#/?range=7d"}, {"name": "Runs", "hash": "#/runs"}])
+        self.assertEqual(dashboard.views({}), [])
+
+    def test_tables_code_repeated_values(self):
+        t = explorer.table(("a", "b"), [["x", 1], ["y", 2], ["x", 3]], codes=("a",))
+        self.assertEqual(t["d"]["a"], ["x", "y"])
+        self.assertEqual([r[0] for r in t["r"]], [0, 1, 0])
+
+    def test_duration_bins(self):
+        self.assertEqual(explorer.duration_bin(5), 0)
+        self.assertEqual(explorer.duration_bin(10), 1)
+        self.assertEqual(explorer.duration_bin(10 ** 7), len(explorer.DURATION_EDGES))
+
+
 class Page(unittest.TestCase):
     def setUp(self):
         self.page = dashboard.render(model())
@@ -185,38 +237,34 @@ class Page(unittest.TestCase):
         blob = re.search(r'<script id="data" type="application/json">(.*?)</script>', self.page, re.S).group(1)
         self.assertNotIn("<", blob)
         data = json.loads(blob)
-        self.assertEqual(data["runs"]["skill:flow"][0]["task"], "</script><b>x</b>")
+        self.assertEqual(data["runs"]["skill:flow"][0]["task"], EVIL)
 
     def test_every_page_has_a_nav_link(self):
-        for page in ("skills", "compare", "diagnostics", "method"):
+        for page in ("skills", "runs", "compare", "diagnostics", "health", "method"):
             self.assertIn(f'data-page="{page}"', self.page)
 
 
-ROUTES = ["#/", "#/?tab=cost", "#/?tab=measures", "#/?kind=roles", "#/?kind=groups", "#/?skills=flow&v=flow:v2&split=1",
-          "#/unit/skill%3Aflow", "#/unit/skill%3Aflow?tab=drivers", "#/unit/skill%3Aflow?tab=runs", "#/unit/agent%3AExplore%20%C2%B7%20scan",
+ROUTES = ["#/", "#/?tab=cost", "#/?tab=outcome", "#/?tab=measures", "#/?kind=roles", "#/?kind=groups", "#/?skills=flow&v=flow:v2&split=1",
+          "#/unit/skill%3Aflow", "#/unit/skill%3Aflow?tab=drivers", "#/unit/skill%3Aflow?tab=runs", "#/unit/agent%3AExplore%7Cscan",
           "#/compare", "#/compare?a=skill%3Aflow&av=v1&b=skill%3Aonce_only&bv=v1",
-          "#/diagnostics", "#/diagnostics?tab=problems", "#/diagnostics?tab=tools", "#/diagnostics?tab=models&sub=effort",
-          "#/diagnostics?tab=models&sub=time", "#/diagnostics?tab=agents&sub=generated", "#/diagnostics?tab=flow",
-          "#/method", "#/method?tab=example", "#/no/such/page"]
+          "#/runs", "#/runs?cal=runs", "#/run/s1v1aaaa", "#/run/s6v2aaaa?layout=packed", "#/health",
+          "#/diagnostics", "#/diagnostics?tab=tools", "#/diagnostics?tab=models", "#/diagnostics?tab=models&sub=effort&me=calls",
+          "#/diagnostics?tab=models&sub=tokens", "#/diagnostics?tab=models&sub=time", "#/diagnostics?tab=agents", "#/diagnostics?tab=flow",
+          "#/method", "#/method?tab=example", "#/no/such/page",
+          "#/?range=7d", "#/runs?repo=other&model=claude-opus-5-5", "#/?from=2026-09-22&to=2026-09-24&minn=1",
+          "#/?base=prev&ci=80&w=cost:0", "#/unit/skill%3Aflow?base=ver%3Av1&wu=flow%3Acost%3A3", "#/diagnostics?pop=all&effort=high"]
 
 
 @unittest.skipUnless(find_browser(), "no headless Chromium (Chrome or Edge) found; set RUNLENS_BROWSER")
 class Renders(unittest.TestCase):
     """Open the page in a real browser at each route: it must draw an article and record no script error."""
 
-    def dom(self, path, route):
-        prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
-        cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-               "--virtual-time-budget=4000", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
-        out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
-        return out.stdout
-
     def check(self, m, routes):
         path = TMP / f"page-{len(routes)}.html"
         path.write_text(dashboard.render(m), encoding="utf-8")
         for route in routes:
             with self.subTest(route=route):
-                dom = self.dom(path, route)
+                dom = dump(path, route)
                 self.assertTrue('class="page"' in dom, f"no page rendered at {route}")
                 errors = re.search(r'<html[^>]*\bdata-errors="(\d+)"[^>]*>', dom)
                 last = re.search(r'data-last-error="([^"]*)"', dom)
@@ -227,15 +275,85 @@ class Renders(unittest.TestCase):
         self.check(model(), ROUTES)
 
     def test_empty_history_renders(self):
-        self.check(empty_model(), ["#/", "#/compare", "#/diagnostics", "#/method"])
+        self.check(empty_model(), ["#/", "#/runs", "#/compare", "#/diagnostics", "#/health", "#/method"])
 
     def test_charts_are_drawn_at_their_real_width(self):
         path = TMP / "width.html"
         path.write_text(dashboard.render(copy.deepcopy(model())), encoding="utf-8")
-        dom = self.dom(path, "#/?tab=cost")
-        widths = re.findall(r'<svg[^>]*class="[^"]*\bchart\b[^"]*"[^>]*>', dom) or re.findall(r'<svg[^>]*width="(\d+)"[^>]*class="[^"]*chart', dom)
-        self.assertTrue(widths, "no chart was drawn")
+        dom = dump(path, "#/?tab=cost")
+        self.assertTrue(re.findall(r'<svg[^>]*class="[^"]*\bchart\b[^"]*"[^>]*>', dom), "no chart was drawn")
         self.assertIsNone(re.search(r'<svg[^>]*viewBox="0 0 640 ', dom), "a chart still uses the old fixed 640-wide viewBox")
+
+    def test_filter_bar_counts_the_runs_left(self):
+        path = TMP / "filters.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/runs?repo=other")
+        self.assertRegex(dom, r"<strong>2 of 5 runs</strong>")  # 5 finished runs, 2 of them in the repo "other"
+        self.assertIn("Reset filters", dom)
+        dom = dump(path, "#/runs?repo=other&pop=all")
+        self.assertRegex(dom, r"<strong>3 of 6 runs</strong>")  # the open run counts once open runs are included
+
+    def test_health_badge_and_custom_score_are_marked(self):
+        path = TMP / "marks.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/?w=cost:0")
+        self.assertRegex(dom, r'id="healthbadge"[^>]*>⚠ 3 data issues')  # a failed ingest, a model without a price, hook errors
+        self.assertIn('class="ghost custom"', dom)  # the Score menu says the settings are not the defaults
+        self.assertIn('class="settingsnote"', dom)
+        plain = dump(path, "#/")
+        self.assertNotIn('class="ghost custom"', plain)
+        self.assertNotIn('class="settingsnote"', plain)
+
+
+def build_demo():
+    """The demo history and its model, built in child processes with their own RUNLENS_HOME."""
+    home = TMP / "demo-home"
+    if not (home / "model.json").exists():
+        env = {**os.environ, "RUNLENS_HOME": str(home), "PYTHONIOENCODING": "utf-8"}
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "make_demo.py"), str(home)], check=True, env=env, cwd=ROOT, capture_output=True)
+        code = ("import json; from runlens import config, dashboard, store; cfg = config.load(); con = store.connect(read_only=True); "
+                f"m = dashboard.model_of(con, cfg); open(r'{home / 'model.json'}', 'w', encoding='utf-8').write(dashboard.embed(m))")
+        subprocess.run([sys.executable, "-c", code], check=True, env=env, cwd=ROOT, capture_output=True)
+    return json.loads((home / "model.json").read_text(encoding="utf-8"))
+
+
+@unittest.skipUnless(find_browser(), "no headless Chromium (Chrome or Edge) found; set RUNLENS_BROWSER")
+class Recompute(unittest.TestCase):
+    """The page's own score (core/scoring.js) against bench.py's, on the demo history."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.model = build_demo()
+        cls.path = TMP / "demo.html"
+        cls.path.write_text(dashboard.render(cls.model), encoding="utf-8")
+
+    def score_at(self, route):
+        dom = dump(self.path, route, budget=12000)
+        m = re.search(r'class="summary[^"]*"[^>]*data-score="([\d.]+)"', dom)
+        self.assertIsNotNone(m, f"no score at {route}")
+        self.assertIsNone(re.search(r'<html[^>]*\bdata-errors=', dom), f"script error at {route}")
+        return float(m.group(1)), dom
+
+    def test_recomputed_score_matches_the_model(self):
+        # Setting a weight to its own default makes the page work everything out again, with the same result.
+        for name in ("review-pr", "write-tests"):
+            u = next(x for x in self.model["units"] if x["id"] == f"skill:{name}")
+            w = int(u["weights"]["cost"])
+            score, _ = self.score_at(f"#/unit/skill%3A{name}?w=cost:{w}")
+            self.assertAlmostEqual(score, u["score"], places=2, msg=name)
+
+    def test_weights_change_the_score(self):
+        u = next(x for x in self.model["units"] if x["id"] == "skill:review-pr")
+        cost_only, _ = self.score_at("#/unit/skill%3Areview-pr?w=cost:1,seconds:0,error_rate:0,incidents:0,interventions:0,idle_rate:0,"
+                                     "api_error_rate:0,bad_markers:0,outcome:0")
+        v = self.model["versions"]["skill:review-pr"][-1]
+        self.assertAlmostEqual(cost_only, 100 * v["metrics"]["cost"]["ratio"], places=1)  # with cost alone, the score is its ratio
+        self.assertNotAlmostEqual(cost_only, u["score"], places=1)
+
+    def test_filters_recompute_and_keep_a_verdict(self):
+        score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")
+        self.assertGreater(score, 0)
+        self.assertRegex(dom, r'data-verdict="(better|worse|no clear change|not enough runs|confounded)"')
 
 
 if __name__ == "__main__":

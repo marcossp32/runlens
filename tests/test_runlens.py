@@ -278,12 +278,15 @@ class RunlensTest(unittest.TestCase):
         blob = re.search(r'<script id="data" type="application/json">(.*?)</script>', page, re.S).group(1)
         model = json.loads(blob)
         self.assertIn("pipeline", {u["name"] for u in model["units"]})
-        diag = model["diag"]
-        for key in ("runs", "incidents", "tool_errors", "tools", "models", "agent_types", "flow", "markers", "events"):
-            self.assertIn(key, diag)
-        self.assertIn("agent_skills", diag)
-        self.assertEqual(len(diag["runs"]), 1)
-        self.assertTrue(any(t["tool"] == "Bash" for t in diag["tools"]))
+        self.assertNotIn("diag", model)
+        facts = model["explore"]
+        for key in ("runs", "calls", "days", "tools", "incidents", "toolerr", "agents", "flow", "markers", "events", "tokens", "health"):
+            self.assertIn(key, facts)
+        self.assertEqual(len(facts["runs"]["r"]), 1)
+        tools = facts["tools"]
+        j = tools["c"].index("tool")
+        names = tools.get("d", {}).get("tool")
+        self.assertTrue(any((names[r[j]] if names else r[j]) == "Bash" for r in tools["r"]))
         self.assertNotIn("{{", page)
         self.assertEqual(page.count("</script>"), 2)
         self.assertIsNone(re.search(r'(src|href)="https?://', page))

@@ -50,6 +50,8 @@ function redrawForPrint() {
      legend() -> element,              an HTML legend under the plot (optional)
      height,                           expected height, reserved before the first draw
      n, minN                           sample size: under minN the chart says so and is drawn muted
+     controls                          at most two small controls for this chart (a measure, a scale), in its header
+     question                          the question the chart answers, shown under the title
    } */
 function chartCard(spec) {
   const id = `c${Math.random().toString(36).slice(2, 9)}`;
@@ -60,7 +62,9 @@ function chartCard(spec) {
     h("div", { class: "card-head" },
       h("div", { class: "card-titles" },
         h("figcaption", { class: "cardtitle", id: `${id}-t` }, spec.title),
+        spec.question ? h("div", { class: "card-q" }, spec.question) : null,
         spec.sub ? h("div", { class: "card-sub" }, spec.sub) : null),
+      spec.controls ? h("div", { class: "card-controls" }, spec.controls) : null,
       tools),
     spec.n != null && spec.minN && spec.n < spec.minN
       ? h("p", { class: "smalln" }, h("span", { "aria-hidden": "true" }, "○ "), `Only ${fmt.runs(spec.n)}: read this as a hint, not a result.`) : null,
@@ -280,11 +284,14 @@ function axisX(root, o) {
     const x = o.scale(v);
     if (o.grid) g.append(svg("line", { class: t.ref || v === o.ref ? "ref" : "grid", x1: x, x2: x, y1: o.gridTop, y2: o.y }));
     const w = textWidth(label, FONT.axis);
-    if (x - w / 2 < lastRight + 6 || x + w / 2 > o.x1 + 24 || x - w / 2 < o.x0 - 30) continue; // skip a label that would touch its neighbour
-    g.append(svg("text", { class: "tick", x, y: o.y + 16, "text-anchor": "middle" }, label));
-    lastRight = x + w / 2;
+    // A label that would run past the right edge is right-aligned to it; one that would touch its neighbour is skipped.
+    const edge = x + w / 2 > o.x1 + 8;
+    const left = edge ? o.x1 + 8 - w : x - w / 2;
+    if (left < lastRight + 6 || left < o.x0 - 30 || (edge && x - o.x1 > 2)) continue;
+    g.append(svg("text", { class: "tick", x: edge ? o.x1 + 8 : x, y: o.y + 16, "text-anchor": edge ? "end" : "middle" }, label));
+    lastRight = left + w;
   }
-  if (o.title) g.append(svg("text", { class: "axis-title", x: o.x1, y: o.y + 34, "text-anchor": "end" }, o.title));
+  if (o.title) g.append(svg("text", { class: "axis-title", x: o.x1, y: o.y + 34, "text-anchor": "end" }, fitText(o.title, Math.max(60, o.x1 - 2), FONT.axis, 600)));
   root.append(g);
 }
 const maxLabel = (labels, size = FONT.axis) => Math.max(0, ...labels.map((l) => textWidth(l, size)));

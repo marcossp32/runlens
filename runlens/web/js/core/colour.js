@@ -23,14 +23,12 @@ const ENTITY = (() => {
     [...seen].sort((a, b) => (a[1] - b[1]) || String(a[0]).localeCompare(String(b[0])))
       .forEach(([name], i) => maps[ns].set(name, i));
   };
-  const D = DIAG || {};
   const units = (kind) => DATA.units.filter((u) => u.kind === kind).map((u) => [u.name, timeOf(u.first_seen)]);
-  order("skill", units("skill").concat(
-    [D.model_skill, D.incidents, D.idle, D.agents_by_skill, D.agent_skills, D.markers].flatMap((rows) => (rows || []).map((r) => [r.skill, NaN])),
-    (D.flow || []).flatMap((f) => [[f.source, NaN], [f.target, NaN]])));
-  order("model", (D.model_day || []).map((r) => [r.model, dayMs(r.day)]).concat((D.models || []).map((m) => [m.model, NaN]),
-    (D.agent_models || []).map((m) => [m.model, NaN])));
-  order("agent", (D.agent_types || []).map((a) => [a.agent_type, NaN]));
+  const firstUse = (rows, key) => rows.map((r) => [r[key], RUN.has(r.run) ? RUN.get(r.run).t0 : NaN]);
+  order("skill", units("skill").concat(firstUse(EX.calls, "skill"), firstUse(EX.segments, "skill"), firstUse(EX.markers, "skill"),
+    firstUse(EX.incidents, "skill")));
+  order("model", firstUse(EX.calls, "model").concat(firstUse(EX.agents, "model"), firstUse(EX.tokens, "model")));
+  order("agent", EX.agents.filter((a) => a.i !== 0).map((a) => [a.type, NaN]));
   order("group", units("group").map(([n]) => [n, NaN]));
   return maps;
 })();
