@@ -30,13 +30,13 @@ KEYS = {
     "evidence": {"name", "glob"} | set(config.EVIDENCE),
     "marker": {"name", "source", "pattern", "bad"},
     "outcome": {"name", "marker", "success", "failure", "skills", "pr"},
-    "method": {"min_runs", "resamples", "confidence", "cc_version"},
+    "method": {"min_runs", "resamples", "confidence", "cc_version", "auto_groups"},
     "group": {"name", "members"},
     "dashboard": {"auto", "view"},
 }
 DEFAULTS = {
     "runs": config.RUNS, "analysis": config.ANALYSIS, "classify": classify.DEFAULTS, "evidence": config.EVIDENCE,
-    "method": {"min_runs": bench.MIN_RUNS, "resamples": bench.RESAMPLES, "confidence": bench.CONFIDENCE, "cc_version": "minor"},
+    "method": {"min_runs": bench.MIN_RUNS, "resamples": bench.RESAMPLES, "confidence": bench.CONFIDENCE, "cc_version": "minor", "auto_groups": True},
 }
 ASSIGNMENT = re.compile(r"^# ((?:\[\[?[\w.\-]+\]\]?(?:\s+#.*)?|[\w\"\-]+ = \S.*))$")
 

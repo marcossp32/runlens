@@ -493,7 +493,7 @@ function groupsPanel(list) {
   if (!list.length) {
     return h("div", { class: "howto" },
       h("h2", {}, "Groups score a set of skills together"),
-      h("p", {}, "Use a group to see a whole flow at once, such as a plan, a build and a review. Add one to ~/.runlens/config.toml, then run runlens dashboard again:"),
+      h("p", {}, "runlens finds sets of skills you use and edit together on its own, once they share enough runs; none so far. You can also define a group, to see a whole flow at once such as a plan, a build and a review. Add one to ~/.runlens/config.toml, then run runlens dashboard again:"),
       h("pre", { class: "snippet" }, '[[group]]\nname = "my-flow"\nmembers = ["skill:my-plan", "skill:my-build"]'));
   }
   const views = list.map((u) => {
@@ -501,8 +501,12 @@ function groupsPanel(list) {
     return { ...u, sc, score: sc.score, ci: sc.ci, verdict: sc.verdict, vs: sc.vs, confounders: sc.confounders, difference: sc.difference, runs: sc.runs,
       kpi: sc.kpi, low_sample: sc.runs < MIN_RUNS, last_seen: sc.rows.map((r) => r.started).filter(Boolean).sort().pop() || null };
   }).filter((u) => u.runs && enoughRuns(u.runs));
-  const cols = [nameCol("Group"), scoreCol, rangeCol, runsCol, costCol, timeCol, errCol, lastCol];
+  const cols = [nameCol("Group"), { key: "source", label: "From", value: (u) => (u.auto ? "found in runs" : "config.toml") },
+    { key: "nmembers", label: "Members", num: true, value: (u) => u.members.length, cell: (u) => h("span", { title: u.members.join(", ") }, fmt.int(u.members.length)) },
+    scoreCol, rangeCol, runsCol, costCol, timeCol, errCol, lastCol];
+  const auto = views.filter((u) => u.auto).length;
   return h("div", { class: "charts" },
+    note(`A group is scored as one unit, next to each of its skills on its own: its runs are the union of its members' work, and its version is the combination of its members' versions, so it changes when any member's text changes. ${auto ? `${auto === 1 ? "One set was" : `${auto} sets were`} found in your runs: skills used together in most of their runs and edited at the same time (marked “auto”; [method] auto_groups = false turns this off).` : ""} Define your own with [[group]] in config.toml.`),
     rangeChart({ title: "Latest version of each group against its own runs", question: "Is each flow, taken as a whole, better or worse than usual?", sub: `100 = ${baseWords()}`,
       rows: views.map((u) => ({ label: u.name, ns: "group", score: u.score, ci: u.ci, href: hrefUnit(u.id), tone: verdict(u.score, u.ci, u).tone, word: verdict(u.score, u.ci, u).word })),
       ref: 100, refLabel: "typical run", axisTitle: `Score (100 = ${baseWords()})`, labelTitle: "Group" }),

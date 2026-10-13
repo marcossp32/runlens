@@ -85,8 +85,12 @@ model = "sonnet"        # model alias for the judge; --model overrides it
 # confidence = 0.95        # central interval of the difference that must clear zero for "better" or "worse"
 # cc_version = "minor"     # level at which Claude Code versions are compared: when their mix shifts between the two
 #                          # sides (2.1 -> 2.2, or with "patch" also 2.1.3 -> 2.1.4), the verdict is "confounded"
+# auto_groups = true       # also score, as one set, skills used together in most of their runs and edited at the
+#                          # same time (named after their common prefix, e.g. "m-* set"); a [[group]] with the same
+#                          # skills replaces the set found
 
-# Every skill already has its own score. A group scores a set of skills and agent types as one unit:
+# Every skill already has its own score, and sets found in the runs (auto_groups above) get one too. A group
+# scores a set of skills and agent types you choose as one unit:
 # its runs are the union of its members' work, each piece counted once, and its version changes when
 # any member's text changes. Useful when you edit several skills at once: each skill's verdict is then
 # "confounded" (other skills changed too), while the group's is not confounded by its own members.

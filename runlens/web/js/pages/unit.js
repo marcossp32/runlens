@@ -43,7 +43,7 @@ function unitPage(id) {
   }
   const v = verdict(u.score, u.ci, u);
   const few = u.low_sample ? ` Only ${fmt.runs(u.runs)} ${slicing() ? "in the filters" : "so far"}, so it can still move.` : "";
-  const members = u.kind === "group" ? ` Members: ${u.members.join(", ")}.` : "";
+  const members = u.kind === "group" ? ` Members: ${u.members.join(", ")}.${base.auto ? " Found in your runs: these skills are used together and were edited at the same time." : ""}` : "";
   const cur = versions.find((x) => x.label === u.current) || null;
   const curRuns = cur ? runs.filter((r) => r.version === cur.label) : [];
   const showCurrent = cur && versions.length > 1;
@@ -53,7 +53,7 @@ function unitPage(id) {
   return h("article", { class: "page" },
     h("header", { class: "pagehead" },
       h("a", { class: "back", href: hrefPage("skills") }, "← All skills"),
-      h("h1", { tabindex: "-1" }, key, u.name, " ", chip(KIND[u.kind], "kind")),
+      h("h1", { tabindex: "-1" }, key, u.name, " ", chip(KIND[u.kind], "kind"), base.auto ? chip("auto", "kind") : null),
       h("p", { class: `summary tone-${v.tone}`, "data-score": valid(u.score) ? u.score.toFixed(3) : null, "data-verdict": u.verdict || null }, h("span", { class: "ticon", "aria-hidden": "true" }, TONE[v.tone].icon), " ",
         versions.length > 1 ? `Current version ${u.current}. ` : "", v.sentence + few + members),
       scoreSettingsNote()),

@@ -25,7 +25,7 @@ An audit of the whole tool found that the numbers it showed could not be trusted
 ### The method
 - A version is compared only with its own skill's previous version; skills are never ranked against each other.
 - Verdicts (`better`, `worse`, `no clear change`, `not enough runs`, `confounded`) come from a session-level bootstrap of the difference, with at least 5 runs a side.
-- `confounded` names what else changed: another skill's text, the model or effort mix, the Claude Code version, the project mix. Use a `[[group]]` for skills you edit together.
+- `confounded` names what else changed: another skill's text, the model or effort mix, the Claude Code version, the project mix. Skills used and edited together are also scored as one set, found in the runs (`[method] auto_groups`); a `[[group]]` defines one by hand.
 - Cost and time are geometric means per invocation; rates are totals over totals; nothing is counted twice (permission denials, failed checks, idle loops and error streaks each count once).
 - A configurable `[outcome]`: a marker's first-pass rate or a PR opened, plus cost per success.
 - Weights per measure, globally or per skill or group (`[weights]`), and method settings (`[method]`).

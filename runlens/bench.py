@@ -41,6 +41,7 @@ expected behaviour are not problems.
 import bisect
 import difflib
 import math
+import os
 import random
 import re
 from collections import Counter, defaultdict
@@ -194,6 +195,7 @@ def settings(cfg=None, groups=None):
         "resamples": int(method.get("resamples", RESAMPLES)),
         "confidence": float(method.get("confidence", CONFIDENCE)),
         "cc_version": method.get("cc_version", "minor"),
+        "auto_groups": bool(method.get("auto_groups", True)),
     }
     if s["min_runs"] < 2:
         raise ValueError("[method] min_runs must be at least 2")
@@ -494,6 +496,70 @@ def confounders_of(side_a, side_b, own_skills, ctx):
     return out
 
 
+# ---- skill sets found in the history ----------------------------------------------------
+
+SET_OVERLAP = 0.8  # share of the rarer skill's runs that must also use the other skill
+
+
+def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
+    """Sets of skills used and edited together, to score as one unit next to each skill on its own.
+
+    Two skills are linked when at least `min_runs` runs use both, at least SET_OVERLAP of the rarer one's runs
+    also use the other, and a new version of each (not its first) appeared in the same run: they were edited together.
+    A set is a group of linked skills (single linkage) with two or more members; a set with the same skills as a
+    [[group]] in config.toml (`taken`) is left out. Returns [[group]]-shaped dicts marked auto."""
+    order = sorted(sessions, key=lambda sid: (sessions[sid].get("started") or NEVER, sid))
+    runs, first = defaultdict(set), {}
+    for sid in order:
+        for skill, h in session_versions.get(sid, {}).items():
+            runs[skill].add(sid)
+            if h:
+                first.setdefault((skill, h), sid)
+    # run -> skills with a new version first seen in it. A skill's first version is not an edit: when the history
+    # starts, every skill shows up at once.
+    pos = {sid: i for i, sid in enumerate(order)}
+    opening = {}
+    for (skill, _h), sid in first.items():
+        if skill not in opening or pos[sid] < pos[opening[skill]]:
+            opening[skill] = sid
+    born = defaultdict(set)
+    for (skill, _h), sid in first.items():
+        if sid != opening[skill]:
+            born[sid].add(skill)
+    edited = defaultdict(set)
+    for skills in born.values():
+        for a in skills:
+            edited[a] |= skills - {a}
+    parent = {}
+
+    def root(x):
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
+
+    for a in sorted(runs):
+        for b in sorted(edited[a]):
+            if b <= a or b not in runs:
+                continue
+            both = len(runs[a] & runs[b])
+            if both >= min_runs and both >= SET_OVERLAP * min(len(runs[a]), len(runs[b])):
+                parent[root(b)] = root(a)
+    members = defaultdict(set)
+    for skill in set(parent) | set(parent.values()):
+        members[root(skill)].add(skill)
+    out = []
+    for skills in sorted(members.values(), key=lambda m: sorted(m)):
+        if len(skills) < 2 or frozenset(skills) in taken:
+            continue
+        names = sorted(skills)
+        prefix = os.path.commonprefix(names)
+        stem = prefix.rstrip("-_:. ")
+        name = f"{prefix}* set" if len(stem) >= 2 or (stem and prefix != stem) else f"{names[0]} + {len(names) - 1} more"
+        out.append({"id": f"group:{name}", "name": name, "skills": set(skills), "types": set(),
+                    "members": [f"skill:{n}" for n in names], "auto": True})
+    return out
+
+
 # ---- the computation -------------------------------------------------------------------
 
 def compute(data, groups=None, resamples=None, cfg=None):
@@ -556,6 +622,13 @@ def compute(data, groups=None, resamples=None, cfg=None):
         session_versions[r["session_id"]][r["skill"]] = r["content_hash"]
         if r.get("args"):
             first_args.setdefault(k, r["args"])
+
+    # Skills used and edited together are also scored as one set, unless a [[group]] already covers them.
+    if st["auto_groups"]:
+        names = {g["name"] for g in groups}
+        found = skill_sets(session_versions, sessions, {frozenset(g["skills"]) for g in groups if not g["types"]}, st["min_runs"])
+        groups = groups + [g for g in found if g["name"] not in names]
+        group_of = {g["id"]: g for g in groups}
 
     def invocation(sid, agent, ts, skill):
         """(invocation key, version hash) of a piece of work done under `skill`."""
@@ -894,6 +967,7 @@ def describe_unit(uid, kind, name, rows, base, pseudo, weights, o, group_of, min
     starts = [r["started"] for r in rows if r["started"]]
     entry = {
         "id": uid, "kind": kind, "name": name, "members": group_of[uid]["members"] if kind == "group" else [],
+        "auto": bool(group_of[uid].get("auto")) if kind == "group" else False,
         "runs": len({r["sid"] for r in rows}), "invocations": sum(r["invocations"] for r in rows),
         "versions": 0, "current": None, "score": None, "ci": None, "verdict": None, "direction": None, "vs": None,
         "delta": None, "difference": None, "confounders": [], "low_sample": len({r["sid"] for r in rows}) < min_runs,

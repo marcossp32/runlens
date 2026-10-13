@@ -80,7 +80,7 @@ The loop is *find a weak spot → trace it to the skill text → edit → verify
 
 **How many runs you need.** A verdict needs at least `[method] min_runs` (default 5) finished, non-stub runs on *each* side. Runs are resampled by session, so five sessions are five data points however many times the skill was invoked in them. With five runs a side, only large changes clear the interval; a 10–20% change usually needs many more runs than you will have. That is why the eval benchmark is the faster check and the production verdict is the confirmation.
 
-**Editing several skills at once makes verdicts "confounded".** If you edit `plan` and `build` together, every run of the new `build` also has the new `plan`, so `build`'s verdict cannot be put down to its own text: runlens says `confounded` and names `plan also changed (a1b2 → c3d4)`. Either edit one skill at a time, or define a `[[group]]` with the skills you edit together. A group's version changes when any member's text changes, and its verdict is not confounded by its own members, so the group is the level at which a batch edit can be judged.
+**Editing several skills at once makes verdicts "confounded".** If you edit `plan` and `build` together, every run of the new `build` also has the new `plan`, so `build`'s verdict cannot be put down to its own text: runlens says `confounded` and names `plan also changed (a1b2 → c3d4)`. Either edit one skill at a time, or judge the skills you edit together as one set. runlens finds such sets on its own: skills used together in most of their runs and edited at the same time become a group named after their common prefix (`m-* set`), next to each skill on its own. You can also define a `[[group]]` yourself. A group's version is the combination of its members' versions, so it changes when any member's text changes, and its verdict is not confounded by its own members: the group is the level at which a batch edit can be judged. In **Compare** you can pick any two of its versions, not only consecutive ones.
 
 ## The method
 
@@ -205,8 +205,8 @@ Every section is optional. [`config.example.toml`](runlens/config.example.toml) 
 | `[[marker]]` | `name`, `pattern`, `source` ("any"), `bad` ([]) | Output lines that are signals; a bad value becomes an incident |
 | `[outcome]` / `[[outcome]]` | `marker` + `success` + `failure` (the marker's bad values), or `pr = "opened"`; `skills` ([] = all); `name` | What a successful run looks like |
 | `[weights]`, `[weights.<skill or group>]` | measure = weight (see [the method](#the-method)) | Weight of each measure; 0 = shown, not scored |
-| `[method]` | `min_runs` (5), `resamples` (4000), `confidence` (0.95), `cc_version` ("minor") | How verdicts are made |
-| `[[group]]` | `name`, `members` (`"skill:<name>"` or `"agent:<type>"`) | Skills and agent types scored as one unit |
+| `[method]` | `min_runs` (5), `resamples` (4000), `confidence` (0.95), `cc_version` ("minor"), `auto_groups` (true) | How verdicts are made, and whether sets of skills used and edited together are scored too |
+| `[[group]]` | `name`, `members` (`"skill:<name>"` or `"agent:<type>"`) | Skills and agent types scored as one unit, besides the sets found in the runs (`[method] auto_groups`, on by default) |
 | `[prices]` | `"<model>" = [input, output, cache_read]` (USD per million tokens) | Prices for models missing from the built-in table |
 | `[dashboard]`, `[[dashboard.view]]` | `auto` (true); a view's `name` and `hash` | Rebuild the dashboard after the hook ingests runs; named links into the page, offered as starting points |
 

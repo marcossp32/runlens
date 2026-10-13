@@ -428,6 +428,37 @@ class NullSimulation(unittest.TestCase):
         self.assertGreaterEqual(self.verdicts(40, [10, 12], scale_b=1 / 4, seed=2).count("better") / 40, 0.25)
 
 
+class SkillSets(unittest.TestCase):
+    def groups(self, model):
+        return [u for u in model["units"] if u["kind"] == "group"]
+
+    def test_skills_edited_together_are_also_scored_as_one_set(self):
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: f"h{v}"), resamples=200)
+        (g,) = self.groups(model)
+        self.assertTrue(g["auto"])
+        self.assertEqual(g["members"], ["skill:flow", "skill:helper"])
+        self.assertEqual(g["name"], "flow + 1 more")
+        self.assertEqual([v["runs"] for v in model["versions"][g["id"]]], [6, 6])
+        self.assertEqual(model["versions"][g["id"]][1]["confounders"], [])  # its own members do not confound it
+        self.assertIn("skill:flow", {u["id"] for u in model["units"]})      # each skill keeps its own score
+
+    def test_a_skill_edited_alone_or_switched_off_makes_no_set(self):
+        self.assertEqual(self.groups(bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: "h0"), resamples=200)), [])
+        off = bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: f"h{v}"), cfg={"method": {"auto_groups": False}}, resamples=200)
+        self.assertEqual(self.groups(off), [])
+
+    def test_a_group_in_config_replaces_the_set_found(self):
+        cfg = {"group": [{"name": "pair", "members": ["skill:flow", "skill:helper"]}]}
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: f"h{v}"), cfg=cfg, resamples=200)
+        self.assertEqual([(g["name"], g["auto"]) for g in self.groups(model)], [("pair", False)])
+
+    def test_a_set_is_named_after_the_common_prefix(self):
+        sv = {f"s{i}": {"m-plan": f"p{i // 5}", "m-build": f"b{i // 5}"} for i in range(10)}
+        runs = {sid: {"started": datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)} for i, sid in enumerate(sv)}
+        (g,) = bench.skill_sets(sv, runs)
+        self.assertEqual((g["name"], g["members"]), ("m-* set", ["skill:m-build", "skill:m-plan"]))
+
+
 class Explorer(unittest.TestCase):
     def test_a_missing_table_leaves_that_part_empty(self):
         con = duckdb.connect()
