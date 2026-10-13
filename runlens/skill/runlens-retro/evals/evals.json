@@ -1,0 +1,113 @@
+{
+  "skill_name": "runlens-retro",
+  "_note": "skill-creator format (https://agentskills.io/skill-creation/evaluating-skills). Each scenario replays canned runlens output from evals/files/<scenario>/commands.md, so the branches of the retro can be tested without a database. The JSON shapes of score/versions/proposals/verify follow the CLI contract and must be kept in step with it.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "regression-traced-to-an-instruction",
+      "prompt": "/runlens-retro m-build\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/regression/commands.md instead. The skill's SKILL.md is evals/files/regression/m-build/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "expected_output": "A report that names m-build v3 as worse than v2 with its run counts, groups the three test-edit incidents into one mode, quotes SKILL.md line 9 as the cause, proposes a minimal edit to that line, and shows a recorded proposal id with its measure.",
+      "files": ["evals/files/regression/commands.md", "evals/files/regression/m-build/SKILL.fixture.md"],
+      "assertions": [
+        "States that m-build v3 is worse than v2 using the runlens verdict and the run counts (n=7 vs n=6)",
+        "Cites at least two of the incident ids 7a1c, 8b2d, 9c3e and says they were read with runlens show",
+        "Cites line 9 of m-build's SKILL.md and quotes 'If a test still fails after your fix, update the test so it passes.'",
+        "Proposes an edit that changes or removes that line rather than adding a rule that restates the skill",
+        "Records the proposal with runlens proposals add and reports the returned proposal id p-0007",
+        "Names a measure and direction for the proposal (e.g. step_check first-pass rate up, or test_edit_after_failure incidents down)",
+        "Does not apply the edit to SKILL.md"
+      ],
+      "expectations": [
+        "States that m-build v3 is worse than v2 using the runlens verdict and the run counts (n=7 vs n=6)",
+        "Cites at least two of the incident ids 7a1c, 8b2d, 9c3e and says they were read with runlens show",
+        "Cites line 9 of m-build's SKILL.md and quotes 'If a test still fails after your fix, update the test so it passes.'",
+        "Proposes an edit that changes or removes that line rather than adding a rule that restates the skill",
+        "Records the proposal with runlens proposals add and reports the returned proposal id p-0007",
+        "Names a measure and direction for the proposal (e.g. step_check first-pass rate up, or test_edit_after_failure incidents down)",
+        "Does not apply the edit to SKILL.md"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "no-skill-instruction-faults-and-no-human-labels",
+      "prompt": "/runlens-retro m-prove\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/no-skill-fault/commands.md instead. The skill's SKILL.md is evals/files/no-skill-fault/m-prove/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "expected_output": "A report that says the labels are unverified hypotheses (no human labels), offers the blind label export, reads m-prove's SKILL.md itself, and either names the missing instruction behind the polling mode (two or more incidents) or says agent judgment; the single permission incident is not turned into a mode.",
+      "files": ["evals/files/no-skill-fault/commands.md", "evals/files/no-skill-fault/m-prove/SKILL.fixture.md"],
+      "assertions": [
+        "Says there are no or too few human labels, so label counts are hypotheses rather than findings",
+        "Offers runlens labels export with --limit and --blind for human review",
+        "Reads m-prove's SKILL.md itself instead of relying only on the fault field of the labels",
+        "Treats the polling incidents (b1, b2, b3) as one mode and either names a missing instruction (e.g. wait for the notification instead of polling) or says agent judgment, with incident ids",
+        "Does not make a failure mode out of the single permission_denied incident (one incident is an anecdote)",
+        "Does not claim any m-prove version is better or worse"
+      ],
+      "expectations": [
+        "Says there are no or too few human labels, so label counts are hypotheses rather than findings",
+        "Offers runlens labels export with --limit and --blind for human review",
+        "Reads m-prove's SKILL.md itself instead of relying only on the fault field of the labels",
+        "Treats the polling incidents (b1, b2, b3) as one mode and either names a missing instruction (e.g. wait for the notification instead of polling) or says agent judgment, with incident ids",
+        "Does not make a failure mode out of the single permission_denied incident (one incident is an anecdote)",
+        "Does not claim any m-prove version is better or worse"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "not-enough-runs-to-judge-a-version",
+      "prompt": "/runlens-retro m-plan\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/not-enough-runs/commands.md instead.",
+      "expected_output": "A report that says m-plan v2 against v1 is 'not enough runs' (n=2 vs n=3), makes no better/worse claim even though v2's raw cost is higher, and reports proposal p-0003 as 'not enough runs' from runlens verify.",
+      "files": ["evals/files/not-enough-runs/commands.md"],
+      "assertions": [
+        "Reports the m-plan v2 verdict as not enough runs, with the run counts 2 and 3",
+        "Does not say v2 is worse or better, and does not compute its own comparison from the raw cost per run",
+        "Does not introduce a run-count threshold of its own",
+        "Reports proposal p-0003 as not enough runs, as runlens verify gave it",
+        "Does not claim that the edit behind p-0003 helped"
+      ],
+      "expectations": [
+        "Reports the m-plan v2 verdict as not enough runs, with the run counts 2 and 3",
+        "Does not say v2 is worse or better, and does not compute its own comparison from the raw cost per run",
+        "Does not introduce a run-count threshold of its own",
+        "Reports proposal p-0003 as not enough runs, as runlens verify gave it",
+        "Does not claim that the edit behind p-0003 helped"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "check-fail-stops-the-retro",
+      "prompt": "/runlens-retro\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/check-fail/commands.md instead.",
+      "expected_output": "The retro stops after runlens check, reports the FAIL lines and says the numbers after them would be wrong; it reads no score, labels nothing and proposes nothing.",
+      "files": ["evals/files/check-fail/commands.md"],
+      "assertions": [
+        "Reports the FAIL lines from runlens check (api_calls and tool_calls counts for run 27efa8c1)",
+        "Says the data cannot be trusted until the failure is fixed",
+        "Does not report scores, versions, failure modes or proposals",
+        "Does not run runlens classify"
+      ],
+      "expectations": [
+        "Reports the FAIL lines from runlens check (api_calls and tool_calls counts for run 27efa8c1)",
+        "Says the data cannot be trusted until the failure is fixed",
+        "Does not report scores, versions, failure modes or proposals",
+        "Does not run runlens classify"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "subagent-only-skill-with-a-confounded-version",
+      "prompt": "/runlens-retro m-scan\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/subagent-confounded/commands.md instead.",
+      "expected_output": "A report that notices m-scan has no score of its own because it only loads in subagents, continues from its incidents, and reports the v2 verdict as confounded by the Claude Code version and model mix instead of blaming the skill text.",
+      "files": ["evals/files/subagent-confounded/commands.md"],
+      "assertions": [
+        "Notices m-scan is missing from runlens score and checks skill_loads to find it only runs in subagents",
+        "Continues with m-scan's incidents rather than stopping",
+        "Reports the m-scan v2 verdict as confounded and names the Claude Code version change and the model mix",
+        "Does not attribute the change between versions to the skill text"
+      ],
+      "expectations": [
+        "Notices m-scan is missing from runlens score and checks skill_loads to find it only runs in subagents",
+        "Continues with m-scan's incidents rather than stopping",
+        "Reports the m-scan v2 verdict as confounded and names the Claude Code version change and the model mix",
+        "Does not attribute the change between versions to the skill text"
+      ]
+    }
+  ]
+}

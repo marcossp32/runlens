@@ -29,4 +29,4 @@ runlens = "runlens.cli:run"
 packages = ["runlens"]
 
 [tool.setuptools.package-data]
-runlens = ["*.sql", "*.toml", "skill/**/*", "web/*"]
+runlens = ["*.sql", "*.toml", "skill/**/*", "web/**/*"]

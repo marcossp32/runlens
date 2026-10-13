@@ -4,31 +4,39 @@
 #
 # Copy to ~/.runlens/taxonomy.toml to adapt it: rename, merge or add categories after
 # reading real incidents (open coding -> axial coding). Keep definitions binary-testable:
-# a reader must be able to say yes or no for one incident.
+# a reader must be able to say yes or no for one incident. Where two categories could
+# both fit, the definition says which one wins.
+#
+# Reviewed against the incident types runlens detects (permission_denied, error_streak,
+# idle_loop, bad_marker, test_edit_after_failure, repeated_call, interrupt, agent_failed,
+# api_error, compaction) and the first real labels:
+# - role_disobeyed merged into spec_disobeyed: a role is part of the instructions, and the
+#   pair split the same incidents. Old labels with that id are read as spec_disobeyed.
+# - added permission_blocked: most permission_denied incidents are the user's own rules
+#   working, which is neither the agent's nor the skill's fault and must not be filed
+#   under environment_friction or spec_disobeyed.
+# - added stuck_retrying: the usual story behind error_streak and repeated_call (the same
+#   failing approach again), which step_repetition (redoing finished work) did not cover.
+# - the judge also has two outcomes that are not categories: "other:<name>" and "unknown"
+#   (not enough evidence), both defined in classify.py.
 
 [[category]]
 id = "spec_disobeyed"
 group = "specification"
-source = "MAST FM-1.1"
-definition = "The agent did something its task or instructions excluded, or skipped something they required."
-
-[[category]]
-id = "role_disobeyed"
-group = "specification"
-source = "MAST FM-1.2"
-definition = "The agent acted outside its assigned role, e.g. a reviewer editing code or a builder redesigning the plan."
+source = "MAST FM-1.1, FM-1.2"
+definition = "The agent did something its task, instructions or assigned role excluded (e.g. a reviewer editing code), or skipped something they required."
 
 [[category]]
 id = "step_repetition"
 group = "specification"
 source = "MAST FM-1.3"
-definition = "The agent repeated a step it had already completed, without new information that justified repeating it."
+definition = "The agent redid a step it had already completed successfully, without new information that justified it. Retrying a step that failed is stuck_retrying; polling is busy_waiting."
 
 [[category]]
 id = "context_lost"
 group = "specification"
 source = "MAST FM-1.4"
-definition = "The agent lost or ignored earlier context: re-asked, re-read or contradicted something already established."
+definition = "The agent lost earlier context: re-asked, re-read or contradicted something already established in this run. Wins over step_repetition when the repeat happened because the agent forgot."
 
 [[category]]
 id = "termination_unaware"
@@ -52,7 +60,7 @@ definition = "The agent drifted to a different objective than the one it was giv
 id = "input_ignored"
 group = "inter_agent"
 source = "MAST FM-2.4/2.5"
-definition = "The agent ignored or dropped information another agent, a tool or a check handed it."
+definition = "The agent ignored or dropped information another agent, a tool result or a check had just handed it (not something established much earlier, which is context_lost)."
 
 [[category]]
 id = "reasoning_action_mismatch"
@@ -85,6 +93,12 @@ source = "ImpossibleBench (arXiv 2510.20270)"
 definition = "The agent changed tests, assertions or checks to make them pass instead of fixing the behaviour."
 
 [[category]]
+id = "stuck_retrying"
+group = "coding"
+source = "runlens"
+definition = "After a failure, the agent retried the same approach (same or near-identical call) instead of reading the error, diagnosing the cause or changing strategy."
+
+[[category]]
 id = "tool_misuse"
 group = "coding"
 source = "SWE-PRM (arXiv 2509.02360)"
@@ -94,7 +108,13 @@ definition = "Wrong tool or wrong arguments: invalid input, edit without reading
 id = "environment_friction"
 group = "operational"
 source = "runlens"
-definition = "The failure comes from the environment the agent runs in: shell or OS differences, missing binaries, quoting, paths, sandbox limits."
+definition = "The failure comes from the environment the agent runs in: shell or OS differences, missing binaries, quoting, paths, file locks. A permission rule or policy blocking the call is permission_blocked."
+
+[[category]]
+id = "permission_blocked"
+group = "operational"
+source = "runlens"
+definition = "A permission rule, hook or sandbox policy blocked a call the task reasonably needed. If the blocked call was something the task or instructions excluded, use spec_disobeyed."
 
 [[category]]
 id = "busy_waiting"
@@ -106,7 +126,7 @@ definition = "The agent spent turns polling, sleeping or printing while waiting 
 id = "external_failure"
 group = "operational"
 source = "runlens"
-definition = "A service outside the agent failed: network, API error, rate limit, a third-party outage."
+definition = "A service outside the agent failed: network, API error, rate or usage limit, a third-party outage."
 
 [[category]]
 id = "expected_behavior"

@@ -12,12 +12,16 @@
 <header class="top">
   <a class="brand" href="#/">runlens <span>benchmarks</span></a>
   <nav aria-label="Main">
-    <a href="#/">Skills</a>
-    <a href="#/compare">Compare</a>
-    <a href="#/diagnostics">Diagnostics</a>
-    <a href="#/method">How it works</a>
+    <a href="#/" data-page="skills">Skills</a>
+    <a href="#/compare" data-page="compare">Compare</a>
+    <a href="#/diagnostics" data-page="diagnostics">Diagnostics</a>
+    <a href="#/method" data-page="method">How it works</a>
   </nav>
-  <button type="button" id="theme" class="ghost">Theme: auto</button>
+  <div class="topbar">
+    <button type="button" id="copylink" class="ghost">Copy link</button>
+    <details id="settings" class="settings"><summary class="ghost">Settings</summary></details>
+  </div>
+  <p id="status" class="sr" role="status" aria-live="polite"></p>
 </header>
 <main id="app" tabindex="-1">
   <noscript><p>This page needs JavaScript to draw its charts and tables.</p></noscript>

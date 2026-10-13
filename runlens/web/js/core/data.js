@@ -1,0 +1,67 @@
+/* core/data.js: the embedded model, and the plain-English names the page uses for it.
+   dashboard.py concatenates every module inside one function, in the order it lists, so a
+   name declared here is visible to every later module and to nothing outside the page. */
+
+const DATA = JSON.parse(document.getElementById("data").textContent);
+const DIAG = DATA.diag || null;
+const UNITS = new Map(DATA.units.map((u) => [u.id, u]));
+const METRICS = DATA.method.metrics;
+const MIN_RUNS = DATA.method.min_runs;
+const LOG_CAP = Math.log(DATA.method.max_ratio);
+const KIND = { skill: "Skill", agent: "Agent role", group: "Group" };
+const DAY = 864e5;
+
+// Each measure in words a reader knows: a label, a one-line help, and a short name for tight spaces.
+const PLAIN = {
+  cost: ["Cost per run", "Model spend for this unit, averaged over its runs.", "Cost"],
+  seconds: ["Time per run", "Working time attributed to it.", "Time"],
+  error_rate: ["Tool errors", "Share of its tool calls that failed.", "Tool errors"],
+  incidents: ["Problems per run", "Error streaks, repeated calls, interrupts and similar.", "Problems"],
+  interventions: ["Your messages per run", "Messages you sent while it was the active skill.", "Your messages"],
+  idle_rate: ["Waiting calls", "Share of its tool calls that only wait or print.", "Waiting"],
+  api_error_rate: ["API errors", "Share of its model turns that hit an API error.", "API errors"],
+  bad_markers: ["Failed checks per run", "Checks that your config marks as failed.", "Failed checks"],
+};
+const metricLabel = (m) => (PLAIN[m.key] ? PLAIN[m.key][0] : m.label);
+const metricHelp = (m) => (PLAIN[m.key] ? PLAIN[m.key][1] : m.what);
+const metricShort = (m) => (PLAIN[m.key] ? PLAIN[m.key][2] : m.label);
+const metricByKey = new Map(METRICS.map((m) => [m.key, m]));
+
+// Internal names (incident types, error classes, event kinds, statuses) as words. Unknown names are
+// still readable: underscores become spaces and the first letter is capitalised.
+const WORDS = {
+  "(none)": "No skill", "(default)": "Default", "?": "Unknown",
+  idle_loop: "Idle loop", error_streak: "Error streak", repeated_call: "Repeated call", nonzero_exit: "Non-zero exit",
+  test_edit_after_failure: "Test edited after a failure", bad_marker: "Failed check", api_error: "API error",
+  agent_failed: "Subagent failed", interrupt: "Interrupted", interrupted: "Interrupted", compaction: "Context compaction",
+  not_found: "Not found", timeout: "Timed out", permission: "Permission denied", denied: "Permission denied",
+  async_launched: "Launched in the background", completed: "Completed", killed: "Killed", failed: "Failed",
+  expected_behavior: "Expected behaviour", busy_waiting: "Busy waiting", away_summary: "Away summary",
+  agents_killed: "Subagents killed", pr_opened: "PR opened", step_check: "Step check",
+};
+function human(name) {
+  if (name === null || name === undefined || name === "") return "—";
+  const s = String(name);
+  if (Object.prototype.hasOwnProperty.call(WORDS, s)) return WORDS[s];
+  if (!/^[a-z0-9]+(_[a-z0-9]+)+$/.test(s) && !/^[a-z]+$/.test(s)) return s; // names with dashes or capitals are names, not codes
+  const t = s.replace(/_/g, " ");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+// A version without a recorded skill text is named by what is known, not by a number.
+const nameOf = (v) => (v.recorded ? v.label : "unrecorded");
+const findVersion = (s) => (DATA.versions[s.id] || []).find((v) => v.key === s.key) || null;
+const sumOf = (rows, f) => rows.reduce((n, r) => n + (f(r) || 0), 0);
+const groupSum = (rows, key, val) => {
+  const m = new Map();
+  for (const r of rows) m.set(r[key], (m.get(r[key]) || 0) + (r[val] || 0));
+  return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+};
+const median = (xs) => {
+  const s = xs.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!s.length) return null;
+  const k = (s.length - 1) / 2;
+  return (s[Math.floor(k)] + s[Math.ceil(k)]) / 2;
+};
+const timeOf = (iso) => (iso ? Date.parse(iso) : NaN);
+const dayMs = (key) => Date.parse(`${key}T00:00:00Z`);

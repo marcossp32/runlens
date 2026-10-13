@@ -39,11 +39,33 @@ def embed(obj):
 
 PLACEHOLDER = re.compile(r"\{\{(CSS|JS|DATA)\}\}")
 
+# The script is split into small modules under web/js. They are joined in this order inside one function,
+# so a name declared by an earlier module is visible to the later ones and nothing leaks into the page.
+# core: data, preferences, formatting, elements, URL state, colour, meaning; charts: the toolkit; pages; app last.
+MODULES = (
+    "core/boot.js", "core/data.js", "core/prefs.js", "core/format.js", "core/dom.js", "core/state.js",
+    "core/colour.js", "core/meaning.js", "core/table.js",
+    "charts/tooltip.js", "charts/frame.js", "charts/kit.js",
+    "pages/skills.js", "pages/unit.js", "pages/compare.js", "pages/diagnostics.js", "pages/method.js",
+    "app.js",
+)
+
+
+def script():
+    """Every module, in order, inside one strict-mode function. No module may close the <script> element."""
+    parts = []
+    for name in MODULES:
+        text = (WEB / "js" / name).read_text(encoding="utf-8")
+        if re.search(r"</script|<!--", text, re.I):
+            raise ValueError(f"web/js/{name} contains text that would end its <script> element")
+        parts.append(f"/* ---- {name} ---- */\n{text.rstrip()}\n")
+    return '(function () {\n"use strict";\n' + "\n".join(parts) + "})();\n"
+
 
 def render(model):
     page = (WEB / "template.html").read_text(encoding="utf-8")
     parts = {"CSS": (WEB / "app.css").read_text(encoding="utf-8"),
-             "JS": (WEB / "app.js").read_text(encoding="utf-8"),
+             "JS": script(),
              "DATA": embed(model)}
     # One pass: text that is inserted is never searched for placeholders again.
     return PLACEHOLDER.sub(lambda m: parts[m.group(1)], page)
