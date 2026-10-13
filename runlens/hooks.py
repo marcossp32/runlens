@@ -213,7 +213,7 @@ def read_settings():
     try:
         data = json.loads(SETTINGS.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        raise SystemExit(f"{SETTINGS} is not valid JSON (line {e.lineno}, column {e.colno}): fix it, then run this again")
+        raise SystemExit(f"{SETTINGS} is not valid JSON (line {e.lineno}, column {e.colno}): fix it, then run this again") from None
     if not isinstance(data, dict):
         raise SystemExit(f"{SETTINGS} does not hold a JSON object: fix it, then run this again")
     return data

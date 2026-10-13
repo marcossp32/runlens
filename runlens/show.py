@@ -49,7 +49,7 @@ def _show(con, ident, steps, after):
         FROM texts WHERE session_id = $1 AND agent_id = $2 AND seq BETWEEN $3 AND $4
         ORDER BY seq""", [sid, agent_id, lo, hi]).fetchall()
     print()
-    for s, kind, tool, body, err, cls, head, ms, skill in items:
+    for s, kind, tool, body, err, cls, head, ms, _skill in items:
         mark = ">>" if s == seq else "  "
         if kind == "text":
             print(f"{mark}{s:>5} [say] {' '.join((body or '').split())[:1500]}")

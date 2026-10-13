@@ -29,7 +29,6 @@ import sys
 
 from . import config
 
-
 HIDDEN = {"drain"}
 
 
@@ -195,9 +194,11 @@ def main(argv=None):
         con = connect(read_only=True)
         where, args = ["1=1"], []
         if a.type:
-            where.append("type = ?"); args.append(a.type)
+            where.append("type = ?")
+            args.append(a.type)
         if a.skill:
-            where.append("skill = ?"); args.append(a.skill)
+            where.append("skill = ?")
+            args.append(a.skill)
         if not a.all:
             where.append("NOT coalesce(policy, false)")
         args.append(a.limit)
@@ -243,6 +244,7 @@ def main(argv=None):
 def method_command(a, cfg):
     """score, versions, proposals and verify: the method's verdicts as text, or as the JSON the retro skill reads."""
     import json
+
     from . import bench, proposals
     from .store import connect
     listing = a.command == "proposals" and a.action == "list"

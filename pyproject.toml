@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runlens"
-version = "0.1.1"
+version = "0.2.0"
 description = "Benchmarks for Claude Code skills and agents, built from your own run history in DuckDB"
 readme = "README.md"
 license = "MIT"
@@ -30,3 +30,13 @@ packages = ["runlens"]
 
 [tool.setuptools.package-data]
 runlens = ["*.sql", "*.toml", "skill/**/*", "web/**/*"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle errors, import order and bugbear. Left out on purpose: E731 (the code names
+# small lambdas next to where they are used) and B905 (zip over lists built to the same length).
+select = ["E4", "E7", "E9", "F", "W", "I", "B"]
+ignore = ["E731", "B905"]

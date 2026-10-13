@@ -1,5 +1,6 @@
 # runlens config: everything specific to a flow lives here; the code stays generic.
-# Copy to ~/.runlens/config.toml (or pass --config). Every section is optional.
+# Copy to ~/.runlens/config.toml (or pass --config). Every section is optional; the values shown are the defaults.
+# A value runlens cannot use (a bad regex, an unknown measure) stops the command with a one-line error naming it.
 
 [select]
 # Which Claude Code sessions count as runs. CLI flags (--since, --skill, --project, --session) override these.
@@ -8,60 +9,101 @@ skills = []       # keep runs that used any of these skills, e.g. ["my-flow"]; [
 projects = []     # keep runs whose working directory contains one of these strings; [] = any
 
 [runs]
-# When a run counts as finished, and when it is too small to benchmark (defaults shown).
-# idle_hours = 12        a run with no closing cost-state is taken as ended after this long without new records
-# stub_api_calls = 3     fewer model turns than this is a stub
-# stub_cost_usd = 0.02   so is a run cheaper than this
+# When a run counts as finished, and when it is too small to benchmark. Open and stub runs are left out of scores.
+# idle_hours = 12         # a run with no closing cost-state is taken as ended after this long without new records
+# stub_api_calls = 3      # a run with fewer model turns than this (all agents together) is a stub
+# stub_cost_usd = 0.02    # so is a run cheaper than this
 
 [privacy]
 redact = false    # true: mask secrets, tokens and e-mail addresses in stored text before it reaches DuckDB
-# patterns = ['my-internal-token-[0-9a-f]{32}']   extra regexes to mask
+# patterns = ['my-internal-token-[0-9a-f]{32}']   # extra regexes to mask, on top of the built-in ones
 # The archive keeps the transcripts verbatim (they are re-ingested from it). `runlens prune` deletes old runs.
 
 [analysis]
-# Thresholds for the generic incident detectors (defaults shown).
-# repeat_min = 3          identical tool calls in one agent before it is a repeated_call incident
-# idle_min = 3            wait/print-only shell calls in one agent before it is an idle_loop incident
-# error_streak_min = 2    consecutive failing tool calls before it is an error_streak incident
-# context_steps = 8       timeline steps kept before each incident
-# test_path = '...'       regex for test files (edits after a failure become test_edit_after_failure)
+# Thresholds for the generic incident detectors.
+# repeat_min = 3          # identical tool calls in one agent before they are a repeated_call incident
+# idle_min = 3            # wait/print-only shell calls in one agent before they are an idle_loop incident
+# error_streak_min = 2    # consecutive failing tool calls before they are an error_streak incident
+# context_steps = 8       # timeline steps kept before each incident
+# test_path = '...'       # regex for test files (an edit to one right after a failure is test_edit_after_failure)
+# idle_parts = ['...']    # regexes for shell command parts that only wait or print (sleep, echo, Start-Sleep...)
 
 [classify]
-model = "sonnet"  # model alias `claude -p` uses to label incidents
-
-[dashboard]
-auto = true  # rebuild ~/.runlens/dashboard.html after each run is ingested; `runlens dashboard` always works
-
-# Every skill and agent role already has its own score. A group scores a set of them together:
-# its runs are the union of its members' work, each piece counted once. Members are
-# "skill:<name>" or "agent:<subagent type>". A single skill can be a group too.
-# [[group]]
-# name = "pipeline"
-# members = ["skill:my-plan", "skill:my-build", "agent:Explore"]
-
-# [prices]  USD per million tokens (input, output, cache_read), for models missing from the built-in table.
-# A model with no price is never guessed: its calls get no cost and `runlens check` names it.
-# "claude-new-model" = [3.0, 15.0, 0.30]
+# What `runlens classify` sends to the judge (`claude -p`).
+model = "sonnet"        # model alias for the judge; --model overrides it
+# before = 12             # timeline steps shown before the incident
+# after = 4               # steps shown after it, so the judge can tell a failure the agent recovered from
+# skill_chars = 14000     # longest skill text sent; a longer one keeps its head and tail
+# timeline_chars = 9000   # longest timeline sent
 
 # Extra files a flow leaves outside the transcript, kept with each run.
 # Placeholders: {cwd} (the run's working directory), {git_dir} (its git common dir), {session_id}.
-# Each file's content is stored once (archive/_blobs) however many runs list it. By default only files
-# modified while the run was going are kept (scope = "run"), at most max_mb per run and rule, and browser
-# profiles (Cookies, Login Data...), databases, node_modules and .git objects are never kept.
+# Each file's content is stored once (archive/_blobs) however many runs list it. Browser profiles
+# (Cookies, Login Data, Local Storage...), databases, node_modules and .git objects are never kept.
 # [[evidence]]
 # name = "ledger"
 # glob = "{git_dir}/myflow/**/*"
-# scope = "run"          # or "all": every match, whenever it was modified
-# slack_minutes = 10     # how far outside the run a file's mtime may fall
-# max_mb = 200
-# exclude = ["**/*.png"] # on top of the built-in exclude list
+# scope = "run"           # "run": only files modified while the run was going; "all": every match
+# slack_minutes = 10      # how far outside the run a file's mtime may fall and still belong to it
+# max_mb = 200            # per run and rule; files beyond it are listed in the manifest as skipped
+# exclude = ["**/*.png"]  # globs (relative to the rule's root) left out, on top of the built-in list
 
 # Markers turn a flow's own output into data: each regex match becomes a row in `markers`,
-# and a match whose value is in `bad` ("*" = every match) becomes an incident.
-# source = tool_result | tool_input | assistant_text | any. Group 1, if present, is the value.
+# and a match whose value is in `bad` ("*" = every match) becomes a bad_marker incident.
+# source: tool_result, tool_input, assistant_text or any (the default). Group 1, if present, is the value.
 # Anchor patterns to the real output format, not to words the skill text also contains.
 # [[marker]]
 # name = "check"
 # source = "tool_result"
 # pattern = '^CHECK: (PASS|FAIL)\b'
 # bad = ["FAIL"]
+
+# The result a skill is meant to reach. Without one, the score only measures cost and friction.
+# One [outcome] table, or several [[outcome]] tables (a unit uses the first one whose skills include it).
+# From a marker: the first-pass rate (checks that pass with no failure before them, per chain of checks).
+# [[outcome]]
+# marker = "check"        # a [[marker]] name
+# success = ["PASS"]      # values that mean success
+# failure = ["FAIL"]      # values that mean failure (default: the marker's bad values); others are ignored
+# skills = ["my-build"]   # skills (and groups holding them) it judges; [] = every skill and group
+# From the session: whether it opened a pull request (Claude Code records the PR link; merges are not recorded).
+# [[outcome]]
+# pr = "opened"
+# skills = ["my-flow"]
+
+# Weight of each measure in the score; 0 = shown, not scored. Measures and their defaults:
+# outcome 3, cost 2, seconds 1, error_rate 2, incidents 2, interventions 1, idle_rate 1, api_error_rate 1, bad_markers 1.
+# [weights]
+# cost = 2
+# [weights.my-interview]   # one skill or group: here, a skill whose job is to ask the human
+# interventions = 0
+
+[method]
+# How a version is judged against the one before it (in its own skill only).
+# min_runs = 5             # finished runs needed on each side before a verdict ("not enough runs" below that)
+# resamples = 4000         # bootstrap resamples of the difference
+# confidence = 0.95        # central interval of the difference that must clear zero for "better" or "worse"
+# cc_version = "minor"     # level at which Claude Code versions are compared: when their mix shifts between the two
+#                          # sides (2.1 -> 2.2, or with "patch" also 2.1.3 -> 2.1.4), the verdict is "confounded"
+
+# Every skill already has its own score. A group scores a set of skills and agent types as one unit:
+# its runs are the union of its members' work, each piece counted once, and its version changes when
+# any member's text changes. Useful when you edit several skills at once: each skill's verdict is then
+# "confounded" (other skills changed too), while the group's is not confounded by its own members.
+# Members are "skill:<name>" or "agent:<subagent type>".
+# [[group]]
+# name = "pipeline"
+# members = ["skill:my-plan", "skill:my-build", "agent:Explore"]
+
+# USD per million tokens (input, output, cache_read), for models missing from the built-in table.
+# Cache writes are priced at 1.25x (5 min) and 2x (1 h) input. A model with no price is never guessed:
+# its calls get no list-price cost and `runlens check` names it.
+# [prices]
+# "claude-new-model" = [3.0, 15.0, 0.30]
+
+[dashboard]
+auto = true  # rebuild ~/.runlens/dashboard.html after the hook ingests runs; `runlens dashboard` always works
+# Named starting points offered in the page: the hash is the part of the page's address from # on.
+# [[dashboard.view]]
+# name = "Model spend"
+# hash = "#/diagnostics?tab=models"

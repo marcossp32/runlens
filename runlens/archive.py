@@ -271,7 +271,7 @@ def archive(cfg, quiet=False, **filters):
     """Copy selected runs into the archive. A run whose source changed since it was archived is copied again."""
     n, cache = 0, load_cache()
     for main, info in select(cfg, cache=cache, **filters):
-        sid, project = main.stem, info["project"]
+        sid = main.stem
         try:
             changed = archive_run(cfg, main, info, quiet)
         except Exception as e:  # one unreadable run must not stop the others

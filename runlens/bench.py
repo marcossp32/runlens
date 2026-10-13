@@ -649,7 +649,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
 
     # Invocations as loaded (what "n invocations" counts), separate from the ones that did attributed work.
     for (sid, skill), lst in loads.items():
-        for t, ag, h, i in lst:
+        for _t, _ag, h, i in lst:
             cell(f"skill:{skill}", sid, version_key({skill: h}))["loads"].add(i)
 
     # Outcomes.

@@ -18,6 +18,7 @@ def load(sessions=None):
     Without a filter the tables are views over the attached file (nothing is copied); with one, the selected
     runs' rows are copied, with the session ids passed as parameters."""
     import duckdb
+
     from .store import RUN_TABLES, connect
     connect(read_only=True).close()  # migrates an older database before it is read
     mem = duckdb.connect()

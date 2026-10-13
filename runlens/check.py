@@ -114,7 +114,7 @@ def gaps(con, cfg, sessions=None, sources=True):
         print(f"FAIL  evidence  {missing} evidence file(s) listed in a manifest have no blob in {config.BLOBS}")
     if not sources or not fs_path(config.PROJECTS).is_dir():
         return n
-    for sid, project, reason in stale_runs():
+    for sid, _project, reason in stale_runs():
         if sessions and sid not in sessions and sid[:8] not in sessions:
             continue
         n += 1
