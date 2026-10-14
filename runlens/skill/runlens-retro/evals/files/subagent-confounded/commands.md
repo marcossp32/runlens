@@ -1,4 +1,4 @@
-# Canned runlens output: a skill that only runs in subagents, with a confounded version
+# Canned runlens output: a skill that only loads in subagents (it has its own unit), with a confounded version
 
 ## runlens refresh
 ```
@@ -7,7 +7,20 @@
 
 ## runlens check
 ```
-ok   13 runs match the transcripts
+ok    c66287aa  agents=3 api=150 tools=90 cost=2.00 output tokens 98% of cost-state
+ok    d81f02bb  agents=3 api=163 tools=97 cost=2.35 output tokens 98% of cost-state
+ok    e93a1c44  agents=3 api=176 tools=104 cost=2.70 output tokens 98% of cost-state
+ok    27efa8c1  agents=3 api=189 tools=111 cost=3.05 output tokens 98% of cost-state
+ok    31aa90bd  agents=3 api=202 tools=118 cost=3.40 output tokens 98% of cost-state
+ok    42bb81ce  agents=3 api=215 tools=125 cost=3.75 output tokens 98% of cost-state
+ok    53cc72df  agents=3 api=228 tools=132 cost=4.10 output tokens 98% of cost-state
+ok    64dd63e0  agents=3 api=241 tools=139 cost=4.45 output tokens 98% of cost-state
+ok    75ee54f1  agents=3 api=254 tools=146 cost=4.80 output tokens 98% of cost-state
+ok    86ff45a2  agents=3 api=267 tools=153 cost=5.15 output tokens 98% of cost-state
+ok    97a036b3  agents=3 api=280 tools=160 cost=5.50 output tokens 98% of cost-state
+ok    a8b127c4  agents=3 api=293 tools=167 cost=5.85 output tokens 98% of cost-state
+ok    b9c218d5  agents=3 api=306 tools=174 cost=6.20 output tokens 98% of cost-state
+all checks passed
 ```
 
 ## runlens score --kind skill --json
@@ -16,7 +29,11 @@ ok   13 runs match the transcripts
   {"unit": "skill:m-feature", "name": "m-feature", "kind": "skill", "runs": 13, "invocations": 13, "versions": 1, "current": "v1",
    "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null},
   {"unit": "skill:m-build", "name": "m-build", "kind": "skill", "runs": 13, "invocations": 61, "versions": 1, "current": "v1",
-   "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null}
+   "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null},
+  {"unit": "skill:m-scan", "name": "m-scan", "kind": "skill", "runs": 13, "invocations": 56, "versions": 2, "current": "v2",
+   "verdict": "confounded", "direction": "better", "vs": "v1",
+   "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
+   "outcome": null, "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}}
 ]}
 ```
 
@@ -40,9 +57,11 @@ false    56
 
 ## runlens incidents --skill m-scan
 ```
-incident_id  run       type          n  skill   role  key
-c1           c66287aa  error_streak  3  m-scan  Scan  Grep: other
-c2           d81f02bb  error_streak  2  m-scan  Scan  Bash: not_found
+incident_id  run       type          n  skill   role  key              policy
+-----------  --------  ------------  -  ------  ----  ---------------  ------
+c1           c66287aa  error_streak  3  m-scan  Scan  Grep: other      False
+c2           d81f02bb  error_streak  2  m-scan  Scan  Bash: not_found  False
+(2 rows)
 ```
 
 ## runlens agreement --json

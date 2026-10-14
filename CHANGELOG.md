@@ -65,6 +65,12 @@
 - Dashboard wording no longer ranks skills or claims more than the data shows (#12). The cost chart is drawn once per outcome definition, with a takeaway that names no winner; the outcome and diagnostics takeaways drop their "most often" and "hits the most" lines; the measures heatmap is sorted by name. An outcome that is a PR opened is called the PR-opened rate, not the first-pass rate. Measure cells show the ratio to the reference (`×0.66`) instead of a signed percentage, a rate shows its value against the reference, and a ratio clipped at the cap is marked (`≥ ×2`). "Clearly above its usual level" is judged on the rounded range that is shown and never said of a confounded version.
 - A clearer type scale (page 26, section 18, card 15, body 14, caption 12.5 px), an 8-point spacing scale, lighter card borders, and nested tabs drawn as pills so the two levels read apart.
 
+### Retro skill
+- `/runlens-retro` stops only on a FAIL about counts or ingest. An unpriced model, an old parser version, a cost-state mismatch or an orphan subagent now give a warning and the fix (`[prices]`, `runlens refresh`) and the retro goes on.
+- `/runlens-retro` runs `runlens classify --dry-run` first and asks before it spends `claude -p` calls on the sample.
+- Its description no longer says Claude uses it automatically: it is `disable-model-invocation`, so you run it yourself.
+- The eval fixtures use the real `runlens check` line format, a skill that only loads in subagents now has its own score, and two cases were added (unpriced model, `verify` confirmed and refuted). `tests/test_retro_fixtures.py` checks every fixture against the CLI output on the demo history.
+
 ## 0.2.0 - 2026-10-13
 
 An audit of the whole tool found that the numbers it showed could not be trusted: missing tokens, double counts, runs frozen half-way, wrong prices, and verdicts that ranked task types rather than skill versions. This release fixes the data first, then the method, then the outputs.
