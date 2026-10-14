@@ -29,10 +29,32 @@ pattern = '^STEP CHECK: (PASS|FAIL)\b'
 bad = ["FAIL"]
 
 [[marker]]
+name = "check_failure"   # which step check failed: one row per failed check, so a guard that trips often shows
+source = "tool_result"
+pattern = '^- FAIL (suite|test changed|loosened|credential|pinned)\b'
+bad = "*"
+
+[[marker]]
+name = "unpinned"        # the builder said no test can pin the step (every fix step does); counted, not an incident
+source = "tool_result"
+pattern = '^- (unpinned)\?'
+
+[[marker]]
 name = "suite"
 source = "tool_result"
 pattern = '^SUITE (WORSE|BETTER|SAME|not comparable)\b'
 bad = ["WORSE"]
+
+[[marker]]
+name = "prove"           # the verdict prove returns to m-feature
+source = "tool_result"
+pattern = '^PR #\d+ · (Proved|Not verified)\b'
+bad = ["Not verified"]
+
+[[marker]]
+name = "replay"          # a re-prove replaying lines verified earlier, instead of driving them again
+source = "tool_result"
+pattern = '^REPLAY: (PASS|FAIL)\b'
 
 [[marker]]
 name = "replan"
@@ -50,6 +72,13 @@ marker = "step_check"
 success = ["PASS"]
 failure = ["FAIL"]
 skills = ["m-build"]
+
+[[outcome]]
+name = "prove pass rate"
+marker = "prove"
+success = ["Proved"]
+failure = ["Not verified"]
+skills = ["m-prove"]
 
 [[outcome]]
 name = "PR opened"
