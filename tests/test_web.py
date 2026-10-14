@@ -186,10 +186,15 @@ def find_browser():
 
 def dump(path, route, budget=5000):
     """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile."""
-    prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
-    cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-           f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+    for attempt in range(2):  # headless Chrome now and then hangs on a CI runner (seen on macOS): one retry
+        prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
+        cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
+               f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+        except subprocess.TimeoutExpired:
+            if attempt:
+                raise
 
 
 class Assembly(unittest.TestCase):

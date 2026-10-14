@@ -34,7 +34,7 @@
 - A version is a hash over a contiguous stretch of runs: reverting a skill (A, B, A) gives three versions and the current one is the newest (#9).
 - New verdict `not scored` (enough runs, but every weight is 0) instead of `not enough runs` (#9).
 - A NaN in a measure no longer counts as "2x better" in Python (JS and Python agree: the measure is skipped). In bootstrap draws a measure without data counts as no change instead of renormalising the weights (#9).
-- 10,000 bootstrap resamples by default (was 4000), against Monte Carlo error at the ends of the interval (#9).
+- 10,000 bootstrap resamples by default (was 4000), against Monte Carlo error at the ends of the interval (#9) The dashboard's own recompute stays at 4,000 at most, so changing a setting does not freeze the page.
 - Each unit gets a Benjamini-Hochberg q over the units compared (`p_adjusted` in `score --json`); the dashboard flags a `better` or `worse` it does not support. Per-measure intervals are marked exploratory. "Above/below its typical run" is shown as a description, not a verdict (#9).
 - README "The method" now states the limits: low power, peeking and multiplicity (#9).
 - The database queries behind the model have an explicit `ORDER BY` (#9).

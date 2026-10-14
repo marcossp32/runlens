@@ -187,8 +187,9 @@ function quantile(sorted, q) {
   const i = q * (sorted.length - 1), lo = Math.floor(i);
   return sorted[lo] + (sorted[Math.min(lo + 1, sorted.length - 1)] - sorted[lo]) * (i - lo);
 }
-// At most 10000 here: the model's own count is used when smaller, and a page cannot afford more.
-const RESAMPLES = () => Math.min(DATA.method.resamples || 2000, 10000);
+// At most 4000 here: a recompute redoes every unit on the page's main thread, and 10000 made it take minutes on
+// a slow machine. The model's own count is used when smaller; the cost is a wider Monte Carlo error.
+const RESAMPLES = () => Math.min(DATA.method.resamples || 2000, 4000);
 
 // Two-sided p of "no change" from the sorted draws of a difference: the confidence level at which the expanded
 // interval would first touch 0. Mirrors bench.p_value.
