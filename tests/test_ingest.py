@@ -294,7 +294,7 @@ class Ingest(Sandbox):
         r.end()
         r.write()
         self.refresh()
-        self.assertEqual(self.q("SELECT human_prompts FROM runs")[0][0], 1)
+        self.assertEqual(self.q("SELECT human_prompts FROM runs")[0][0], 0)  # a slash command is harness text, not a prompt
         self.assertEqual(self.q("SELECT exit_code, timed_out_ms, return_code_info, permission, permission_source FROM tool_calls WHERE tool_use_id = 't1'"),
                          [(2, 120000, "failed", "accept", "config:rule")])
         self.assertEqual(self.q("SELECT patch_added, patch_removed FROM tool_calls WHERE tool_use_id = 't2'"), [(2, 1)])
@@ -304,6 +304,79 @@ class Ingest(Sandbox):
         self.assertEqual(self.q("SELECT type, policy, detail FROM incidents WHERE type = 'permission_denied'"),
                          [("permission_denied", True, "permission-rule")])
         self.assertEqual(self.q("SELECT count(*) FROM incidents WHERE type = 'api_error'")[0][0], 1)
+
+    def test_harness_output_is_not_a_human_prompt(self):
+        r = Run(self.projects, "afafafaf-0000-0000-0000-000000000001")
+        r.rec(type="user", message={"role": "user", "content": "fix the bug"}, promptSource="typed")
+        for text in ("<local-command-stdout>ok</local-command-stdout>", "<bash-input>ls</bash-input>",
+                     "<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>", "<command-name>/compact</command-name>"):
+            r.rec(type="user", message={"role": "user", "content": text})
+        r.rec(type="user", isCompactSummary=True, message={"role": "user", "content": "Summary. The user said: [Request interrupted by user]"})
+        r.rec(type="user", message={"role": "user", "content": [  # a prompt with a pasted image has list content
+            {"type": "text", "text": "what is this?"}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}]},
+            promptSource="typed")
+        r.turn("m1", "t1")
+        r.end()
+        r.write()
+        self.refresh()
+        self.assertEqual(self.q("SELECT human_prompts FROM runs")[0][0], 2)
+        self.assertEqual(self.q("SELECT count(*) FROM events WHERE kind = 'human_prompt'")[0][0], 2)
+        self.assertEqual(self.q("SELECT count(*) FROM events WHERE kind = 'interrupt'")[0][0], 0)  # the summary only quotes it
+
+    def test_new_style_fork_does_not_duplicate_or_own_its_parents_call(self):
+        sid = "babababa-0000-0000-0000-000000000001"
+        r = Run(self.projects, sid)
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        spawn = {"id": "msg_spawn", "model": "claude-sonnet-5-5", "role": "assistant", "stop_reason": "tool_use",
+                 "content": [{"type": "tool_use", "id": "toolu_fork", "name": "Agent",
+                              "input": {"subagent_type": "fork", "description": "Fork it", "prompt": "do part"}}]}
+        last = r.rec(type="assistant", message={**spawn, "usage": {"input_tokens": 10, "output_tokens": 500}})["uuid"]
+        r.end()
+        r.write()
+        sub = Run(self.projects, "agent-fk9", project=f"C--work-repo/{sid}/subagents")
+        sub.rows.append({"type": "fork-context-ref", "agentId": "fk9", "parentSessionId": sid, "parentLastUuid": last, "contextLength": 2})
+        sub.rec(type="assistant", agentId="fk9", isSidechain=True, parentUuid=None,
+                message={**spawn, "usage": {"input_tokens": 10, "output_tokens": 4}})  # partial copy of the spawning message
+        sub.rec(type="assistant", agentId="fk9", isSidechain=True, message={
+            "id": "msg_own", "model": "claude-sonnet-5-5", "role": "assistant", "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "done"}], "usage": {"input_tokens": 5, "output_tokens": 20}})
+        sub.write()
+        (sub.path.parent / "agent-fk9.meta.json").write_text(json.dumps(
+            {"agentType": "fork", "isFork": True, "description": "Fork it", "toolUseId": "toolu_fork", "spawnDepth": 1}), encoding="utf-8")
+        self.refresh()
+        self.assertEqual(self.q("SELECT agent_id, output_tokens FROM api_calls WHERE msg_id = 'msg_spawn'"), [("main", 500)])
+        self.assertEqual(self.q("SELECT count(*) FROM api_calls WHERE agent_id = 'fk9'")[0][0], 1)
+        self.assertEqual(self.q("SELECT count(*), count(DISTINCT tool_use_id) FROM tool_calls"), [(1, 1)])
+        self.assertEqual(self.q("SELECT parent_agent_id FROM agents WHERE agent_id = 'fk9'"), [("main",)])
+
+    def test_stale_archive_is_not_complete_through_idleness(self):
+        sid = "bcbcbcbc-0000-0000-0000-000000000001"
+        r = Run(self.projects, sid, start=datetime.now(timezone.utc) - timedelta(days=3))
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        for i in range(3):
+            r.turn(f"s{i}", f"st{i}")
+        r.write()  # no cost-state, idle for days
+        self.quiet(archive.archive, self.cfg)
+        with open(r.path, "a", encoding="utf-8") as fh:  # the source grows after it was archived
+            fh.write(json.dumps({"type": "user", "uuid": "late", "timestamp": iso(datetime.now(timezone.utc) - timedelta(days=3)),
+                                 "sessionId": sid, "message": {"role": "user", "content": "more"}}) + "\n")
+        self.quiet(store.ingest, self.cfg)
+        self.assertEqual(self.q("SELECT status, ended_by FROM runs"), [("open", None)])
+        self.refresh()  # archived again: the copy is whole, so idleness counts
+        self.assertEqual(self.q("SELECT status, ended_by FROM runs"), [("complete", "idle")])
+
+    def test_runs_sharing_an_eight_character_prefix_keep_distinct_ids(self):
+        from runlens import explorer
+        simple_run(self.projects, "cdcdcdcd-1111-0000-0000-000000000001")
+        simple_run(self.projects, "cdcdcdcd-2222-0000-0000-000000000002")
+        simple_run(self.projects, "cececece-3333-0000-0000-000000000003")
+        self.refresh()
+        con = store.connect(read_only=True)
+        try:
+            ids = {r[0] for r in explorer.build(con)["runs"]["r"]}
+        finally:
+            con.close()
+        self.assertEqual(ids, {"cdcdcdcd-1111-0000-0000-000000000001", "cdcdcdcd-2222-0000-0000-000000000002", "cececece"})
 
     def test_unknown_model_is_flagged_not_guessed(self):
         r = Run(self.projects, "adadadad-0000-0000-0000-000000000001")

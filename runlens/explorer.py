@@ -95,7 +95,9 @@ def build(con, cfg=None):
                           n_agents, lines_added, lines_removed, pr_urls, unpriced_models, parser_version, bad_lines,
                           entrypoint, skills
                    FROM runs ORDER BY started""")
-    rid = {r["session_id"]: r["session_id"][:8] for r in runs}
+    prefixes = [r["session_id"][:8] for r in runs]
+    # two sessions sharing the first 8 characters would merge: those keep their full id
+    rid = {r["session_id"]: r["session_id"] if prefixes.count(r["session_id"][:8]) > 1 else r["session_id"][:8] for r in runs}
     start = {r["session_id"]: epoch(r["started"]) for r in runs}
     known = lambda sid: sid in rid
 

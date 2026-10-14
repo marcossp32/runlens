@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Data
+- New-style forks (`fork-context-ref`) no longer double-count the parent's spawning call, lose its final token usage, or become their own parent. The parser version is bumped.
+- Harness output (`<local-command-stdout>`, `<bash-input>`, `<bash-stdout>`, `<command-name>`, compaction summaries) no longer counts as a human prompt; prompts with images do. A compaction summary that quotes "[Request interrupted" no longer creates an `interrupt` event.
+- A run whose archive is older than its source stays `open` instead of becoming `complete` through idleness, until it is archived again.
+- Sessions that share the first 8 characters of their id keep their full id in the explorer instead of merging.
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
 
 ### Dashboard
