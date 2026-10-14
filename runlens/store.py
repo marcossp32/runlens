@@ -405,6 +405,24 @@ def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
     return done
 
 
+def outdated_sessions():
+    """Runs last ingested by an older parser, which a drain re-ingests so the database never mixes versions."""
+    con = connect(wait=300)
+    try:
+        return sorted(r[0] for r in con.execute("SELECT session_id FROM ingest_state WHERE parser_version IS DISTINCT FROM ?", [PARSER_VERSION]).fetchall())
+    finally:
+        con.close()
+
+
+def failed_sessions(sessions):
+    """Which of these sessions have a recorded ingest error."""
+    con = connect(wait=300)
+    try:
+        return {r[0] for r in con.execute("SELECT session_id FROM ingest_errors WHERE session_id IN (SELECT unnest(?::VARCHAR[]))", [list(sessions)]).fetchall()}
+    finally:
+        con.close()
+
+
 def err(sid, path, stage, e):
     return {"session_id": sid, "path": str(plain(path)), "stage": stage, "error": f"{type(e).__name__}: {e}"[:1000],
             "detail": "".join(traceback.format_exception(e))[-4000:]}

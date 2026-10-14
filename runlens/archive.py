@@ -72,14 +72,19 @@ def source_signature(main):
     return sig
 
 
-def select(cfg, since=None, skills=None, projects=None, sessions=None, cache=None):
+def select(cfg, since=None, skills=None, projects=None, sessions=None, cache=None, transcripts=None):
     """Sessions that count as runs, with their scan. Unchanged sessions reuse the cached scan instead of being read."""
     sel = cfg.get("select", {})
     since_dt = config.since_utc(since or sel.get("since"))
     want_skills = set(skills or sel.get("skills", []))
     want_projects = [p.lower() for p in (projects or sel.get("projects", []))]
     cache = {} if cache is None else cache
-    for main in sorted(config.PROJECTS.glob("*/*.jsonl")):
+    found = {p.as_posix(): p for p in config.PROJECTS.glob("*/*.jsonl")}
+    for extra in transcripts or []:  # a transcript_path the hook was given, wherever Claude Code keeps its projects
+        extra = Path(extra)
+        if extra.suffix == ".jsonl" and extra.is_file():
+            found.setdefault(extra.as_posix(), extra)
+    for main in sorted(found.values()):
         if sessions and main.stem not in sessions:
             continue
         try:

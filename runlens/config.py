@@ -6,7 +6,9 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 HOME = Path(os.environ.get("RUNLENS_HOME", Path.home() / ".runlens"))
-PROJECTS = Path(os.environ.get("CLAUDE_PROJECTS", Path.home() / ".claude" / "projects"))
+# Claude Code keeps settings, skills and transcripts under CLAUDE_CONFIG_DIR when it is set (code.claude.com/docs/en/env-vars)
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+PROJECTS = Path(os.environ.get("CLAUDE_PROJECTS", CLAUDE_DIR / "projects"))
 ARCHIVE = HOME / "archive"
 BLOBS = ARCHIVE / "_blobs"      # evidence files, stored once by content hash
 PENDING = HOME / "pending"      # sessions the hook queued for archive + ingest
