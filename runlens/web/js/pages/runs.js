@@ -111,8 +111,8 @@ function changeMarks(kinds, skillUnit) {
   const out = [];
   const runs = keptRuns().sort((a, b) => a.t0 - b.t0);
   if (kinds.includes("cc")) {
-    // At the level the method treats as a confounder ([method] cc_version): minor by default, so 2.1.283 → 2.1.290 is no marker.
-    const level = (v) => (DATA.method.cc_version === "patch" ? String(v) : String(v).split(".").slice(0, 2).join("."));
+    // At the level the method treats as a confounder ([method] cc_version): patch by default, so 2.1.283 → 2.1.290 is a marker.
+    const level = (v) => (DATA.method.cc_version === "minor" ? String(v).split(".").slice(0, 2).join(".") : String(v));
     let prev = null;
     for (const r of runs) {
       if (r.cc && level(r.cc) !== prev) {

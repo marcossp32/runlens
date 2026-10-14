@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Method
+- Confounders (#8): a change of model within a family (haiku-4-5 → haiku-5-5) and of Claude Code patch release (2.1.283 → 2.1.296) now confounds a verdict. Models are compared by full id, and `[method] cc_version` defaults to `"patch"` (set `"minor"` for the old behaviour).
+- The confounder check no longer depends on `PYTHONHASHSEED`: sessions are sorted, ties are broken by name, and another skill's versions are compared as distributions, not by their most common value.
+- The mix-shift threshold is 0.3 or 1.5 / √runs, whichever is higher, so two projects at 50/50 no longer trip it by chance with few runs.
+- The model mix counts the main agent only; a skill that delegates to a cheaper model in subagents is no longer confounded by it.
+- The dashboard no longer labels a pair better or worse when filtering produced a pair the model never checked for confounders.
+
 ### Data
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
 

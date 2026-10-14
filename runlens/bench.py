@@ -88,7 +88,8 @@ TURN_CAP = 600.0    # seconds: the gap between two model turns counts for at mos
 RESAMPLES = 4000    # bootstrap resamples per interval: the expanded tails at n = 5 are 0.1% each, so many are needed
 MIN_RUNS = 5        # runs needed on each side before a verdict is given
 CONFIDENCE = 0.95   # central interval of the bootstrap difference
-MIX_SHIFT = 0.3     # total variation distance between two sides' mixes that counts as a confounder
+MIX_SHIFT = 0.3     # smallest total variation distance between two sides' mixes that counts as a confounder
+MIX_NOISE = 1.5     # ... and at least MIX_NOISE / sqrt(runs on the smaller side): two samples of one mix differ by chance
 ALL_PAIRS = 6       # with at most this many versions every pair is compared, else consecutive ones only
 DIFF_LINES = 800    # longest diff kept per changed skill
 CLIP = math.log(MAX_RATIO)
@@ -194,7 +195,7 @@ def settings(cfg=None, groups=None):
         "min_runs": int(method.get("min_runs", MIN_RUNS)),
         "resamples": int(method.get("resamples", RESAMPLES)),
         "confidence": float(method.get("confidence", CONFIDENCE)),
-        "cc_version": method.get("cc_version", "minor"),
+        "cc_version": method.get("cc_version", "patch"),
         "auto_groups": bool(method.get("auto_groups", True)),
     }
     if s["min_runs"] < 2:
@@ -447,9 +448,14 @@ def _top_change(a, b):
     return f"{k} {a[k] / ta:.0%} → {b[k] / tb:.0%}"
 
 
-def family(model):
-    m = re.search(r"(opus|sonnet|haiku|fable|mythos)", model or "")
-    return m.group(1) if m else (model or "unknown")
+def _mode(c):
+    """The most common member of a mix; on a tie, the first by name."""
+    return max(sorted(c), key=lambda k: c[k])
+
+
+def model_id(model):
+    """The full model id: haiku-4-5 and haiku-5-5 are different models."""
+    return model or "unknown"
 
 
 def cc_level(version, level):
@@ -458,37 +464,37 @@ def cc_level(version, level):
     return version if level == "patch" else ".".join(version.split(".")[:2])
 
 
+def mix_threshold(n):
+    """Total variation distance two mixes must reach to count as shifted: it grows as there are fewer runs."""
+    return max(MIX_SHIFT, MIX_NOISE / math.sqrt(max(n, 1)))
+
+
 def confounders_of(side_a, side_b, own_skills, ctx):
     """What else differed between two sets of runs. `side_*` are run rows with their context."""
     out = []
-    sids_a = {r["sid"] for r in side_a}
-    sids_b = {r["sid"] for r in side_b}
+    sids_a = sorted({r["sid"] for r in side_a})
+    sids_b = sorted({r["sid"] for r in side_b})
+    limit = mix_threshold(min(len(sids_a), len(sids_b)))
     versions = ctx["session_versions"]
     others = set()
-    for sid in sids_a | sids_b:
+    for sid in sids_a + sids_b:
         others |= set(versions.get(sid, {}))
     for s in sorted(others - set(own_skills)):
-        ha = Counter(versions[sid][s] for sid in sids_a if s in versions.get(sid, {}))
-        hb = Counter(versions[sid][s] for sid in sids_b if s in versions.get(sid, {}))
-        if ha and hb:
-            top_a, top_b = ha.most_common(1)[0][0], hb.most_common(1)[0][0]
-            if top_a != top_b:
-                out.append(f"{s} also changed ({short(top_a)} → {short(top_b)})")
-    mix = lambda rows, field: sum((r[field] for r in rows), Counter())
-    for field, what in (("models", "model mix (share of cost)"), ("efforts", "effort mix (share of turns)")):
+        ha = Counter(short(versions[sid][s]) for sid in sids_a if s in versions.get(sid, {}))
+        hb = Counter(short(versions[sid][s]) for sid in sids_b if s in versions.get(sid, {}))
+        if ha and hb and shift(ha, hb) >= mix_threshold(min(sum(ha.values()), sum(hb.values()))):
+            out.append(f"{s} also changed ({_top_change(ha, hb)})")
+    mix = lambda rows, field: sum((r[field] for r in sorted(rows, key=lambda r: r["sid"])), Counter())
+    for field, what in (("models", "model mix (share of main-agent cost)"), ("efforts", "effort mix (share of turns)")):
         a, b = mix(side_a, field), mix(side_b, field)
-        if shift(a, b) >= MIX_SHIFT:
-            top_a, top_b = a.most_common(1)[0][0], b.most_common(1)[0][0]
-            if field == "cc" and top_a != top_b:
-                out.append(f"Claude Code {top_a} → {top_b}")
-            else:  # the most common value is the same on both sides: name the one whose share moved
-                out.append(f"{what}: {_top_change(a, b)}")
+        if shift(a, b) >= limit:
+            out.append(f"{what}: {_top_change(a, b)}")
     runs = ctx["sessions"]
     for field, what in (("cc", "Claude Code version"), ("repo", "project mix")):
         a = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_a)
         b = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_b)
-        if shift(a, b) >= MIX_SHIFT:
-            top_a, top_b = a.most_common(1)[0][0], b.most_common(1)[0][0]
+        if shift(a, b) >= limit:
+            top_a, top_b = _mode(a), _mode(b)
             if field == "cc" and top_a != top_b:
                 out.append(f"Claude Code {top_a} → {top_b}")
             else:  # the most common value is the same on both sides: name the one whose share moved
@@ -705,7 +711,8 @@ def compute(data, groups=None, resamples=None, cfg=None):
             c["api_errors"] += bool(a["api_error"])
             c["inv"][inv][0] += cost
             c["inv"][inv][1] += seconds[i]
-            c["models"][family(a.get("model"))] += cost
+            if a["agent_id"] == "main":  # the skill's own subagents are part of its effect, not a confounder
+                c["models"][model_id(a.get("model"))] += cost
             c["efforts"][a.get("effort") or "default"] += 1
     for t in kept(data["tools"]):
         for uid, vkey, _ in place(t["session_id"], t["agent_id"], t.get("ts"), t["skill"]):
