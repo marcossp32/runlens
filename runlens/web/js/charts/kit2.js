@@ -13,10 +13,12 @@
    colour carries meaning, a table view and CSV / SVG / PNG export, and fades when its sample is small. */
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-// A ratio effect in words: ×1.21 is "21% better", ×0.8 is "25% worse" (the same distance on a log axis).
+// A ratio effect in words: ×1.21 is "21% better", ×0.8 is "25% worse" (the same distance on a log axis). An effect at the
+// cap was clipped (the score stops counting there), so it is said to be, not given as a size.
 const effectWords = (e) => {
   if (!valid(e) || e <= 0) return "—";
   if (Math.abs(Math.log(e)) < 0.005) return "no change";
+  if (Math.abs(Math.log(e)) >= LOG_CAP - 1e-6) return e > 1 ? `better, capped at ×${fmt.num(e, 2)}` : `worse, capped at ×${fmt.num(e, 2)}`;
   return e > 1 ? `${fmt.pct(e - 1, e - 1 < 0.1 ? 1 : 0)} better` : `${fmt.pct(1 / e - 1, 1 / e - 1 < 0.1 ? 1 : 0)} worse`;
 };
 const isoOf = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
@@ -107,7 +109,7 @@ function forestPlot(spec) {
     draw(w) {
       const R = rowH() + 4, top = 28;
       const labelW = Math.min(maxLabel(rows.map((r) => r.label), FONT.label) + 16, Math.max(100, w * 0.3));
-      const txt = (r) => effectWords(r.effect);
+      const txt = (r) => r.words || effectWords(r.effect);
       const valW = Math.min(maxLabel(rows.map((r) => `▲ ${txt(r)}`), FONT.axis) + 16, Math.max(110, w * 0.3));
       const x0 = labelW, x1 = Math.max(x0 + 80, w - valW);
       const vals = rows.flatMap((r) => (r.ci ? [r.ci[0], r.ci[1], r.effect] : [r.effect])).concat([1]);

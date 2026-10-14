@@ -96,7 +96,9 @@ function comparison(sa, sb) {
   const forestRows = pair && d ? [
     ...(d.score != null ? [{ label: "Weighted score", bold: true, effect: d.score / 100, ci: d.ci ? [d.ci[0] / 100, d.ci[1] / 100] : null,
       tone: { better: "better", worse: "worse" }[pair.direction] || "unclear", word: pair.verdict, tip: [["Weights", customWeights() ? "yours" : "the defaults"]] }] : []),
+    // A rate's effect is worked out on 1 − p (floored) and clipped, so a rate reads as its two values, not as a percentage.
     ...rows.filter((r) => r.pm).map((r) => ({ label: r.label, effect: r.pm.effect, ci: r.pm.ci, tone: r.tone,
+      words: r.m.type === "rate" ? `${fmt.metric(r.m, r.a)} → ${fmt.metric(r.m, r.b)}` : null,
       tip: [["A", fmt.metric(r.m, r.a)], ["B", fmt.metric(r.m, r.b)], ["Weight", `×${r.pm.weight}`]] })),
   ] : [];
   const conf = pair && pair.confounders ? pair.confounders : [];
@@ -112,7 +114,7 @@ function comparison(sa, sb) {
       title: "B against A, with the interval of each difference", question: "What changed between the two versions, and how sure is it?",
       takeaway: () => {
         const clear = forestRows.filter((r) => !r.bold && r.ci && (r.ci[0] > 1 || r.ci[1] < 1));
-        return clear.length ? `Clear differences: ${listWords(clear.map((r) => `${r.label.toLowerCase()} (B ${effectWords(r.effect)})`))}. Every other line crosses “no change”.`
+        return clear.length ? `Clear differences: ${listWords(clear.map((r) => `${r.label.toLowerCase()} (${r.words ? `B ${r.words}` : `B ${effectWords(r.effect)}`})`))}. Every other line crosses “no change”.`
           : "No measure differs clearly: every line crosses “no change”, so the runs cannot tell the two versions apart.";
       },
       sub: `${tagB} compared with ${tagA} · dot = how much better or worse B is; line = its ${pct}% interval · right of “no change” (×1), B is better · ${pct}% intervals from resampling runs by session`,

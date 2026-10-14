@@ -133,6 +133,37 @@ def model():
     }
 
 
+def visible(dom):
+    """The text a reader sees: the DOM without its scripts, styles and tags."""
+    return re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style)\b.*?</\1>", " ", dom)).replace("&nbsp;", " ")
+
+
+def wording_model():
+    """The model with a PR outcome on one skill, a check outcome on another, and a confounded group whose range starts at 100.2."""
+    m = copy.deepcopy(model())
+    out = next(x for x in bench.MEASURES if x["key"] == "outcome")
+    m["method"]["metrics"] = [{**{k: v for k, v in out.items() if k != "kinds"}, "kinds": list(out["kinds"])}] + m["method"]["metrics"]
+    m["method"]["outcomes"] = [{"name": "PR opened", "kind": "pr", "marker": None, "skills": ["flow"], "success": [], "failure": []},
+                               {"name": "step_check first-pass rate", "kind": "marker", "marker": "step_check", "skills": ["once_only"], "success": ["PASS"], "failure": []}]
+    flow, once = m["units"][0], m["units"][1]
+    for u, name, rate in ((flow, "PR opened", 0.6), (once, "step_check first-pass rate", 0.8)):
+        u["outcome"] = {"measure": name, "value": rate, "n": 4}
+        u["kpi"]["outcome"] = rate
+        u["baseline"]["outcome"], u["pseudo"]["outcome"], u["weights"]["outcome"] = 0.9, 2.0, 3.0
+    for r in m["runs"]["skill:flow"] + m["runs"]["skill:once_only"]:
+        r.update(on=1, os=1, oe=1)
+    # the latest flow version did far worse than usual on the rate: its ratio sits at the cap (2.0)
+    m["versions"]["skill:flow"][-1]["metrics"]["outcome"] = {"value": 0.6, "counted": 0.6, "n": 6, "ref": 0.9, "ratio": 2.0, "weight": 3}
+    group = unit("group:release-flow", "group", "release-flow", 6, 130.0, [100.2, 174.0], "g1", weights=False)
+    group.update(members=["skill:flow"], verdict="confounded", direction="better", vs="g0", confounders=["Claude Code 2.1 → 2.2"], delta=30.0)
+    m["units"].append(group)
+    g1 = version("g1", "g1", 4, 6, 130.0, [100.2, 174.0], 6, uid="group:release-flow")
+    g1.update(verdict="confounded", direction="better", vs="g0", confounders=["Claude Code 2.1 → 2.2"], delta=30.0)
+    m["versions"]["group:release-flow"] = [version("g0", "g0", 1, 3, 100.0, [90.0, 110.0], 6, uid="group:release-flow"), g1]
+    m["runs"]["group:release-flow"] = [run(d, "g0" if d <= 3 else "g1", 1.0, session=f"g{d}aaaaaa") for d in range(1, 7)]
+    return m
+
+
 def empty_model():
     m = model()
     m.update(units=[], versions={}, pairs={}, runs={}, explore={}, views=[],
@@ -283,6 +314,53 @@ class Renders(unittest.TestCase):
         dom = dump(path, "#/?tab=cost")
         self.assertTrue(re.findall(r'<svg[^>]*class="[^"]*\bchart\b[^"]*"[^>]*>', dom), "no chart was drawn")
         self.assertIsNone(re.search(r'<svg[^>]*viewBox="0 0 640 ', dom), "a chart still uses the old fixed 640-wide viewBox")
+
+    def test_text_does_not_rank_skills_or_mislabel_outcomes(self):
+        path = TMP / "wording.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost")
+        text = visible(dom)
+        self.assertNotIn("On the Pareto frontier", text)
+        self.assertNotIn("nothing is both cheaper and better", text)
+        # two outcome definitions: one chart each, never one axis mixing a PR opened with a check passing
+        self.assertIn("PR-opened rate against cost per invocation (PR opened)", text)
+        self.assertIn("First-pass rate against cost per invocation (step_check first-pass rate)", text)
+        dom = dump(path, "#/?tab=outcome")
+        text = visible(dom)
+        self.assertNotIn("most often", text)
+        self.assertNotIn("passes first time", text)
+        dom = dump(path, "#/unit/skill%3Aflow?tab=outcome")
+        text = visible(dom)
+        self.assertIn("opened a PR over", text)
+        self.assertNotIn("passed first time", text)
+        self.assertNotIn("first-pass rate", text.lower())
+
+    def test_diagnostics_does_not_name_a_worst_skill_or_deny_error_streaks(self):
+        path = TMP / "diag.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics"))
+        self.assertNotIn("hits the most", text)
+        self.assertNotIn("without a tool failing", text)
+
+    def test_measures_heatmap_is_alphabetical_and_ratios_are_not_percentages(self):
+        path = TMP / "heat.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=measures")
+        rows = re.findall(r'class="rowlabel"[^>]*>([^<]+)<', dom)
+        self.assertEqual(rows, sorted(rows, key=str.lower), "rows are not ordered by score")
+        text = visible(dom)
+        self.assertRegex(text, r"60 ?% vs 90 ?%")  # a rate shows its value against the reference
+        self.assertNotRegex(text, r"[+−]\d+%")  # no signed percentage of a ratio
+        self.assertIn("×", text)
+
+    def test_confounded_version_is_not_called_clearly_above(self):
+        path = TMP / "conf.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        for route in ("#/?kind=groups", "#/"):
+            text = visible(dump(path, route))
+            self.assertNotRegex(text, r"release-flow is clearly above", route)
+        text = visible(dump(path, "#/?kind=groups"))
+        self.assertIn("1 confounded", text)
 
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
