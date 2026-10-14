@@ -165,6 +165,20 @@ class Ingest(Sandbox):
         self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 2)
         del good
 
+    def test_active_time_counts_overlapping_turns_once(self):
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000009")
+        r.rec(type="user", message={"role": "user", "content": "go"}, origin={"kind": "human"})
+        # Two turns of 10 s ending at :10 and :20, then a last turn of 30 s that spans both.
+        r.rec(type="system", subtype="turn_duration", durationMs=10000, timestamp="2026-10-01T10:00:10.000Z")
+        r.rec(type="system", subtype="turn_duration", durationMs=10000, timestamp="2026-10-01T10:00:20.000Z")
+        r.rec(type="system", subtype="turn_duration", durationMs=30000, timestamp="2026-10-01T10:00:30.000Z")
+        # A separate turn after a gap adds its own length.
+        r.rec(type="system", subtype="turn_duration", durationMs=5000, timestamp="2026-10-01T10:01:00.000Z")
+        r.turn("y", "ty")
+        r.write()
+        self.assertEqual(self.refresh(), 1, self.out)
+        self.assertEqual(self.q("SELECT active_ms FROM runs WHERE session_id = ?", r.sid)[0][0], 35000)
+
     def test_main_session_work_after_a_skill_goes_back_to_the_outermost(self):
         r = Run(self.projects, "abababab-0000-0000-0000-000000000001")
         r.rec(type="user", message={"role": "user", "content": "/flow"}, promptSource="typed")
