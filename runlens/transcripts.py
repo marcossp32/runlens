@@ -46,6 +46,17 @@ EXIT_CODE = re.compile(r"^(?:Error: )?Exit code (-?\d+)", re.M)
 SHELL_TOOLS = {"Bash", "PowerShell"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 HUMAN_SOURCES = {"typed", "suggestion_accepted", "queued"}
+# What Claude Code writes into user turns for local commands and shell output: the harness's, not a person's.
+HARNESS_OUTPUT = ("<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>", "<bash-stdout>",
+                  "<bash-stderr>", "<bash-input>")
+# A typed slash command is a person asking for something (/m-feature, /review-pr); these built-ins only change the
+# session (clear, compact, switch model...) and send no request.
+COMMAND_NAME = re.compile(r"<command-name>/?([\w:-]+)</command-name>")
+HOUSEKEEPING = frozenset({
+    "clear", "compact", "model", "effort", "fast", "config", "cost", "usage", "status", "context", "help", "login",
+    "logout", "memory", "permissions", "resume", "rewind", "exit", "export", "hooks", "mcp", "agents", "add-dir",
+    "doctor", "ide", "vim", "theme", "statusline", "terminal-setup", "output-style", "todos", "bashes", "plan",
+    "privacy-settings", "release-notes", "upgrade", "feedback", "bug", "plugin", "plugins", "skills", "keybindings"})
 
 # Checked in order against the head of the tool output; the first match wins.
 ERROR_CLASSES = [
@@ -448,7 +459,7 @@ def parse_run(main, info, cfg, now=None):
                             "idle": is_idle(command if isinstance(command, str) else None, an["idle_parts"]),
                             "touches_test": name in EDIT_TOOLS and isinstance(path, str) and bool(test_rx.search(path)),
                         }
-                        tool_owner[b.get("id")] = agent_id
+                        tool_owner.setdefault(b.get("id"), agent_id)  # the first agent to issue a call owns it
                         if name in ("Agent", "Task") and isinstance(inp, dict):
                             spawn_prompts[b.get("id")] = str(inp.get("prompt") or "")[:8000]
                         if name == "Skill" and isinstance(inp, dict) and inp.get("skill"):
@@ -466,13 +477,14 @@ def parse_run(main, info, cfg, now=None):
             elif kind == "user":
                 content = msg.get("content")
                 flat = text_of(content)
-                if is_main and isinstance(content, str) and not r.get("isMeta") and is_human_prompt(r, content):
+                prompt = typed_text(content)
+                if is_main and not r.get("isMeta") and not has_tool_result(content) and is_human_prompt(r, prompt):
                     run["human_prompts"] += 1
-                    if not r.get("isCompactSummary"):  # a compaction summary is not the person asking for something new
-                        skills.new_prompt()
-                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, content[:500],
+                    skills.new_prompt()
+                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, prompt[:500],
                                              r.get("promptSource") or as_dict(r.get("origin")).get("kind")))
-                if "[Request interrupted" in typed_text(content):  # not inside a tool result that happens to quote it
+                # not inside a tool result that happens to quote it, nor a compaction summary that does
+                if "[Request interrupted" in typed_text(content) and not r.get("isCompactSummary"):
                     rows["events"].append(ev(sid, agent_id, t, "interrupt", None, None, None))
                 for task, status in TASK_NOTE.findall(flat):
                     statuses[task] = status
@@ -565,7 +577,7 @@ def parse_run(main, info, cfg, now=None):
     run["bad_lines"] = stats["bad_lines"]
     run["active_ms"] = union_ms(turn_spans)
     finish(rows, run, cost_state, tool_owner, statuses, cfg.get("prices"))
-    run_status(run, cost_state_ts, last_msg_ts, cfg.get("runs") or {}, now)
+    run_status(run, cost_state_ts, last_msg_ts, cfg.get("runs") or {}, now, stale=bool(info.get("stale")))
     return rows
 
 
@@ -575,6 +587,11 @@ def is_human_prompt(r, content):
     Newer versions mark it with origin.kind = human or promptSource typed/suggestion_accepted/queued; some older
     ones wrote typed slash commands with neither field. Task notifications and SDK prompts are not human.
     """
+    if r.get("isCompactSummary") or content.lstrip().startswith(HARNESS_OUTPUT):
+        return False
+    command = COMMAND_NAME.search(content[:500])
+    if command and command.group(1).lower() in HOUSEKEEPING:
+        return False
     origin = as_dict(r.get("origin")).get("kind")
     source = r.get("promptSource")
     if origin == "human" or source in HUMAN_SOURCES:
@@ -582,6 +599,10 @@ def is_human_prompt(r, content):
     if origin or source:
         return False
     return not content.lstrip().startswith("<task-notification>")
+
+
+def has_tool_result(content):
+    return isinstance(content, list) and any(isinstance(x, dict) and x.get("type") == "tool_result" for x in content)
 
 
 def skill_load(flat):
@@ -641,16 +662,12 @@ def inherited_uuids(main, f, meta):
     """Record uuids and API message ids a fork copied from its parent's transcript."""
     if not (meta.get("isFork") or meta.get("agentType") == "fork"):
         return set()
-    for r in iter_records(f):  # newer forks start with a fork-context-ref and copy no history
-        if r.get("type") == "fork-context-ref":
-            return set()
-        break
     parent = meta.get("parentAgentId")
     pf = main.with_suffix("") / "subagents" / f"agent-{parent}.jsonl" if parent else main
     if not pf.exists():
         pf = main
     out = set()
-    for r in iter_records(pf):
+    for r in iter_records(pf):  # a new-style fork's second record repeats the spawning message, usage included
         out.add(r.get("uuid"))
         if r.get("type") == "assistant":
             out.add(as_dict(r.get("message")).get("id"))
@@ -720,13 +737,14 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
     rows["runs"].append(run)
 
 
-def run_status(run, cost_state_ts, last_msg_ts, opts, now=None):
+def run_status(run, cost_state_ts, last_msg_ts, opts, now=None, stale=False):
     """complete: Claude Code wrote its closing cost-state after the last turn, or nothing was added for idle_hours.
+    An archive older than its source (stale) is never complete through idleness: its numbers are partial.
     open: the session may still be going, so its numbers are partial. stub: too small to say anything."""
     now = now or datetime.now(timezone.utc)
     if cost_state_ts and (not last_msg_ts or cost_state_ts >= last_msg_ts):
         run["status"], run["ended_by"] = "complete", "session_end"
-    elif run["ended"] and now - run["ended"] > timedelta(hours=opts.get("idle_hours", 12)):
+    elif run["ended"] and not stale and now - run["ended"] > timedelta(hours=opts.get("idle_hours", 12)):
         run["status"], run["ended_by"] = "complete", "idle"
     else:
         run["status"], run["ended_by"] = "open", None

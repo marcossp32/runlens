@@ -369,6 +369,8 @@ def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
                       f"tools={len(r['tool_calls'])}  markers={len(r['markers'])}  incidents={len(r['incidents'])}")
         batch, batch_rows = [], 0
 
+    from .archive import stale_runs  # a stale archive holds only part of its source: never complete through idleness
+    stale = {sid for sid, _, _ in stale_runs()}
     for mf, info in manifests(sessions):
         sid = mf.name.removesuffix(".runlens.json")
         if isinstance(info, Exception):
@@ -381,11 +383,11 @@ def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
             errors.append(err(sid, main, "read", FileNotFoundError("the archived transcript is missing")))
             continue
         try:
-            fp = fingerprint(main)
+            fp = fingerprint(main) + ("-stale" if sid in stale else "")
             if not force and state.get(sid) == (fp, PARSER_VERSION, cfg_hash):
                 skipped += 1
                 continue
-            rows = parse_run(main, info, cfg)
+            rows = parse_run(main, {**info, "stale": sid in stale}, cfg)
             redact_rows(rows, cfg)
             rows["incidents"] = incidents.build(rows, cfg)
         except Exception as e:
@@ -430,11 +432,14 @@ def err(sid, path, stage, e):
 
 def close_idle_runs(cfg):
     """A run that had no cost-state when it was parsed becomes complete once nothing was added for idle_hours."""
+    from .archive import stale_runs  # a stale archive holds only part of its source: it stays open until archived again
     hours = (cfg.get("runs") or {}).get("idle_hours", config.RUNS["idle_hours"])
+    stale = [sid for sid, _, _ in stale_runs()]
     con = connect(wait=300)
     try:
         con.execute("""UPDATE runs SET status = 'complete', ended_by = 'idle'
-                       WHERE status = 'open' AND ended < ?""", [datetime.now(timezone.utc) - timedelta(hours=hours)])
+                       WHERE status = 'open' AND ended < ? AND session_id NOT IN (SELECT unnest(?::VARCHAR[]))""",
+                    [datetime.now(timezone.utc) - timedelta(hours=hours), stale])
         set_meta(con, parser_version=PARSER_VERSION, last_ingest=datetime.now(timezone.utc).isoformat())
     finally:
         con.close()
