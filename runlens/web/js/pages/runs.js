@@ -294,5 +294,5 @@ function runPage(id) {
         h("li", {}, cmdLine(r.sid, "Session")),
         h("li", {}, cmdLine(`runlens sql "SELECT * FROM v_runs WHERE session_id = '${r.sid}'"`)),
         incidents[0] ? h("li", {}, cmdLine(`runlens show ${incidents[0].id}`), h("span", { class: "muted" }, " the first problem, with what led to it")) : null,
-        prs.map((u) => h("li", {}, h("span", { class: "muted" }, "PR "), h("a", { href: u, rel: "noopener noreferrer", target: "_blank" }, u))))));
+        prs.map((u) => h("li", {}, h("span", { class: "muted" }, "PR "), /^https:\/\//i.test(u) ? h("a", { href: u, rel: "noopener noreferrer", target: "_blank" }, u) : u)))));
 }

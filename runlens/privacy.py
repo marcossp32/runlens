@@ -1,8 +1,10 @@
 """Optional masking of secrets in the text runlens stores, and `runlens prune`.
 
 With `[privacy] redact = true`, every text column that comes from a transcript
-(tool inputs and outputs, the agent's text, prompts, incident timelines) is
-passed through `redact` before it reaches DuckDB. Hashes used for versions and
+(tool inputs and outputs, the agent's text, prompts, skill texts, incident timelines)
+is passed through `redact` before it reaches DuckDB; the working directory, branch and PR
+links are not. The parser redacts before cutting text to its stored length, so a secret
+cut in half is still found. Hashes used for versions and
 repeated calls are taken from the original text, so redaction changes no count.
 The archived transcripts themselves stay verbatim: they are the source of truth
 and can be re-ingested.
@@ -10,7 +12,7 @@ and can be re-ingested.
 import re
 
 PATTERNS = [
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",  # an unterminated block (cut short) is masked to its end
     r"\bsk-ant-[A-Za-z0-9_\-]{10,}",                    # Anthropic
     r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}",              # OpenAI-style
     r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}",      # GitHub tokens
@@ -24,7 +26,7 @@ PATTERNS = [
     r"\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}",  # JWT
     r"\b(?i:bearer|basic)\s+[A-Za-z0-9._~+/\-]{16,}=*",
     r"(?<=://)[^/\s:@]+:[^/\s@]+(?=@)",              # user:password@ in URLs
-    r"""\b(?i:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth)\b["']?\s*[:=]\s*["']?[^\s"',;]{6,}""",
+    r"""(?<![A-Za-z0-9])(?i:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth)\b["']?\s*[:=]\s*["']?[^\s"',;]{6,}""",
     r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}",  # e-mail
 ]
 MASK = "[redacted]"
@@ -37,6 +39,7 @@ TEXT_COLUMNS = {
     "events": ("detail",),
     "markers": ("value",),
     "skill_loads": ("args",),
+    "skill_texts": ("text",),
     "runs": ("title",),
 }
 

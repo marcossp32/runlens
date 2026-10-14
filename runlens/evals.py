@@ -42,6 +42,7 @@ from pathlib import Path
 
 from . import classify, config, store
 from .incidents import TYPES
+from .privacy import redactor
 
 PLUGIN = "runlens-evals"
 SKIP = {"interrupt", "compaction", "api_error"}
@@ -283,7 +284,18 @@ def checks(cfg, inc, call):
 
 # ---------------------------------------------------------------- writing the files
 
-def history(inc, out):
+def redacted(value, fn):
+    """`value` (parsed JSON) with `fn` applied to every string in it."""
+    if isinstance(value, str):
+        return fn(value)
+    if isinstance(value, list):
+        return [redacted(v, fn) for v in value]
+    if isinstance(value, dict):
+        return {k: redacted(v, fn) for k, v in value.items()}
+    return value
+
+
+def history(inc, out, fn=None):
     """Copy the main transcript up to (not including) the message that made the failing call. Main session only:
     a subagent transcript is a sidechain and does not resume as a session."""
     if inc.get("agent_id") != "main" or not inc.get("anchor"):
@@ -300,6 +312,8 @@ def history(inc, out):
             break
     if not cut:
         return False
+    if fn:
+        recs = [redacted(r, fn) for r in recs[:cut]]
     out.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in recs[:cut] if r) + "\n", encoding="utf-8")
     return True
 
@@ -311,9 +325,12 @@ def write_case(con, cfg, inc, root, use_history):
     case = f"{slug(inc['type'])}-{inc['incident_id']}"
     d = root / "evals" / case
     (d / "graders").mkdir(parents=True, exist_ok=True)
-    resumed = use_history and history(inc, d / "history.jsonl")
+    mask = redactor(cfg)  # the archive is verbatim; with `redact = true` what is exported is masked like the database
+    resumed = use_history and history(inc, d / "history.jsonl", mask)
     prompt, source = ("Continue.", "the main transcript up to the failing step (history.jsonl)") if resumed \
         else task_prompt(con, inc, skill, namespaced=True)
+    if mask:
+        prompt = mask(prompt)
     tools = sorted(set(agent_tools(con, inc)) & (READ_ONLY | GRANTABLE) | {"Read", "Glob", "Grep"} | ({"Skill"} if skill else set()))
     expected = f"Completes the task without the failure seen in run {inc['session_id'][:8]}: {TYPES.get(inc['type'], inc['type'])} ({(inc.get('key') or '')[:160]})."
     (d / "prompt.md").write_text(frontmatter({

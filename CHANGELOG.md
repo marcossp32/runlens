@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Privacy
+- Redaction now runs before text is cut to its stored length, so a private key cut by the 2000- or 4000-character limit is no longer stored in clear; a private-key block with no `END` line is masked to the end of the text. `aws_secret_access_key = ...` is masked (keywords after `_` now match). Skill texts are redacted too. The parser version is bumped, so `runlens refresh` parses every run again, once.
+- `export-eval` masks the task prompt and `--history` transcript when `redact = true`.
+- The README lists which columns redaction covers (not the working directory, branch or PR links).
+- The run page links a PR only when its URL starts with `https://`.
+
 ### Data
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
 
