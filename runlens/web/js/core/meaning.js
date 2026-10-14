@@ -48,6 +48,14 @@ function verdict(score, ci, x) {
   return { tone: "unclear", word: "About its typical run", sentence: `About its typical run: its range (${fmt.interval(ci)}) includes 100.${note}` };
 }
 
+// The outcome definition a unit's outcome summary was measured with (DATA.method.outcomes), by name. Its words
+// come from its kind: a PR opened is not a check passing first time.
+const outcomeDef = (summary) => (DATA.method.outcomes || []).find((o) => summary && o.name === summary.measure) || null;
+const outcomeWords = (o) => (o && o.kind === "pr"
+  ? { rate: "PR-opened rate", verb: "opened a PR", sub: "runs that opened a PR" }
+  : o ? { rate: "First-pass rate", verb: "passed first time", sub: `${human(o.marker)} passing on the first try` }
+    : { rate: "Outcome rate", verb: "reached their outcome", sub: "each skill's own configured outcome" });
+
 // The change of a version against the one before it, as the model judged it.
 function change(v) {
   if (v.verdict !== undefined) {

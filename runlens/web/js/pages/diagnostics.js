@@ -71,7 +71,7 @@ function diagProblems() {
       kpi("Tool errors", fmt.int(sumOf(errs, (e) => e.n)), `${classes.length} classes · denied calls not counted`),
       kpi("Most common problem", types[0] ? human(types[0].label) : "—", types[0] ? `${fmt.int(types[0].n)} times` : ""),
       kpi("Context compactions", fmt.int(comps.length), comps.length ? `${fmt.int(comps.filter((c) => c.trigger === "auto").length)} automatic` : "none")]),
-    section({ title: "When and where problems happen", intro: "Problems are things that went wrong without a tool failing: repeated calls, idle loops, interrupts, failed subagents." },
+    section({ title: "When and where problems happen", intro: "Problems are patterns that went wrong in a run: error streaks, repeated calls, idle loops, interrupts, failed subagents." },
       laneChart({
         title: "Problems over time", question: "Do problems cluster on a date, a run or a version?",
         takeaway: () => {
@@ -90,8 +90,8 @@ function diagProblems() {
         notes: "Click a dot to open its run. Problems caused by your permission rules are left out.",
       }),
       h("div", { class: "grid" },
-        barChart({ title: "Problems per 100 tool calls, by skill", question: "Which skill hits the most problems for the work it does?", sub: "a rate, so a busy skill does not look worse for being busy",
-          takeaway: () => { const t = [...skillRates].sort((a, b) => b.value - a.value)[0]; return t ? `${t.label} hits the most for its work: ${fmt.num(t.value, 2)} per 100 tool calls.` : null; },
+        barChart({ title: "Problems per 100 tool calls, by skill", question: "How often does each skill hit problems for the work it does?", sub: "a rate, so a busy skill does not look worse for being busy",
+          takeaway: () => (skillRates.length ? `${plural(skillRates.length, "skill")} with a rate, from ${fmt.num(Math.min(...skillRates.map((x) => x.value)), 2)} to ${fmt.num(Math.max(...skillRates.map((x) => x.value)), 2)} per 100 tool calls. Each rests on few problems, so small gaps between skills are noise.` : null),
           items: [...callsBySkill.keys()].filter((s) => callsBySkill.get(s) >= 20 && skillShown(s)).map((s) => ({ label: human(s), name: s, value: rate100(s),
             rows: [["Problems", fmt.int(inc.filter((i) => i.skill === s).length)], ["Tool calls", fmt.int(callsBySkill.get(s))]] })).filter((x) => x.value > 0),
           ns: "skill", fmt: (v) => fmt.num(v, 2), valueTitle: "Problems per 100 tool calls", labelTitle: "Skill", notes: "Skills with at least 20 tool calls." }),
