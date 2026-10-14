@@ -24,6 +24,9 @@ function runCounts() {
   return out;
 }
 
+// Pull requests opened in a run: the full count when the page has it, else the (capped) list of links.
+const prCount = (r) => (r.npr != null ? r.npr : (r.prs || []).length);
+
 function runsPage() {
   const runs = keptRuns().sort((a, b) => b.t0 - a.t0);
   const head = h("header", { class: "pagehead" }, h("h1", { tabindex: "-1" }, "Runs"),
@@ -37,9 +40,14 @@ function runsPage() {
     const k = localDay(r.t0);
     const d = days.get(k) || { value: 0, runs: 0, cost: 0, active: 0 };
     d.runs += 1;
-    d.cost += r.cost || 0;
     d.active += (r.active_ms || 0) / 36e5;
     days.set(k, d);
+  }
+  // Spend sits on the day each call was made, as in the spend-per-day charts; runs and active time on the day a run started.
+  for (const c of slice(EX.days)) {
+    const d = days.get(c.day) || { value: 0, runs: 0, cost: 0, active: 0 };
+    d.cost += c.cost || 0;
+    days.set(c.day, d);
   }
   for (const d of days.values()) {
     d.value = d[metric];
@@ -49,14 +57,14 @@ function runsPage() {
   calSel.addEventListener("change", () => refreshAfter({ cal: calSel.value === "cost" ? null : calSel.value }));
   const fmtCal = metric === "cost" ? fmt.usd : metric === "runs" ? fmt.int : (v) => fmt.secs(v * 3600);
   const maxAgents = Math.max(1, ...runs.map((r) => r.agents || 0));
-  const prs = sumOf(runs, (r) => (r.prs || []).length);
+  const prs = sumOf(runs, prCount);
   const cols = [
     { key: "run", label: "Run", value: (r) => r.run, cell: (r) => h("a", { href: hrefRun(r.run) }, h("code", {}, r.run)) },
     { key: "started", label: "Started", value: (r) => r.t0, cell: (r) => fmt.when(isoOf(r.t0)), csv: (r) => isoOf(r.t0) },
     { key: "title", label: "Title", value: (r) => r.title, cell: (r) => h("span", { class: "task", title: r.title || "" }, runTitle(r)) },
     { key: "repo", label: "Repo", value: (r) => r.repo },
     { key: "branch", label: "Branch", value: (r) => r.branch, more: true },
-    { key: "cost", label: "Cost", num: true, value: (r) => r.cost, cell: (r) => `${fmt.usd(r.cost)}${r.estimated ? " est." : ""}` },
+    { key: "cost", label: "Cost", num: true, value: runCost, cell: (r) => `${fmt.usd(runCost(r))}${r.estimated ? " est." : ""}` },
     { key: "active", label: "Active", num: true, value: (r) => r.active_ms, cell: (r) => fmt.ms(r.active_ms) },
     { key: "agents", label: "Subagents", num: true, value: (r) => r.agents },
     { key: "errors", label: "Tool errors", num: true, value: (r) => (counts.get(r.run).calls ? counts.get(r.run).errors / counts.get(r.run).calls : null),
@@ -64,14 +72,16 @@ function runsPage() {
     { key: "incidents", label: "Problems", num: true, value: (r) => counts.get(r.run).incidents },
     { key: "prompts", label: "Your messages", num: true, value: (r) => r.prompts, more: true },
     { key: "lines", label: "Lines +/−", num: true, value: (r) => (r.added || 0) + (r.removed || 0), cell: (r) => (r.added == null ? "—" : `+${fmt.int(r.added)} −${fmt.int(r.removed)}`), more: true },
-    { key: "prs", label: "PRs", num: true, value: (r) => (r.prs || []).length, more: true },
+    { key: "prs", label: "PRs", num: true, value: prCount, more: true },
     { key: "cc", label: "Claude Code", value: (r) => r.cc, more: true },
     { key: "status", label: "Status", value: (r) => r.status, cell: (r) => `${human(r.status)}${r.stub ? " · stub" : ""}`, more: true },
   ];
-  const spendAll = sumOf(runs, (r) => r.cost);
-  const priciest = [...runs].sort((a, b) => (b.cost || 0) - (a.cost || 0))[0];
+  const costs = runs.map((r) => runCost(r) || 0), positive = costs.filter((c) => c > 0);
+  const costLog = positive.length > 0 && Math.max(...costs) / Math.max(0.01, Math.min(...positive)) > 30;
+  const spendAll = sumOf(runs, runCost);
+  const priciest = [...runs].sort((a, b) => (runCost(b) || 0) - (runCost(a) || 0))[0];
   return h("article", { class: "page" }, head,
-    answer(`${fmt.runs(runs.length)} from ${fmt.day(isoOf(runs[runs.length - 1].t0))} to ${fmt.day(isoOf(runs[0].t0))} cost ${fmt.usd(spendAll)}, about ${fmt.usd(spendAll / runs.length)} a run. The most expensive was “${runTitle(priciest)}” (${fmt.usd(priciest.cost)}).`),
+    answer(`${fmt.runs(runs.length)} from ${fmt.day(isoOf(runs[runs.length - 1].t0))} to ${fmt.day(isoOf(runs[0].t0))} cost ${fmt.usd(spendAll)}, about ${fmt.usd(spendAll / runs.length)} a run. The most expensive was “${runTitle(priciest)}” (${fmt.usd(runCost(priciest))}).`),
     kpiRow([
       kpi("Runs", fmt.int(runs.length), fmt.span(isoOf(runs[runs.length - 1].t0), isoOf(runs[0].t0))),
       kpi("Spend", fmt.usd(spendAll), `${fmt.usd(spendAll / runs.length)} per run`),
@@ -88,12 +98,12 @@ function runsPage() {
           days, fmt: fmtCal, valueTitle: { cost: "Spend", runs: "Runs", active: "Active time" }[metric], controls: calSel, legendText: ["less", "more"] }),
         scatterChart({ title: "Cost of each run", question: "Which runs were expensive, and when?", sub: "one mark per run · bigger marks started more subagents · hollow = cost estimated",
           takeaway: () => {
-            const sorted = runs.map((r) => r.cost || 0).sort((a, b) => b - a);
+            const sorted = runs.map((r) => runCost(r) || 0).sort((a, b) => b - a);
             const top = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 10)));
             return spendAll ? `The costliest tenth of the runs (${fmt.int(top.length)}) account for ${fmt.pct(sumOf(top, (x) => x) / spendAll, 0)} of the spend.` : null;
           },
-          points: runs.map((r) => ({ x: r.t0, y: r.cost, label: r.run, r: 3.5 + 6 * Math.sqrt((r.agents || 0) / maxAgents), hollow: r.estimated, tip: runTip(r), href: hrefRun(r.run) })),
-          x: { title: "Run started", time: true }, y: { title: "Cost per run, US$ (log scale)", fmt: fmt.usdTick, log: runs.some((r) => r.cost > 0) && Math.max(...runs.map((r) => r.cost || 0)) / Math.max(0.01, Math.min(...runs.filter((r) => r.cost > 0).map((r) => r.cost))) > 30 },
+          points: runs.map((r) => ({ x: r.t0, y: runCost(r), label: r.run, r: 3.5 + 6 * Math.sqrt((r.agents || 0) / maxAgents), hollow: r.estimated, tip: runTip(r), href: hrefRun(r.run) })),
+          x: { title: "Run started", time: true }, y: { title: `Cost per run, US$${costLog ? " (log scale)" : ""}`, fmt: fmt.usdTick, log: costLog },
           labelTitle: "Run", vlines: changeMarks(["cc", "model"]) }))),
     section({ title: "Every run", count: fmt.runs(runs.length), intro: "Newest first. Open a run to see its skills, subagents and problems on one time axis." },
       sortTable({ caption: "Runs", cols, rows: runs, sort: { key: "started", dir: -1 }, page: 25, csvName: "runs", moreParam: "cols" }).el));
@@ -217,6 +227,7 @@ function runPage(id) {
   }
   const spendModel = groupSum(calls, "model", "cost");
   const prs = r.prs || [];
+  const nprs = prCount(r);
   const incCols = [
     { key: "t", label: "When", value: (x) => x.t, cell: (x) => fmt.hour(at(x.t)) },
     { key: "type", label: "Problem", value: (x) => human(x.type), cell: (x) => h("span", {}, human(x.type), x.policy ? h("span", { class: "muted" }, " · permission rule") : null) },
@@ -253,7 +264,7 @@ function runPage(id) {
       kpi("Tool calls", fmt.int(counts.calls), counts.calls ? `${fmt.pct(counts.errors / counts.calls)} failed${counts.denied ? ` · ${fmt.int(counts.denied)} denied` : ""}` : ""),
       kpi("Problems", fmt.int(counts.incidents), incidents.some((x) => x.policy) ? `${incidents.filter((x) => x.policy).length} more from permission rules` : "not counting permission rules"),
       kpi("Your messages", fmt.int(r.prompts), "typed during the run"),
-      kpi("Code changed", r.added == null ? "—" : `+${fmt.int(r.added)} −${fmt.int(r.removed)}`, prs.length ? `${prs.length} PR${prs.length === 1 ? "" : "s"} opened` : "lines added and removed")]),
+      kpi("Code changed", r.added == null ? "—" : `+${fmt.int(r.added)} −${fmt.int(r.removed)}`, nprs ? `${nprs} PR${nprs === 1 ? "" : "s"} opened` : "lines added and removed")]),
     section({ title: "What happened, and when", intro: "Top: the active skill and each event. Middle: the money spent so far. Bottom: every subagent as a bar from its start to its end." },
       runTimeline({
         title: "The run on one time axis", question: "What happened in this run, and when?",

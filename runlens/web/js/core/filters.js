@@ -44,6 +44,7 @@ function effortOrder(e) {
 
 const F = { from: null, to: null, range: null, sets: {}, minn: false, popAll: false };
 let RUNSET = new Set();
+let RUNSET_ANY_DAY = new Set(); // the same without the date range: a run that began before it can still have spend inside it
 
 // Read the filters from the URL and work out which runs they keep. Called on every route.
 function applyFilters() {
@@ -64,6 +65,8 @@ function applyFilters() {
   F.minn = param("minn") === "1";
   F.popAll = param("pop") === "all";
   RUNSET = new Set(EX.runs.filter(runPasses).map((r) => r.run));
+  RUNSET_ANY_DAY = new Set(EX.runs.filter((r) => runPasses(r, "date")).map((r) => r.run));
+  RUN_COST = null;
   // Runs the model scored but the facts do not know (an older database) still count when nothing filters.
   if (!EX.runs.length) for (const rows of Object.values(DATA.runs)) for (const r of rows) RUNSET.add(r.session);
 }
@@ -88,10 +91,22 @@ const keptRuns = () => EX.runs.filter((r) => RUNSET.has(r.run));
 const populationRuns = () => EX.runs.filter((r) => r.pop);
 
 // Fact rows inside the kept runs, trimmed to the chosen models, efforts and skills where a row has them.
+// A per-day row is kept by its own day (the dates cut it, not its run's start).
 function slice(rows) {
   const sm = F.sets.model, se = F.sets.effort, sk = F.sets.skills;
-  return rows.filter((x) => RUNSET.has(x.run) && (!sm || x.model === undefined || sm.has(x.model))
+  return rows.filter((x) => (x.day === undefined ? RUNSET.has(x.run) : RUNSET_ANY_DAY.has(x.run) && (!F.from || x.day >= F.from) && (!F.to || x.day <= F.to)) && (!sm || x.model === undefined || sm.has(x.model))
     && (!se || x.effort === undefined || se.has(x.effort)) && (!sk || x.skill === undefined || sk.has(x.skill)));
+}
+
+// A run's cost inside the filters: the whole run, or only the chosen models', efforts' and skills' calls.
+let RUN_COST = null;
+function runCost(r) {
+  if (!F.sets.model && !F.sets.effort && !F.sets.skills) return r.cost;
+  if (!RUN_COST) {
+    RUN_COST = new Map();
+    for (const c of slice(EX.calls)) RUN_COST.set(c.run, (RUN_COST.get(c.run) || 0) + (c.cost || 0));
+  }
+  return RUN_COST.get(r.run) || 0;
 }
 
 // A unit's run rows (bench model) inside the kept runs.

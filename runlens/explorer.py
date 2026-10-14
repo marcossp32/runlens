@@ -299,10 +299,10 @@ def build(con, cfg=None):
                          r["active_ms"], r["api_ms"], r["tool_ms"], r["human_prompts"], r["n_agents"], r["lines_added"],
                          r["lines_removed"], list(r["pr_urls"] or [])[:5], list(r["unpriced_models"] or []), r["parser_version"],
                          r["bad_lines"], r["entrypoint"], sorted(d["models"]), sorted(d["efforts"]),
-                         sorted(d["skills"] | set(r["skills"] or []))])
+                         sorted(d["skills"] | set(r["skills"] or [])), len(r["pr_urls"] or [])])
     runs_t = table(("run", "sid", "started", "ended", "repo", "branch", "cc", "title", "status", "stub", "ended_by", "cost",
                     "estimated", "unknown_cost", "active_ms", "api_ms", "tool_ms", "prompts", "agents", "added", "removed",
-                    "prs", "unpriced", "parser", "bad_lines", "entry", "models", "efforts", "skills"), out_runs)
+                    "prs", "unpriced", "parser", "bad_lines", "entry", "models", "efforts", "skills", "npr"), out_runs)
 
     return {
         "duration_edges": DURATION_EDGES,
@@ -317,7 +317,8 @@ def token_cost(rows, rid, price_overrides=None):
     """Per run and model, Claude Code's own token totals (model_usage) by type and what each type cost.
     The transcript undercounts tokens, cost-state does not; cache writes are split 5-minute / 1-hour by the
     transcript's split of that run and model. List-price parts are scaled to the cost Claude Code recorded,
-    so the parts of a run add up to its real cost. A model with no known price gets tokens and no cost."""
+    so the parts of a run add up to its real cost. A run with no model_usage uses its transcript's totals and
+    cost instead (lower bounds on tokens). A model with no known price gets tokens and no cost."""
     usage = rows("""SELECT session_id, model, sum(input_tokens) AS input, sum(output_tokens) AS output,
                            sum(cache_read_tokens) AS cache_read, sum(cache_write_tokens) AS cache_write, sum(cost_usd) AS cost
                     FROM model_usage GROUP BY ALL""")
@@ -327,6 +328,14 @@ def token_cost(rows, rid, price_overrides=None):
         s[0] += r["w5"] or 0
         s[1] += r["w1"] or 0
     out = []
+    # A run without model_usage (an older Claude Code, or none recorded) falls back to its transcript's own totals.
+    have = {u["session_id"] for u in usage}
+    for r in rows("""SELECT session_id, model, sum(input_tokens) AS input, sum(output_tokens) AS output,
+                          sum(cache_read_tokens) AS cache_read, sum(cache_write_5m) + sum(cache_write_1h) AS cache_write,
+                          sum(cost_usd) AS cost
+                   FROM api_calls GROUP BY ALL"""):
+        if r["session_id"] not in have:
+            usage.append(r)
     for u in usage:
         if u["session_id"] not in rid:
             continue

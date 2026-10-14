@@ -273,6 +273,11 @@ function tokenCostChart(by, only) {
   const types = [["input", "fresh input", "var(--c1)"], ["cache_write_5m", "cache write, 5 min", "var(--c4)"], ["cache_write_1h", "cache write, 1 hour", "var(--c2)"],
     ["cache_read", "cache read", "var(--c3)"], ["output", "output and thinking", "var(--c7)"]];
   const share = new Map();
+  // An effort or skill filter keeps part of a run's calls: the token cost shrinks by that part's share of the run's model spend.
+  const whole = new Map(), kept = new Map();
+  for (const c of EX.calls) if (RUNSET.has(c.run)) whole.set(`${c.run}|${c.model}`, (whole.get(`${c.run}|${c.model}`) || 0) + (c.cost || 0));
+  for (const c of slice(EX.calls)) kept.set(`${c.run}|${c.model}`, (kept.get(`${c.run}|${c.model}`) || 0) + (c.cost || 0));
+  const part = (run, model) => (whole.get(`${run}|${model}`) ? kept.get(`${run}|${model}`) / whole.get(`${run}|${model}`) || 0 : 1);
   if (by === "skill") {
     const tot = new Map();
     for (const c of slice(EX.calls)) {
@@ -293,11 +298,12 @@ function tokenCostChart(by, only) {
   };
   for (const t of EX.tokens.filter((x) => RUNSET.has(x.run) && (!F.sets.model || F.sets.model.has(x.model)))) {
     if (!t.cost) continue;
-    if (by === "model") add(t.model, t.type, t.cost);
+    const f0 = part(t.run, t.model);
+    if (by === "model") add(t.model, t.type, t.cost * f0);
     else {
       const m = share.get(`${t.run}|${t.model}`);
       if (!m) continue;
-      for (const [skill, f] of m) if (!only || only.includes(skill)) add(skill, t.type, t.cost * f);
+      for (const [skill, f] of m) if (!only || only.includes(skill)) add(skill, t.type, t.cost * f0 * f);
     }
   }
   const list = [...rows.values()].sort((a, b) => Object.values(b.parts).reduce((p, q) => p + q, 0) - Object.values(a.parts).reduce((p, q) => p + q, 0));
@@ -363,7 +369,7 @@ function measuresHeatmap(shown) {
     takeaway: () => measuresTakeaway(rows, cols, cur),
     sub: `the latest version shown of each item · each cell: the ratio to ${baseWords()} (above ×1 better, below ×1 worse; a rate shows its value against the reference) · blue = better, red = worse, grey = about the same`,
     rows: rows.map((u) => ({ key: u.id + u.name, label: u.name, href: hrefUnit(u.id), u })), rowTitle: "Skill",
-    cols: cols.map((m) => ({ key: m.key, label: metricShort(m), sub: `weight ×${fmt.num((weightsOf(SKILLS[0] || { weights: {} })[m.key] ?? m.weight), 1)}`, m })),
+    cols: cols.map((m) => ({ key: m.key, label: metricShort(m), sub: `weight ×${fmt.num(m.weight, 1)}`, m })),
     scale: "div",
     cell: (r, c) => {
       const v = cur.get(r.key);
@@ -476,8 +482,9 @@ function rolesPanel(list) {
   const count = h("p", { class: "note", "aria-live": "polite" });
   const viewOfRole = (u) => {
     const rows = unitRunsOf(u.id);
-    return { ...u, runs: new Set(rows.map((r) => r.session)).size, kpi: rows.length === (DATA.runs[u.id] || []).length ? u.kpi : { ...u.kpi, ...kpiOf(rows, "agent") },
-      spend: sumOf(rows, (r) => r.cost), last_seen: rows.map((r) => r.started).filter(Boolean).sort().pop() || null, low_sample: rows.length < MIN_RUNS };
+    const sessions = new Set(rows.map((r) => r.session)).size;
+    return { ...u, runs: sessions, kpi: rows.length === (DATA.runs[u.id] || []).length ? u.kpi : { ...u.kpi, ...kpiOf(rows, "agent") },
+      spend: sumOf(rows, (r) => r.cost), last_seen: rows.map((r) => r.started).filter(Boolean).sort().pop() || null, low_sample: sessions < MIN_RUNS };
   };
   const views = list.map(viewOfRole).filter((u) => u.runs && enoughRuns(u.runs));
   const t = sortTable({ caption: "Agent roles", cols: [nameCol("Agent role"), runsCol, { key: "spend", label: "Spend", num: true, value: (u) => u.spend, cell: (u) => fmt.usd(u.spend) },

@@ -483,6 +483,30 @@ class Recompute(unittest.TestCase):
         self.assertAlmostEqual(cost_only, 100 * v["metrics"]["cost"]["ratio"], places=1)  # with cost alone, the score is its ratio
         self.assertNotAlmostEqual(cost_only, u["score"], places=1)
 
+    def test_a_version_against_itself_scores_100_under_a_custom_baseline(self):
+        # base=ver:<label> reads the page's own current version against itself; both sides must be counted the same way.
+        for name in ("review-pr", "write-tests"):
+            u = next(x for x in self.model["units"] if x["id"] == f"skill:{name}")
+            label = next(v["label"] for v in self.model["versions"][u["id"]] if v["key"] == u["current"] or v["label"] == u["current"])
+            score, _ = self.score_at(f"#/unit/skill%3A{name}?base=ver:{label}")
+            self.assertAlmostEqual(score, 100.0, places=1, msg=name)
+
+    def test_runs_kpis_match_sql(self):
+        # The visible Runs KPIs against the database itself, including pull requests (a run keeps only 5 links).
+        code = ("import json; from runlens import store; con = store.connect(read_only=True); "
+                "print(json.dumps(con.execute(\"SELECT count(*), coalesce(sum(len(pr_urls)), 0), coalesce(sum(cost_usd), 0) FROM runs "
+                "WHERE status = 'complete' AND NOT coalesce(is_stub, false)\").fetchone()))")
+        env = {**os.environ, "RUNLENS_HOME": str(TMP / "demo-home"), "PYTHONIOENCODING": "utf-8"}
+        out = subprocess.run([sys.executable, "-c", code], check=True, env=env, cwd=ROOT, capture_output=True, text=True).stdout
+        runs, prs, spend = json.loads(out)
+        dom = dump(self.path, "#/runs")
+        big = re.finditer(r'<div class="kl">([^<]+)</div><div class="kv">(.*?)</div>', dom)  # the first four figures
+        small = re.finditer(r"<dt>([^<]+)</dt><dd><strong>(.*?)</strong>", dom)  # the rest, on one line
+        kpis = {m.group(1): re.sub(r"<[^>]+>", "", m.group(2)) for m in [*big, *small]}
+        self.assertEqual(int(kpis["Runs"].replace(",", "")), runs)
+        self.assertEqual(int(kpis["Pull requests"].replace(",", "")), prs)
+        self.assertEqual(re.sub(r"\D", "", kpis["Spend"]), f"{round(spend * 100)}")  # digits only: the separators follow the browser's locale
+
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")
         self.assertGreater(score, 0)

@@ -73,7 +73,7 @@ MEASURES = [
     {"key": "error_rate", "label": "Tool error rate", "unit": "rate", "type": "rate", "better": "lower", "num": "call_errors",
      "den": "calls", "weight": 2, "kinds": KINDS,
      "what": "Failing tool calls over all tool calls. Calls a permission rule denied are not errors of the skill."},
-    {"key": "incidents", "label": "Problems per 100 tool calls", "unit": "count", "type": "rate", "better": "lower",
+    {"key": "incidents", "label": "Scored problems per 100 tool calls", "unit": "count", "type": "rate", "better": "lower",
      "num": "incidents", "den": "calls", "scale": 100, "weight": 2, "kinds": KINDS,
      "what": "Repeated calls, interrupts, failed subagents, test edits after a failure and similar. Not counted: policy "
              "denials, failed checks, idle loops and error streaks (other measures already count them), and incidents "
