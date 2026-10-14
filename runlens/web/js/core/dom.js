@@ -173,6 +173,7 @@ const GLOSSARY = {
   "typical run": "The skill's usual level, scored 100: its runs pooled over every version. Above 100 is better than usual.",
   range: "The likely range of the score: where the true value probably sits, given how much the runs vary. A range that crosses 100 means not clearly different from usual.",
   confounded: "Something else changed at the same time as the skill text (another skill, the model, the effort, Claude Code or the project), so a difference cannot be put down to this skill.",
+  "not scored": "There are enough runs, but no measure with a weight above 0 could be compared.",
   "not enough runs": "A verdict needs enough runs on each side of a change; with fewer, the difference could be noise.",
   verdict: "Better, worse or no clear change: the newest version against the one before it, from the difference between their runs.",
   "Pareto frontier": "The line through the items that nothing else beats on both axes at once: cheaper and better. Items below and right of it are beaten by something on the line.",

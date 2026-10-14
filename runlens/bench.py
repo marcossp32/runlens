@@ -27,8 +27,16 @@ finite, clipped to ±ln MAX_RATIO; positive is better. score = 100 x exp(Σ w·l
 Verdicts. Version B against version A comes from a bootstrap of the DIFFERENCE: the runs of
 each version are resampled by session (a session's invocations stay together), the
 weighted difference is recomputed each time, and its central interval decides: entirely
-above 0 is "better", below 0 "worse", otherwise "no clear change". Fewer than MIN_RUNS
-runs on either side is "not enough runs". When something else changed between the two
+above 0 is "better", below 0 "worse", otherwise "no clear change". That last one means the
+interval holds 0, not that the versions are alike: with a handful of runs a real
+improvement is mostly "no clear change" (the interval is wide and each measure's noise
+enters in full), so it is never evidence of equivalence. Fewer than MIN_RUNS
+runs on either side is "not enough runs"; runs enough but no measure with a weight above
+0 to compare is "not scored". A version is a hash over a contiguous stretch of runs, so
+reverting A -> B -> A gives three versions. Each listed unit is also given a Benjamini-Hochberg
+q over all units compared, and a per-measure interval is exploratory (not adjusted).
+The verdict is recomputed on every refresh with the runs so far, so it is not an
+anytime-valid interval: a fixed number of runs per version would be needed for that. When something else changed between the two
 sides (another skill's text, the model or effort mix, the Claude Code version, the
 project), the verdict is "confounded" and names what changed: a change can then not be
 put down to the skill text.
@@ -85,7 +93,7 @@ SHRINK = 2          # pseudo-runs at the skill's own value that every version st
 MAX_RATIO = 2.0     # one measure counts for at most this factor either way
 FLOOR = 0.5         # fraction of the skill's own rate added to both sides of a rate ratio, so zeros stay finite
 TURN_CAP = 600.0    # seconds: the gap between two model turns counts for at most this long
-RESAMPLES = 4000    # bootstrap resamples per interval: the expanded tails at n = 5 are 0.1% each, so many are needed
+RESAMPLES = 10000   # bootstrap resamples per interval: the expanded tails at n = 5 are 0.1% each, so many are needed (Hesterberg 2015: at least 10^4)
 MIN_RUNS = 5        # runs needed on each side before a verdict is given
 CONFIDENCE = 0.95   # central interval of the bootstrap difference
 MIX_SHIFT = 0.3     # total variation distance between two sides' mixes that counts as a confounder
@@ -96,7 +104,7 @@ ONCE = "roles seen in one run"
 SKIP_INCIDENTS = {"bad_marker", "idle_loop", "error_streak"}
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
 FAR = datetime.max.replace(tzinfo=timezone.utc)
-VERDICTS = ("better", "worse", "no clear change", "not enough runs", "confounded")
+VERDICTS = ("better", "worse", "no clear change", "not enough runs", "not scored", "confounded")
 
 
 # ---- settings from config.toml ---------------------------------------------------------
@@ -247,16 +255,23 @@ def ell(m, ref, val, base):
             return None  # the event never happened in this skill: no information either way
         f = FLOOR * base
         x = math.log((ref + f) / (val + f))
+    if math.isnan(x):
+        return None  # max/min would turn a NaN into the clip: "2x better"
     return max(-CLIP, min(CLIP, x))
 
 
-def composite(ref_est, val_est, base, weights):
-    """Σ w·l / Σ w over the measures known on both sides, and each l."""
+def composite(ref_est, val_est, base, weights, expect=()):
+    """Σ w·l / Σ w over the measures known on both sides, and each l.
+
+    `expect` names the measures the full sample could score: in a bootstrap resample one that has no data
+    counts as no change (l = 0) instead of dropping out, so the weights are not renormalised from draw to draw."""
     acc = wsum = 0.0
     parts = {}
     for key, w in weights.items():
         lx = ell(MEASURE[key], ref_est.get(key), val_est.get(key), base.get(key))
         if lx is None:
+            if key in expect and w > 0:
+                wsum += w
             continue
         parts[key] = lx
         if w > 0:
@@ -300,6 +315,32 @@ def tail(confidence, n):
     return 1 - NormalDist().cdf(z)
 
 
+def p_value(draws, n):
+    """Two-sided p of 'no change' from the sorted bootstrap draws of a difference: the confidence level at which
+    the expanded percentile interval (see `tail`) would first touch 0. None with too few draws."""
+    m = len(draws)
+    if m < 20:
+        return None
+    q = max(min(bisect.bisect_right(draws, 0), m - bisect.bisect_left(draws, 0)), 0.5) / m
+    if q >= tail(0.0, n):
+        return 1.0
+    lo, hi = 0.0, 1.0  # alpha: tail(1 - alpha, n) grows with alpha
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if tail(1 - mid, n) < q else (lo, mid)
+    return (lo + hi) / 2
+
+
+def benjamini_hochberg(ps):
+    """BH-adjusted p-values (q) for a list of p-values; None stays None and does not count towards the number of tests."""
+    idx = sorted((i for i, p in enumerate(ps) if p is not None), key=lambda i: ps[i])
+    out, running, m = [None] * len(ps), 1.0, len(idx)
+    for rank, i in reversed(list(enumerate(idx, 1))):
+        running = min(running, ps[i] * m / rank)
+        out[i] = running
+    return out
+
+
 class Arm:
     """The runs of one side of a comparison, as per-run (num, den) vectors so a resample is a few C-level sums."""
 
@@ -334,13 +375,14 @@ def compare(rows_a, rows_b, base, pseudo, weights, seed, resamples=RESAMPLES, co
     a, b = Arm(rows_a, keys), Arm(rows_b, keys)
     raw_a, raw_b = a.estimates(a.sums(), base, pseudo, shrink=False), b.estimates(b.sums(), base, pseudo, shrink=False)
     d, parts = composite(raw_a, raw_b, base, weights)
-    out = {"d": d, "ci": None, "measures": {}, "outcome": None}
+    out = {"d": d, "ci": None, "p": None, "measures": {}, "outcome": None}
     draws, mdraws, odraws = [], defaultdict(list), []
+    expect = set(parts)
     if interval and a.n and b.n and d is not None:
         rng = random.Random(seed)
         for _ in range(resamples):
             ea, eb = a.estimates(a.draw(rng), base, pseudo, False), b.estimates(b.draw(rng), base, pseudo, False)
-            dd, pp = composite(ea, eb, base, weights)
+            dd, pp = composite(ea, eb, base, weights, expect)
             if dd is not None:
                 draws.append(dd)
             for k, v in pp.items():
@@ -351,7 +393,9 @@ def compare(rows_a, rows_b, base, pseudo, weights, seed, resamples=RESAMPLES, co
     hi_q = 1 - lo_q
     ci = lambda xs: [quantile(xs, lo_q), quantile(xs, hi_q)] if len(xs) >= 20 else None
     if draws:
-        out["ci"] = ci(sorted(draws))
+        draws.sort()
+        out["ci"] = ci(draws)
+        out["p"] = p_value(draws, min(n_runs(rows_a), n_runs(rows_b)))
     for k in keys:
         m = MEASURE[k]
         if k not in parts:
@@ -370,10 +414,13 @@ def n_runs(rows):
     return len({r.get("sid") or r.get("session") or i for i, r in enumerate(rows)})
 
 
-def verdict_of(d_ci, n_a, n_b, confounders, min_runs=MIN_RUNS):
-    """(verdict, direction): direction is what the interval alone says; verdict adds the run count and confounders."""
+def verdict_of(d_ci, n_a, n_b, confounders, min_runs=MIN_RUNS, scored=True):
+    """(verdict, direction): direction is what the interval alone says; verdict adds the run count and confounders.
+    "no clear change" says the interval holds 0, not that the sides are alike: with a handful of runs it is the usual outcome."""
     if n_a < min_runs or n_b < min_runs:
         return "not enough runs", None
+    if not scored:
+        return "not scored", None  # runs enough, but no measure with a weight above 0 could be compared
     if not d_ci:
         return "not enough runs", None
     direction = "better" if d_ci[0] > 0 else "worse" if d_ci[1] < 0 else "no clear change"
@@ -871,8 +918,15 @@ def compute(data, groups=None, resamples=None, cfg=None):
         units_entry, vlist = describe_unit(uid, kind, name_of(uid), rows, base, pseudo, weights, o, group_of, st["min_runs"])
 
         if kind in VERSIONED:
-            by_version = defaultdict(list)
-            for r in rows:
+            # A version is a hash over a contiguous stretch of runs: reverting A -> B -> A makes a new version
+            # (key "<hash>#2"), so the pre- and post-B runs are not pooled and the newest span is the current one.
+            by_version, spans, prev = defaultdict(list), Counter(), None
+            for r in sorted(rows, key=lambda r: (r["started"] or FAR, r["sid"])):
+                if r["vkey"] != prev:
+                    prev = r["vkey"]
+                    spans[prev] += 1
+                if spans[prev] > 1:
+                    r["vkey"] = f"{prev}#{spans[prev]}"
                 by_version[r["vkey"]].append(r)
             ordered = sorted(by_version.items(), key=lambda kv: min((r["started"] or FAR) for r in kv[1]))
             prev_vmap = None
@@ -892,7 +946,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
                 if p["vs_previous"]:
                     v = next(x for x in vlist if x["label"] == p["b"])
                     v.update(verdict=p["verdict"], direction=p["direction"], vs=p["a"], difference=p["difference"],
-                             confounders=p["confounders"])
+                             confounders=p["confounders"], p=p["p"])
                     v["delta"] = (v["score"] - vlist[vlist.index(v) - 1]["score"]
                                   if v["score"] is not None and vlist[vlist.index(v) - 1]["score"] is not None else None)
             pairs_out[uid] = pairs
@@ -900,7 +954,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
             if last:
                 units_entry.update(current=last["label"], score=last["score"], ci=last["ci"], verdict=last["verdict"],
                                    vs=last["vs"], delta=last["delta"], difference=last["difference"],
-                                   confounders=last["confounders"], direction=last["direction"])
+                                   confounders=last["confounders"], direction=last["direction"], p=last.get("p"))
         units_entry["versions"] = len(vlist)
         units.append(units_entry)
         versions_out[uid] = vlist
@@ -908,6 +962,13 @@ def compute(data, groups=None, resamples=None, cfg=None):
         runs_out[uid] = sorted(
             (run_row(r, label_of.get(r["vkey"], "all"), task_of(uid, kind, r["sid"]), repo_of(r["sid"]), kind) for r in rows),
             key=lambda r: r["started"] or NEVER, reverse=True)
+
+    # Every listed unit is a test of its own: Benjamini-Hochberg q over the units that were compared, so a
+    # `better` or `worse` that q does not support can be marked as one that might be a fluke of listing many units.
+    qs = benjamini_hochberg([u.get("p") for u in units])
+    for u, q in zip(units, qs):
+        u["q"] = q
+        u["adjusted"] = None if q is None or u["direction"] not in ("better", "worse") else q <= 1 - st["confidence"]
 
     starts = [r["started"] for r in sessions.values() if r.get("started")]
     return {
@@ -971,7 +1032,7 @@ def describe_unit(uid, kind, name, rows, base, pseudo, weights, o, group_of, min
         "runs": len({r["sid"] for r in rows}), "invocations": sum(r["invocations"] for r in rows),
         "versions": 0, "current": None, "score": None, "ci": None, "verdict": None, "direction": None, "vs": None,
         "delta": None, "difference": None, "confounders": [], "low_sample": len({r["sid"] for r in rows}) < min_runs,
-        "kpi": {**kpi, **extras(rows)}, "outcome": outcome_summary(o, rows),
+        "kpi": {**kpi, **extras(rows)}, "outcome": outcome_summary(o, rows), "p": None, "q": None, "adjusted": None,
         "baseline": base, "pseudo": pseudo, "weights": weights,
         "first_seen": min(starts, default=None), "last_seen": max(starts, default=None),
     }
@@ -979,7 +1040,10 @@ def describe_unit(uid, kind, name, rows, base, pseudo, weights, o, group_of, min
 
 
 def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
-    """One version: its score against the skill's typical run and the interval of that score."""
+    """One version: its score against the skill's typical run and the interval of that score.
+
+    Descriptive only: the typical run pools this version's own runs and is treated as fixed, so the interval is
+    not a test. Verdicts come from `pair_entry`, which resamples both sides."""
     keys = list(weights)
     arm = Arm(xs, keys)
     sums = arm.sums()
@@ -991,7 +1055,7 @@ def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
     if d is not None and n >= st["min_runs"]:
         rng, draws = random.Random(f"{uid}|{vkey}"), []
         for _ in range(st["resamples"]):
-            dd, _ = composite(ref, arm.estimates(arm.draw(rng), base, pseudo), base, weights)
+            dd, _ = composite(ref, arm.estimates(arm.draw(rng), base, pseudo), base, weights, set(parts))
             if dd is not None:
                 draws.append(dd)
         draws.sort()
@@ -1006,14 +1070,14 @@ def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
     hashes = "+".join(short(h) for _, h in sorted(vmap.items())) or "-"
     starts = [r["started"] for r in xs if r["started"]]
     return {
-        "id": uid, "vid": f"{uid}@{hashes}", "label": f"v{i + 1}", "key": vkey,
+        "id": uid, "vid": f"{uid}@{hashes}" + (f"#{vkey.rsplit('#', 1)[1]}" if "#" in vkey else ""), "label": f"v{i + 1}", "key": vkey,
         "parts": [{"skill": s, "hash": short(h)} for s, h in sorted(vmap.items())],
         "recorded": bool(vmap) and all(h is not None for h in vmap.values()),
         "first_seen": min(starts, default=None), "last_seen": max(starts, default=None),
         "runs": n, "invocations": sum(r["invocations"] for r in xs), "low_sample": n < st["min_runs"],
         "score": 100 * math.exp(d) if d is not None else None, "ci": ci, "metrics": metrics,
         "outcome": outcome_summary(o, xs), "kpi": extras(xs),
-        "changes": diffs, "verdict": None, "direction": None, "vs": None, "difference": None, "confounders": [],
+        "changes": diffs, "verdict": None, "direction": None, "p": None, "vs": None, "difference": None, "confounders": [],
         "delta": None, "overlap": None,
     }
 
@@ -1025,13 +1089,13 @@ def pair_entry(uid, va, vb, rows_a, rows_b, base, pseudo, weights, own_skills, c
     res = compare(rows_a, rows_b, base, pseudo, weights, f"{uid}|{va['key']}|{vb['key']}", st["resamples"],
                   st["confidence"], interval=enough)
     conf = confounders_of(rows_a, rows_b, own_skills, ctx)
-    verdict, direction = verdict_of(res["ci"], n_a, n_b, conf, st["min_runs"])
+    verdict, direction = verdict_of(res["ci"], n_a, n_b, conf, st["min_runs"], scored=res["d"] is not None)
     diff = {"score": 100 * math.exp(res["d"]) if res["d"] is not None else None,
             "ci": [100 * math.exp(x) for x in res["ci"]] if res["ci"] else None,
             "measures": res["measures"], "outcome": res["outcome"]}
     return {"a": va["label"], "b": vb["label"], "vs_previous": int(vb["label"][1:]) - int(va["label"][1:]) == 1,
             "runs_a": n_a, "runs_b": n_b, "invocations_a": va["invocations"], "invocations_b": vb["invocations"],
-            "verdict": verdict, "direction": direction, "difference": diff, "confounders": conf}
+            "verdict": verdict, "direction": direction, "difference": diff, "confounders": conf, "p": res["p"]}
 
 
 def run_row(r, version, task, repo, kind):
@@ -1056,6 +1120,7 @@ def unit_summary(model, u):
     return {"unit": u["id"], "name": u["name"], "kind": u["kind"], "runs": u["runs"], "invocations": u["invocations"],
             "versions": u["versions"], "current": u["current"], "verdict": u["verdict"], "direction": u["direction"],
             "vs": u["vs"], "confounders": u["confounders"], "outcome": u["outcome"], "difference": _diff_out(u["difference"]),
+            "p_adjusted": u.get("q"),
             "score": u["score"], "ci95": u["ci"],
             "typical": {k: v for k, v in u["kpi"].items() if k in MEASURE},
             "cost_per_success_usd": u["kpi"].get("cost_per_success"), "cost_per_kloc_usd": u["kpi"].get("cost_per_kloc"),
@@ -1121,16 +1186,16 @@ def load(con):
                  ORDER BY (l.source = 'human') DESC, l.labeled_at DESC LIMIT 1)""" if has("labels") else "NULL")
     return {
         "runs": rows("""SELECT session_id, started, title, cwd AS repo, cc_version, status, is_stub, pr_urls,
-                               lines_added, lines_removed FROM runs"""),
-        "agents": rows("SELECT session_id, agent_id, agent_type, role, description FROM agents"),
-        "api": rows("SELECT session_id, agent_id, ts, skill, cost_usd, api_error, model, effort FROM api_calls"),
+                               lines_added, lines_removed FROM runs ORDER BY started, session_id"""),
+        "agents": rows("SELECT session_id, agent_id, agent_type, role, description FROM agents ORDER BY session_id, agent_id"),
+        "api": rows("SELECT session_id, agent_id, ts, skill, cost_usd, api_error, model, effort FROM api_calls ORDER BY session_id, agent_id, ts"),
         "tools": rows("""SELECT session_id, agent_id, ts, skill, is_error, denied, idle, patch_added, patch_removed
-                         FROM tool_calls"""),
-        "incidents": rows(f"SELECT session_id, agent_id, ts, skill, type, policy, {label} AS label FROM incidents i"),
-        "markers": rows("SELECT session_id, agent_id, ts, skill, marker, value, bad FROM markers"),
-        "prompts": rows("SELECT session_id, ts FROM events WHERE kind = 'human_prompt' AND agent_id = 'main'"),
-        "loads": rows("SELECT session_id, agent_id, ts, skill, content_hash, args FROM skill_loads"),
-        "texts": rows("SELECT skill, content_hash, text FROM skill_texts") if has("skill_texts") else [],
+                         FROM tool_calls ORDER BY session_id, agent_id, ts"""),
+        "incidents": rows(f"SELECT session_id, agent_id, ts, skill, type, policy, {label} AS label FROM incidents i ORDER BY session_id, agent_id, ts, type"),
+        "markers": rows("SELECT session_id, agent_id, ts, skill, marker, value, bad FROM markers ORDER BY session_id, agent_id, ts, marker"),
+        "prompts": rows("SELECT session_id, ts FROM events WHERE kind = 'human_prompt' AND agent_id = 'main' ORDER BY session_id, ts"),
+        "loads": rows("SELECT session_id, agent_id, ts, skill, content_hash, args FROM skill_loads ORDER BY session_id, ts, agent_id, skill"),
+        "texts": rows("SELECT skill, content_hash, text FROM skill_texts ORDER BY skill, content_hash") if has("skill_texts") else [],
     }
 
 

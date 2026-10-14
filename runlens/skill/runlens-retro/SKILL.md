@@ -9,7 +9,7 @@ Arguments: `$ARGUMENTS`. A skill name limits the retro to that skill; `--since` 
 
 Rules that hold throughout:
 - Every claim cites **incident ids** you opened with `runlens show <id>`. A failure mode needs **two or more incidents**; one is an anecdote.
-- Verdicts about versions come from runlens (`better`, `worse`, `no clear change`, `not enough runs`, `confounded`). Never compare raw averages or invent a threshold of your own, and never compare one skill with another: a version is judged against its own skill.
+- Verdicts about versions come from runlens (`better`, `worse`, `no clear change`, `not enough runs`, `not scored`, `confounded`). Never compare raw averages or invent a threshold of your own, and never compare one skill with another: a version is judged against its own skill.
 - You propose edits; you apply none unless asked. Each proposal is recorded so it can be verified later.
 
 Copy this checklist and tick it as you go:
@@ -68,7 +68,7 @@ Record each proposal with `runlens proposals add` (`--help` lists the fields): t
 
 ## 7. Verify earlier proposals
 
-`runlens verify --json` checks recorded proposals against the runs since. Report each as confirmed, refuted, not enough runs or confounded (with its `confounders`), using its verdict as given. An edit "helped" only on a `verify` or eval result, never on impressions.
+`runlens verify --json` checks recorded proposals against the runs since. Report each as confirmed, refuted, inconclusive (no clear change: not evidence the edit did nothing), not enough runs or confounded (with its `confounders`), using its verdict as given. An edit "helped" only on a `verify` or eval result, never on impressions.
 
 ## 8. Validate, then deliver
 
@@ -87,6 +87,6 @@ Mode <n>   · <name> · <incidents> incidents in <runs> runs · <skill and versi
   Cause    · <skill>/<file>:<line> "<quote>" | missing: <instruction> | agent judgment | environment
   Edit     · <proposed diff>
   Measure  · <measure and direction> · proposal <id> · eval: <export-eval folder, if made>
-Verified   · <proposal id>: confirmed | refuted | not enough runs | confounded by <...>
+Verified   · <proposal id>: confirmed | refuted | inconclusive | not enough runs | confounded by <...>
 Labels     · <paired labels, kappa, verified and unverified categories>
 ```

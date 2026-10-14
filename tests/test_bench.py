@@ -376,6 +376,87 @@ def synthetic_runs(rng, n, scale=1.0):
     return rows
 
 
+class MethodFixes(unittest.TestCase):
+    def test_nan_is_no_information_not_two_times_better(self):
+        m = bench.MEASURE["cost"]
+        self.assertIsNone(bench.ell(m, float("nan"), 1.0, 1.0))
+        self.assertIsNone(bench.ell(m, 1.0, float("nan"), 1.0))
+
+    def test_a_missing_measure_in_a_draw_counts_as_no_change(self):
+        w = {"cost": 1.0, "seconds": 1.0}
+        base = {"cost": 0.0, "seconds": 0.0}
+        ref, val = {"cost": 1.0, "seconds": 1.0}, {"cost": 0.0}  # seconds has no data in this draw
+        d, _ = bench.composite(ref, val, base, w)
+        d_fixed, _ = bench.composite(ref, val, base, w, expect={"cost", "seconds"})
+        self.assertAlmostEqual(d, bench.CLIP)                  # renormalised: cost alone
+        self.assertAlmostEqual(d_fixed, bench.CLIP / 2)        # weights kept: the missing half counts as 0
+
+    def test_p_value_and_benjamini_hochberg(self):
+        rng = random.Random(1)
+        clear = sorted(rng.gauss(1.0, 0.1) for _ in range(2000))
+        null = sorted(rng.gauss(0.0, 0.1) for _ in range(2000))
+        self.assertLess(bench.p_value(clear, 5), 0.05)
+        self.assertGreater(bench.p_value(null, 5), 0.5)
+        self.assertIsNone(bench.p_value([0.1] * 10, 5))
+        # The interval at 1 - p touches 0, so p agrees with the interval the verdict uses.
+        p = bench.p_value(clear[:0] + sorted(rng.gauss(0.2, 0.1) for _ in range(4000)), 8)
+        self.assertTrue(0 < p < 1)
+        q = bench.benjamini_hochberg([0.01, None, 0.04, 0.03, 0.5])
+        self.assertIsNone(q[1])
+        self.assertAlmostEqual(q[0], 0.04)
+        self.assertAlmostEqual(q[2], 0.0533333, places=5)
+        self.assertAlmostEqual(q[3], 0.0533333, places=5)
+        self.assertAlmostEqual(q[4], 0.5)
+
+    def test_all_weights_at_zero_is_not_scored_not_not_enough_runs(self):
+        cfg = {"weights": {k: 0 for k in bench.MEASURE}}
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1 + v), resamples=200, cfg=cfg)
+        u = next(x for x in model["units"] if x["id"] == "skill:flow")
+        self.assertEqual(u["verdict"], "not scored")
+        self.assertEqual(bench.verdict_of(None, 6, 6, [], scored=False), ("not scored", None))
+        self.assertEqual(bench.verdict_of(None, 2, 6, [], scored=False), ("not enough runs", None))
+
+    def test_reverting_a_skill_makes_a_new_version(self):
+        model = bench.compute(history([("aaa", 5), ("bbb", 5), ("aaa", 5)], cost=lambda v, i: 1 + (v == 1)), resamples=200)
+        vs = model["versions"]["skill:flow"]
+        self.assertEqual([v["label"] for v in vs], ["v1", "v2", "v3"])
+        self.assertEqual([v["runs"] for v in vs], [5, 5, 5])
+        self.assertEqual(vs[2]["vid"], "skill:flow@aaa#2")
+        u = next(x for x in model["units"] if x["id"] == "skill:flow")
+        self.assertEqual((u["current"], u["vs"]), ("v3", "v2"))
+        self.assertEqual(sum(1 for r in model["runs"]["skill:flow"] if r["version"] == "v1"), 5)
+
+    def test_units_get_a_bh_q_and_listing_has_an_order(self):
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1 + 3 * v), resamples=2000)
+        u = next(x for x in model["units"] if x["id"] == "skill:flow")
+        self.assertIsNotNone(u["p"])
+        self.assertAlmostEqual(u["q"], u["p"])               # one unit tested: q = p
+        self.assertTrue(u["adjusted"] is True and u["direction"] == "worse")
+        con = duckdb.connect()
+        try:
+            seen = []
+            con = mock_execute(con, seen)
+            bench.load(con)
+        finally:
+            con.close()
+        self.assertTrue(seen and all("ORDER BY" in q for q in seen if q.lstrip().upper().startswith("SELECT") and "information_schema" not in q))
+
+
+class mock_execute:
+    """A connection that records the SQL it is given and answers every query with no rows."""
+    def __init__(self, con, seen):
+        self.con, self.seen = con, seen
+
+    def execute(self, sql, params=None):
+        self.seen.append(sql)
+        if "information_schema" in sql:
+            return self.con.execute("SELECT 0")
+        return self.con.execute("SELECT 1 AS session_id WHERE false")
+
+    def close(self):
+        self.con.close()
+
+
 class NullSimulation(unittest.TestCase):
     """No real difference: false "better"/"worse" must stay near the nominal 5%. A real 3x cost difference must be found."""
 

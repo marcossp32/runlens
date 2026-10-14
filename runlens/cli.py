@@ -12,7 +12,7 @@
   score      each skill's (or role's, or group's) current version against its previous one
   versions   every version of one skill: runs, invocations, outcome, verdict, confounders, diff
   proposals  record a proposed skill edit (add) or list them (list)
-  verify     check recorded proposals against the runs since: confirmed, refuted, not enough runs, confounded
+  verify     check recorded proposals against the runs since: confirmed, refuted, inconclusive, not enough runs, confounded
   show       print the timeline around an incident or tool call
   incidents  list incidents
   classify   label incidents with a failure taxonomy, using `claude -p`

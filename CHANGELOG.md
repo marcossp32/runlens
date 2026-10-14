@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Method
+- Proposals: `verify` now says `inconclusive` when the interval holds no change, and `refuted` only when the measure moved the other way beyond noise. "No clear change" is no longer reported as "no different" or as a refutation (#9).
+- A version is a hash over a contiguous stretch of runs: reverting a skill (A, B, A) gives three versions and the current one is the newest (#9).
+- New verdict `not scored` (enough runs, but every weight is 0) instead of `not enough runs` (#9).
+- A NaN in a measure no longer counts as "2x better" in Python (JS and Python agree: the measure is skipped). In bootstrap draws a measure without data counts as no change instead of renormalising the weights (#9).
+- 10,000 bootstrap resamples by default (was 4000), against Monte Carlo error at the ends of the interval (#9).
+- Each unit gets a Benjamini-Hochberg q over the units compared (`p_adjusted` in `score --json`); the dashboard flags a `better` or `worse` it does not support. Per-measure intervals are marked exploratory. "Above/below its typical run" is shown as a description, not a verdict (#9).
+- README "The method" now states the limits: low power, peeking and multiplicity (#9).
+- The database queries behind the model have an explicit `ORDER BY` (#9).
+
 ### Data
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
 

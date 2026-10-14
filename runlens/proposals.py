@@ -7,7 +7,9 @@ with the runs of the base version, using the same bootstrap of the difference as
 verdicts (bench.compare), and records one of:
 
   confirmed        the measure moved the predicted way, beyond noise
-  refuted          it did not: no clear change, or it moved the other way (see `observed`)
+  inconclusive     no clear change: the interval holds 0, which is not evidence that the edit did nothing
+                   (with a handful of runs a real effect usually looks like this)
+  refuted          the measure moved the other way, and the whole interval is on that side (see `observed`)
   not enough runs  fewer than [method] min_runs runs on either side (or no newer version yet)
   confounded       something else changed between the two sides, named in `confounders`
 
@@ -136,7 +138,7 @@ def check(model, p, min_runs=None):
     predicted_better = (p["direction"] == "higher") == (p["measure"] in ("score", "outcome"))
     hit = moved == ("better" if predicted_better else "worse")
     out["observed"] = moved
-    out["verdict"] = "confounded" if ctx_conf else ("confirmed" if hit else "refuted")
+    out["verdict"] = "confounded" if ctx_conf else ("confirmed" if hit else "inconclusive" if moved == "no clear change" else "refuted")
     return out
 
 

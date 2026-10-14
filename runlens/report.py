@@ -236,7 +236,7 @@ def write_report(cfg, out=None, sessions=None):
                 bars([r for r in label_sum if r["source"] == "llm"], "category", "incidents", num, "LLM labels by category"),
                 bars(faults, "fault", "incidents", num, "LLM labels by where a fix would go"),
                 table(label_sum, [("source", "Source", None, N), ("category", "Category", None, L), ("incidents", "Incidents", num, R)])),
-        section("versions", "Skill versions", "Each version is a hash of the skill text as it was loaded in the run; compare a skill's rows to see a change's effect.",
+        section("versions", "Skill versions", "Each version is a hash of the skill text as it was loaded in the run; compare a skill's rows to see a change's effect. These figures are descriptive and use plainer definitions than the dashboard (arithmetic mean cost, denied calls counted as errors, stubs included), so do not judge versions by eye from them; verdicts come from <code>runlens score</code>.",
                 table(versions, [("skill", "Skill", None, N), ("content_hash", "Version", None, L), ("runs", "Runs", num, R), ("cost_usd", "Cost", usd, R),
                                  ("cost_per_run", "Cost/run", usd, R), ("tool_calls", "Tool calls", num, R), ("error_rate", "Error rate", pct, R),
                                  ("idle_calls", "Idle", num, R), ("incidents", "Incidents", num, R), ("bad_markers", "Bad markers", num, R)])),
