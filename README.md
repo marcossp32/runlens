@@ -39,7 +39,7 @@ runlens archives every Claude Code session, and the subagents it spawned, into a
 - **It judges each skill against its own history.** Research is cheaper than building, and that says nothing about either. Versions are compared only within the same skill, with an interval, and skills are never ranked against each other.
 - **It is honest about what it can't tell.** Too few runs gives `not enough runs`. If another skill, the model or Claude Code changed at the same time, the verdict is `confounded` and names what changed. Skills you edit together are scored as one set.
 - **It shows you where to look.** Every problem links to the timeline that led to it, with the active skill's text. One command turns real failures into eval cases for [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) or [skill-creator](https://code.claude.com/docs/en/skills).
-- **Its numbers can be checked.** Token totals come from Claude Code's own counts, not the partial transcript, and `runlens check` and the Data health page say when something is missing.
+- **Its numbers can be checked.** The model-usage table and the cost-by-token-type chart use Claude Code's own counts (`cost-state`) rather than the partial transcript; per-skill, agent and model totals come from the transcript, and `runlens check` and the Data health page say when something is missing.
 
 ```mermaid
 flowchart LR
@@ -131,7 +131,7 @@ Works on Windows, macOS and Linux. Do this on every machine where you run Claude
 3. **Say which runs to record** under `[select]` in `~/.runlens/config.toml` (default: every session). For mstack's `/m-feature` flow, start from [`examples/m-feature.toml`](examples/m-feature.toml).
 4. **Load what you already have:** `runlens refresh`, then `runlens check`.
 
-**How the hook works.** When a session ends, the hook only writes `~/.runlens/pending/<session_id>`, logs one line to `~/.runlens/hooks.log`, starts a detached `runlens drain` and returns, well under a second. It is synchronous with a 10 s timeout, because Claude Code can kill an async hook before it has done anything when a `claude -p` session tears down. The detached drain archives and ingests the queued runs and rebuilds the dashboard. If a drain never ran (the machine slept, the process was killed), `runlens refresh` processes the queue first.
+**How the hook works.** When a session ends, the hook only writes `~/.runlens/pending/<session_id>`, logs one line to `~/.runlens/hooks.log`, starts a detached `runlens drain` and returns, well under a second. It is synchronous with a 10 s timeout, because an async hook can be killed when a `claude -p` session tears down (we saw it die before queuing anything). The detached drain archives and ingests the queued runs and rebuilds the dashboard. If a drain never ran (the machine slept, the process was killed), `runlens refresh` processes the queue first.
 
 **Keep Claude Code's transcripts longer (optional).** Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default). The runlens archive keeps its own copy, so this only matters for `/resume` or for `runlens refresh` to reach further back: set `{ "cleanupPeriodDays": 90 }` in `~/.claude/settings.json`.
 
@@ -152,7 +152,7 @@ runlens migrate-evidence  # once, if you used [[evidence]] with runlens 0.1 (dry
 
 The loop is *find a weak spot → trace it to the skill text → edit → verify*. `/runlens-retro` in Claude Code runs steps 1 to 4 for you and records its proposals; the commands below are what it runs.
 
-1. **Refresh and check.** `runlens refresh`, then `runlens check`. A `FAIL` line means the numbers are wrong (stop and fix it first); `WARN` lines name gaps such as runs still open.
+1. **Refresh and check.** `runlens refresh`, then `runlens check`. A `FAIL` line means the numbers are wrong (stop and fix it first); `WARN` lines name gaps such as runs archived but not ingested, queued by the hook, or changed since they were archived. Runs still open show as `ok … open:`.
 2. **Find where to look.** `runlens score` lists every skill's current version against its previous one. `runlens versions <skill>` shows all versions of one skill: runs, invocations, outcome, the verdict against the version before, its confounders, and the diff. Look first at versions whose verdict is `worse`, then at skills with a low or falling outcome, then at the ones with the most incidents.
 3. **Read the evidence.** `runlens incidents --skill <skill>` lists what went wrong; `runlens show <id>` prints the timeline around one incident. `runlens classify --skill <skill>` labels incidents with a failure taxonomy (the judge sees the skill text that was active, so it can quote the instruction at fault). A failure mode needs two or more incidents; one is an anecdote.
 4. **Record a proposal before editing.** `runlens proposals add --skill <skill> --hypothesis "..." --measure error_rate --direction lower --evidence <ids>` stores the hypothesis against the version you are about to edit.
@@ -170,7 +170,7 @@ The loop is *find a weak spot → trace it to the skill text → edit → verify
 The question runlens answers is *did a change to this skill make its runs better or worse?* So every comparison stays inside one skill (or one group).
 
 - **Population.** Only finished runs count (`status = 'complete'`: the session ended, or no new records for `[runs] idle_hours`), and stub runs (fewer than 3 model turns or under $0.02) are left out.
-- **Measures.** Each is a ratio of sums over runs, so a big run weighs as much as its size. Cost and time are geometric means per invocation (a skill load, a subagent spawn or a group run), because a tenth of the runs carry most of the spend. Rates are events over opportunities.
+- **Measures.** Rates are ratios of sums over runs (events over opportunities), so a big run weighs as much as its size. Cost and time are geometric means per invocation (a skill load, a subagent spawn or a group run), because a tenth of the runs carry most of the spend.
 
   | Measure | Weight | What it is |
   |---|---|---|
@@ -194,7 +194,7 @@ The question runlens answers is *did a change to this skill make its runs better
 - Whether the work was right, beyond the outcome you configured. Read the traces before acting on a drop.
 - Anything about one skill compared with another.
 - That an edit *caused* a change: tasks differ between runs. Use the eval export for that.
-- Anything about a skill that only runs inside subagents: Claude Code credits a subagent's turns to the skill that spawned it, so such a skill has no unit or versions of its own (it is listed under the dashboard's agent diagnostics, "Skills inside").
+- Work a subagent did before it loaded a skill: that part is inherited from the skill that spawned it. A skill that a subagent loads gets its own unit and versions, and the subagent's later work is credited to it.
 
 ## CLI reference
 
@@ -289,7 +289,7 @@ Views (in [`views.sql`](runlens/views.sql)): `v_runs`, `v_skill`, `v_role`, `v_m
 
 **How some numbers are read.**
 - **Cost** comes from Claude Code's cost-state per model, split across that model's calls by list price. A run with no cost-state yet is estimated at list price (`cost_estimated`). A model with no known price gets no cost and is named by `runlens check`; add it under `[prices]`.
-- **Tokens.** Transcripts hold only about 10–24% of the output tokens Claude Code counts, and most calls have no final usage record, so token totals come from `model_usage` (cost-state). Per-call output and thinking tokens are lower bounds.
+- **Tokens.** In the runs we measured, transcripts held only about 10–24% of the output tokens Claude Code counts (see `v_token_coverage`), and most calls have no final usage record, so token totals come from `model_usage` (cost-state). Per-call output and thinking tokens are lower bounds.
 - **Skill attribution.** A skill load pushes the skill onto its agent's stack, an explicit attribution wins, and the end of a nested skill pops back to the outer one. Fork agents' copied history is skipped, so nothing is counted twice.
 - **Versions.** A version is a hash of the skill text as Claude Code injected it, without the arguments. Files a skill reads later (references, scripts) are not part of it.
 
@@ -310,7 +310,7 @@ Views (in [`views.sql`](runlens/views.sql)): `v_runs`, `v_skill`, `v_role`, `v_m
 | `the database is in use by another runlens process` | DuckDB allows one writer at a time; a drain or another command holds it. Commands wait 30 s; try again a moment later |
 | `no price for <model>` | Add the model under `[prices]`; its calls have no list-price cost until then |
 | Token totals don't match the transcript | Expected: see **Tokens** in the [data reference](#data-reference). Use `model_usage` or `v_token_coverage` |
-| A skill is missing from `score` | It may not match `[select]`, have no finished non-stub runs, or only run inside subagents |
+| A skill is missing from `score` | It may not match `[select]`, have no finished non-stub runs, or has no finished non-stub run once subagent work before the load is left out |
 | A verdict says `not enough runs` or `confounded` | See [how many runs you need](#improve-a-skill-step-by-step) and why batch edits are confounded |
 | The dashboard is out of date | `runlens dashboard` rebuilds it. Hook and drain errors are in `~/.runlens/hooks.log` |
 | Deleting `~/.runlens` fails on Windows | Archived paths can exceed 260 characters. Use the long-path form (see [Uninstall](#uninstall)) |
@@ -337,19 +337,19 @@ git clone https://github.com/marcossp32/runlens.git
 cd runlens
 uv sync                                       # .venv with the locked dependencies
 uv run python -m unittest discover -s tests   # the test suite
-uvx ruff check                                # lint
+uvx ruff@0.17.0 check                                # lint
 uv tool install -e .                          # a `runlens` command that runs this checkout
 ```
 
-Dependencies are locked in `uv.lock`; after changing `pyproject.toml`, run `uv lock`. CI runs the suite on Linux, Windows and macOS with Python 3.11 and 3.14, lints with ruff, checks the dashboard script with `node --check`, renders every dashboard page in headless Chrome on Linux, and smoke-tests the built wheel. The browser tests look for Chrome, Chromium or Edge and are skipped without one; `RUNLENS_BROWSER` points them at a specific binary.
+Dependencies are locked in `uv.lock`; after changing `pyproject.toml`, run `uv lock`. CI runs the suite on Linux, Windows and macOS with Python 3.11 and 3.14, lints with ruff, checks the dashboard script with `node --check`, renders every dashboard page in headless Chrome (Linux only), and smoke-tests the built wheel. The browser tests look for Chrome, Chromium or Edge and are skipped without one; `RUNLENS_BROWSER` points them at a specific binary.
 
 ### Screenshots
 
 The images in this README come from `scripts/make_demo.py`, which builds an invented history in a throwaway folder; it never reads your transcripts. They are taken at 1440 px wide and twice the pixel density, in en-US number format. To see the same data:
 
 ```bash
-python scripts/make_demo.py demo-home
-RUNLENS_HOME=demo-home runlens dashboard --out demo.html
+uv run python scripts/make_demo.py demo-home
+RUNLENS_HOME=demo-home uv run runlens dashboard --out demo.html
 ```
 
 ## References
@@ -358,7 +358,7 @@ RUNLENS_HOME=demo-home runlens dashboard --out demo.html
 - [SWE-PRM](https://arxiv.org/abs/2509.02360) and [ImpossibleBench](https://arxiv.org/abs/2510.20270): coding-agent failure modes and test tampering.
 - [TRAIL](https://arxiv.org/abs/2505.08638): why trace judges must be validated.
 - Hesterberg, [What Teachers Should Know About the Bootstrap](https://arxiv.org/abs/1411.5279): the expanded percentile interval for small samples.
-- Hamel Husain and Shreya Shankar, [LLM Evals FAQ](https://hamel.dev/blog/posts/evals-faq/): error analysis, binary judges, judge alignment.
+- Hamel Husain and Shreya Shankar, [AI Evals: Everything You Need to Know](https://hamel.dev/blog/posts/evals-faq/): error analysis, binary judges, judge alignment.
 - Anthropic, [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents).
 - Claude Code docs: [hooks](https://code.claude.com/docs/en/hooks), [plugin evals](https://code.claude.com/docs/en/plugin-evals), [skills](https://code.claude.com/docs/en/skills).
 

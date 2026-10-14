@@ -5,6 +5,9 @@
 ### Data
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
 
+### Docs
+- Fixed false or misleading claims in the README and changelog: skills loaded only in subagents, which `check` lines are `WARN`, what comes from `cost-state`, the measures sentence, the demo commands, the unverifiable token-coverage figure, the Evals link title, the CI browser platform and the pinned ruff version (#16).
+
 ### Dashboard
 - Clearer structure, nothing removed. Each page opens with its answer in plain words (for example "review-pr got better. 1 can't be judged because something else changed at the same time"), then at most four key numbers (the rest on one quiet line), then charts grouped under section headings, then the detail tables.
 - Every chart card reads the same way: the question it answers, a one-line takeaway from the data, the chart, and a closed "How to read this" that holds the encodings, method notes and caveats that used to sit under every chart. Table, CSV, SVG and PNG moved into one "⋯" menu per card.
@@ -22,7 +25,7 @@ An audit of the whole tool found that the numbers it showed could not be trusted
 
 ### Data you can trust
 - Token usage per API message comes from its complete record, not the first streamed part, and each compaction is counted once (with its trigger and size).
-- Token totals come from Claude Code's own cost-state (new `model_usage` table): transcripts hold only about 10–24% of the output tokens.
+- Token totals come from Claude Code's own cost-state (new `model_usage` table): in the runs we measured, transcripts held only about 10–24% of the output tokens (see `v_token_coverage`).
 - Prices checked against the official table (Haiku 5.5, Opus 4.5 and Sonnet 4.5 added; cache-read prices corrected; fast mode and US-only inference). A model with no known price is flagged, never priced with a guess.
 - API errors are split from quota and rate limits; limits are no longer incidents or errors.
 - Runs are `complete` or `open`, and tiny `stub` runs are flagged (`[runs]` thresholds). Scores leave both out.
@@ -54,7 +57,7 @@ An audit of the whole tool found that the numbers it showed could not be trusted
 ### Dashboard
 - New: `runlens dashboard` writes `~/.runlens/dashboard.html`, one static page with no server and no network requests: an overview of every skill, role and group, a page per unit with its versions and their diffs, a comparison of two versions, diagnostics, and how the method works. The hook rebuilds it unless `[dashboard] auto = false`.
 - Skill texts are stored once per version (`skill_texts`), so versions can be diffed. Only versions whose text was recorded are counted.
-- A skill that a subagent loads for itself is credited to the skill that spawned it; the agent diagnostics list such skills under "Skills inside".
+- A skill that a subagent loads for itself gets its own unit and versions; only the subagent's work before the load is credited to the skill that spawned it. The agent diagnostics list such skills under "Skills inside".
 - Built from modules into one page: charts drawn at their real width, one colour per skill everywhere, validated light and dark palettes, better/worse not shown by red and green alone, keyboard tooltips, view state in the URL, CSV/SVG/PNG export.
 - Pages follow the new method: within-skill verdicts, per-measure effects with intervals, confounders and data health. The gauge, radar, treemap and two-slice donuts are gone.
 - A filter bar on every page (dates, repo, branch, model, effort, skills, Claude Code version) and a Score menu (baseline, weights, confidence). With custom settings the page re-runs the method on the runs kept and marks the result "custom".
@@ -75,7 +78,7 @@ An audit of the whole tool found that the numbers it showed could not be trusted
 - `config.example.toml` documents every option with its default; `examples/m-feature.toml` adds outcomes, per-skill weights and an `m-stack` group, and scopes evidence to the run.
 
 ### Engineering
-- CI runs on Linux, Windows and macOS with Python 3.11 and 3.14, lints with ruff, checks the dashboard script, renders every page in headless Chrome, and smoke-tests the built wheel. Actions are pinned by commit SHA with read-only permissions.
+- CI runs on Linux, Windows and macOS with Python 3.11 and 3.14, lints with ruff, checks the dashboard script, renders every page in headless Chrome (Linux only), and smoke-tests the built wheel. Actions are pinned by commit SHA with read-only permissions.
 - Tests for ingest edge cases, the judge, proposals, the dashboard page and the shipped configs, plus null simulations that keep the method's false-change rate near nominal.
 
 ## 0.1.1 - 2026-10-04
