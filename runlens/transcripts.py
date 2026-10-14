@@ -15,7 +15,8 @@ from .fs import fs_path
 # Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
 # 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
 #    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
-PARSER_VERSION = 3
+# 4: cost allocated per token category, resumed sessions (one cost-state per process), web searches, geo scope, Bedrock/Vertex ids.
+PARSER_VERSION = 4
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
 # https://platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Cache writes are 1.25x (5m) and 2x (1h)
@@ -34,7 +35,10 @@ PRICES = {
 }
 HAIKU_LONG = {"claude-haiku-5-5": ((0.50, 2.50, 0.05), 100_000)}
 FAST = {"claude-opus-5-5": 2.0, "claude-opus-5": 2.0, "claude-opus-4-8": 2.0}  # speed=fast: $8/$40 and $10/$50
-US_GEO = 1.1  # inference_geo "us" on Claude 4.6 and later
+US_GEO = 1.1  # inference_geo "us"; Claude 4.6 and later only (NO_GEO)
+NO_GEO = {"claude-opus-4-5", "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4-5", "claude-sonnet-4", "claude-haiku-4-5",
+          "claude-3-5-haiku"}  # older models the 1.1x does not apply to; any other model is charged it
+WEB_SEARCH_USD = 10.0  # per 1,000 searches
 FREE_MODELS = {"<synthetic>"}  # Claude Code's own messages (API errors, limits): no tokens, no cost
 
 SUMMARY_KEYS = ("command", "file_path", "notebook_path", "path", "pattern", "url", "query", "skill",
@@ -190,8 +194,13 @@ def is_idle(command, parts):
 
 
 def model_key(model):
+    """The price-table name of a model id: no context suffix, date or cloud wrapper (Bedrock `anthropic.claude-...-v1:0`,
+    Vertex `claude-...@20250929`)."""
     name = re.sub(r"\[.*\]$", "", model or "")
-    return re.sub(r"-\d{8}$", "", name)
+    if "claude" in name:
+        name = name[name.index("claude"):]
+    name = re.sub(r"-v\d+(:\d+)?$", "", name)
+    return re.sub(r"[-@]\d{8}$", "", name)
 
 
 def price_table(overrides=None):
@@ -210,7 +219,7 @@ def price_of(model, overrides=None, prompt_tokens=0, speed=None, geo=None):
     inp, out, read = table[name]
     if name in HAIKU_LONG and name not in (overrides or {}) and prompt_tokens > HAIKU_LONG[name][1]:
         inp, out, read = HAIKU_LONG[name][0]
-    k = (FAST.get(name, 1.0) if speed == "fast" else 1.0) * (US_GEO if geo == "us" else 1.0)
+    k = (FAST.get(name, 1.0) if speed == "fast" else 1.0) * (US_GEO if geo == "us" and name not in NO_GEO else 1.0)
     return inp * k, out * k, read * k, inp * 1.25 * k, inp * 2.0 * k
 
 
@@ -225,7 +234,7 @@ def list_cost(a, overrides=None):
         return None
     inp, out, read, w5, w1 = p
     return ((a["input_tokens"] or 0) * inp + (a["output_tokens"] or 0) * out + (a["cache_read_tokens"] or 0) * read
-            + (a["cache_write_5m"] or 0) * w5 + (a["cache_write_1h"] or 0) * w1) / 1e6
+            + (a["cache_write_5m"] or 0) * w5 + (a["cache_write_1h"] or 0) * w1) / 1e6 + (a.get("web_searches") or 0) * WEB_SEARCH_USD / 1000
 
 
 class SkillStack:
@@ -309,7 +318,7 @@ def parse_run(main, info, cfg, now=None):
     run = {"session_id": sid, "project": info["project"], "archived_at": ts(info.get("archived_at")),
            "active_ms": 0, "human_prompts": 0, "parser_version": PARSER_VERSION}
     stats = {"bad_lines": 0}
-    cost_state, cost_state_ts, last_msg_ts = None, None, None
+    cost_states, cost_state_ts, last_msg_ts = {}, None, None  # cost-state by startTime: one per Claude Code process
     tool_owner, statuses, spawn_prompts, pr_urls = {}, {}, {}, {}
 
     for f in run_files(main):
@@ -336,8 +345,9 @@ def parse_run(main, info, cfg, now=None):
                     run["title"] = r.get("aiTitle")
                 if kind == "cost-state":
                     cost_state_ts = t or cost_state_ts
-                    if cost_state is None or (r.get("totalCostUSD") or 0) >= (cost_state.get("totalCostUSD") or 0):
-                        cost_state = r
+                    key = r.get("startTime")
+                    if key not in cost_states or (r.get("totalCostUSD") or 0) >= (cost_states[key].get("totalCostUSD") or 0):
+                        cost_states[key] = r
                 if kind in ("user", "assistant") and t:
                     last_msg_ts = max(last_msg_ts or t, t)
             if kind == "pr-link" and r.get("prUrl"):
@@ -357,7 +367,8 @@ def parse_run(main, info, cfg, now=None):
                 w5m = cc.get("ephemeral_5m_input_tokens", (u.get("cache_creation_input_tokens") or 0) - w1h) or 0
                 tokens = {"input_tokens": u.get("input_tokens") or 0, "cache_read_tokens": u.get("cache_read_input_tokens") or 0,
                           "cache_write_5m": w5m, "cache_write_1h": w1h, "output_tokens": u.get("output_tokens") or 0,
-                          "thinking_tokens": as_dict(u.get("output_tokens_details")).get("thinking_tokens") or 0}
+                          "thinking_tokens": as_dict(u.get("output_tokens_details")).get("thinking_tokens") or 0,
+                          "web_searches": as_dict(u.get("server_tool_use")).get("web_search_requests") or 0}
                 a = msg_rows.get(mid)
                 if a is None:
                     is_err = bool(r.get("isApiErrorMessage"))
@@ -389,6 +400,7 @@ def parse_run(main, info, cfg, now=None):
                     if (r.get("thinkingDurationMs") or 0) > (a["thinking_ms"] or 0):
                         a["thinking_ms"] = r.get("thinkingDurationMs")
                 content = msg.get("content")
+                a["_len"] = a.get("_len", 0) + content_len(content)  # weighs the output tokens a message is missing
                 for b in content if isinstance(content, list) else []:
                     if not isinstance(b, dict):
                         continue
@@ -513,7 +525,7 @@ def parse_run(main, info, cfg, now=None):
         a["prompt"] = spawn_prompts.get(a["parent_tool_use_id"])
     run["pr_urls"] = sorted(pr_urls, key=lambda u: pr_urls[u] or datetime.min.replace(tzinfo=timezone.utc))
     run["bad_lines"] = stats["bad_lines"]
-    finish(rows, run, cost_state, tool_owner, statuses, cfg.get("prices"))
+    finish(rows, run, merge_cost_states(cost_states), tool_owner, statuses, cfg.get("prices"))
     run_status(run, cost_state_ts, last_msg_ts, cfg.get("runs") or {}, now)
     return rows
 
@@ -608,6 +620,9 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
         a["status"] = statuses.get(a["agent_id"]) if a["agent_id"] != "main" else None
     inherit_skills(rows)
     unpriced = allocate_cost(rows, cost_state, prices)
+    uncovered = sum(c["cost_usd"] or 0 for c in rows["api_calls"] if not covered(cost_state, c))
+    for c in rows["api_calls"]:
+        c.pop("_len", None)
     by_agent = {}
     for c in rows["api_calls"]:
         s = by_agent.setdefault(c["agent_id"], {"api_calls": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0,
@@ -649,11 +664,15 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
             "web_search_requests": u.get("webSearchRequests"), "cost_usd": u.get("costUSD"),
         })
     real_calls = [c for c in rows["api_calls"] if model_key(c["model"]) not in FREE_MODELS]
+    if not cost_state:
+        total_cost = sum(c["cost_usd"] or 0 for c in rows["api_calls"])
+    else:
+        total_cost = None if cs.get("totalCostUSD") is None else cs["totalCostUSD"] + uncovered
     run.update({
         "started": min(stamps) if stamps else None, "ended": max(stamps) if stamps else None,
         "n_agents": len(rows["agents"]) - 1, "skills": sorted({s for a in rows["agents"] for s in a["skills"]}),
-        "cost_usd": cs.get("totalCostUSD") if cost_state else sum(c["cost_usd"] or 0 for c in rows["api_calls"]),
-        "cost_estimated": cost_state is None,
+        "cost_usd": total_cost,
+        "cost_estimated": cost_state is None or uncovered > 0, "cost_uncovered_usd": uncovered if cost_state else None,
         "api_ms": cs.get("totalAPIDuration"), "api_ms_no_retries": cs.get("totalAPIDurationWithoutRetries"),
         "tool_ms": cs.get("totalToolDuration"), "total_ms": cs.get("totalDuration"),
         "lines_added": cs.get("totalLinesAdded"), "lines_removed": cs.get("totalLinesRemoved"),
@@ -704,32 +723,117 @@ def inherit_skills(rows):
             ag["skills"] = [inherited]
 
 
+def merge_cost_states(states):
+    """One cost-state for the run. A resumed session writes one per Claude Code process, each covering only its own
+    process (`startTime` onward), so the totals and token counts of all of them are added up."""
+    states = [s for s in states.values() if isinstance(s, dict)]
+    if len(states) < 2:
+        return states[0] if states else None
+    out = dict(max(states, key=lambda s: s.get("totalCostUSD") or 0))
+    for key in {k for s in states for k, v in s.items() if k.startswith("total") and isinstance(v, (int, float))}:
+        out[key] = sum(s.get(key) or 0 for s in states)
+    usage = {}
+    for s in states:
+        for model, u in as_dict(s.get("modelUsage")).items():
+            acc = usage.setdefault(model, {})
+            for k, v in as_dict(u).items():
+                if isinstance(v, (int, float)):
+                    acc[k] = acc.get(k, 0) + v
+    out["modelUsage"] = usage
+    out["hasUnknownModelCost"] = any(s.get("hasUnknownModelCost") for s in states)
+    starts = [s["startTime"] for s in states if isinstance(s.get("startTime"), (int, float))]
+    out["startTime"] = min(starts) if starts else None
+    return out
+
+
+def covered(cost_state, a):
+    """Whether cost-state accounts for this call: it only counts from the start of the process that wrote it."""
+    start = (cost_state or {}).get("startTime")
+    if not cost_state or not isinstance(start, (int, float)) or not a["ts"]:
+        return True
+    return a["ts"] >= datetime.fromtimestamp(start / 1000, timezone.utc)
+
+
+def content_len(content):
+    """Characters of text, thinking and tool input in a message: what its output tokens were spent on."""
+    if isinstance(content, str):
+        return len(content)
+    n = 0
+    for b in content if isinstance(content, list) else []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "tool_use":
+            n += len(json.dumps(b.get("input"), ensure_ascii=False))
+        else:
+            n += len(b.get("text") or b.get("thinking") or "")
+    return n
+
+
+# cost-state field behind each token count of a call. The cache writes are one count there.
+USAGE_FIELDS = {"input_tokens": "inputTokens", "cache_read_tokens": "cacheReadInputTokens"}
+
+
 def allocate_cost(rows, cost_state, prices=None):
     """Each call gets its list-price cost; when cost-state exists, each model's calls are scaled to its real cost.
+
+    The transcript holds fewer tokens than cost-state: most messages never get their final `output_tokens` (only the
+    value from the start of the stream), and calls that never appear in it (titles, classifiers, advisors) add input.
+    Before scaling, each category's gap is handed to the calls: input, cache reads and cache writes in proportion
+    to the call's own tokens, output only to the calls with no `stop_reason` (their count is the stale one), in
+    proportion to the text, thinking and tool input they carry. The rest is one factor per model. Calls before the
+    process cost-state starts at keep their list price.
 
     Returns the models that have no list price. Their calls keep a NULL cost unless cost-state gives the model's
     real cost, in which case it is split across them by tokens.
     """
     usage = as_dict((cost_state or {}).get("modelUsage"))
-    real = defaultdict(float)
+    real, tokens = defaultdict(float), defaultdict(lambda: defaultdict(float))
     for k, v in usage.items():
-        real[model_key(k)] += as_dict(v).get("costUSD") or 0
-    listed, weight, unpriced = defaultdict(float), defaultdict(float), set()
+        v = as_dict(v)
+        real[model_key(k)] += v.get("costUSD") or 0
+        for field in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"):
+            if isinstance(v.get(field), (int, float)):
+                tokens[model_key(k)][field] += v[field]
     for a in rows["api_calls"]:
         a["cost_usd"] = list_cost(a, prices)
-        if a["cost_usd"] is None:
-            unpriced.add(model_key(a["model"]) or "(unknown)")
-            weight[model_key(a["model"])] += prompt_tokens(a) + 5 * (a["output_tokens"] or 0)
-        else:
-            listed[model_key(a["model"])] += a["cost_usd"]
     if not cost_state:
-        return unpriced
+        return {model_key(a["model"]) or "(unknown)" for a in rows["api_calls"] if a["cost_usd"] is None}
+    by_model = defaultdict(list)
     for a in rows["api_calls"]:
-        key = model_key(a["model"])
-        if key not in real:
-            continue
-        if a["cost_usd"] is not None and listed.get(key):
-            a["cost_usd"] *= real[key] / listed[key]
-        elif a["cost_usd"] is None and weight.get(key):
-            a["cost_usd"] = real[key] * (prompt_tokens(a) + 5 * (a["output_tokens"] or 0)) / weight[key]
+        if covered(cost_state, a) and model_key(a["model"]) in real:
+            by_model[model_key(a["model"])].append(a)
+    unpriced = {model_key(a["model"]) or "(unknown)" for a in rows["api_calls"] if a["cost_usd"] is None}
+    for key, calls in by_model.items():
+        est = [dict(a) for a in calls]  # the call with the tokens it should have had
+        for field, name in USAGE_FIELDS.items():
+            scale_category(est, [field], tokens[key].get(name))
+        scale_category(est, ["cache_write_5m", "cache_write_1h"], tokens[key].get("cacheCreationInputTokens"))
+        gap = tokens[key].get("outputTokens", 0) - sum(a["output_tokens"] or 0 for a in calls) if "outputTokens" in tokens[key] else 0
+        if gap > 0:
+            stale = [(a, e) for a, e in zip(calls, est) if not a["stop_reason"] and not a["api_error"]]
+            weights = [(e, a.get("_len", 0)) for a, e in stale or zip(calls, est)]
+            if not sum(w for _, w in weights):
+                weights = [(e, 1) for e, _ in weights]
+            total = sum(w for _, w in weights)
+            for e, w in weights:
+                e["output_tokens"] = (e["output_tokens"] or 0) + gap * w / total
+        listed = {id(a): list_cost(e, prices) for a, e in zip(calls, est)}
+        total = sum(c for c in listed.values() if c is not None)
+        weight = {id(a): prompt_tokens(e) + 5 * (e["output_tokens"] or 0) for a, e in zip(calls, est)}
+        wtotal = sum(weight[id(a)] for a in calls if listed[id(a)] is None)
+        for a in calls:
+            c = listed[id(a)]
+            if c is not None and total:
+                a["cost_usd"] = c * real[key] / total
+            elif c is None and wtotal:
+                a["cost_usd"] = real[key] * weight[id(a)] / wtotal
     return unpriced
+
+
+def scale_category(calls, fields, real):
+    """Raise the `fields` of each call by the factor that brings their sum up to cost-state's count, if it is higher."""
+    seen = sum(a[f] or 0 for a in calls for f in fields)
+    if real and seen and real > seen:
+        for a in calls:
+            for f in fields:
+                a[f] = (a[f] or 0) * real / seen

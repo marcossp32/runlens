@@ -196,7 +196,7 @@ function diagModels() {
     { key: "calls", label: "Calls", num: true, value: (m) => m.calls, cell: (m) => fmt.int(m.calls) },
     { key: "cost", label: "Cost", num: true, value: (m) => m.cost, cell: (m) => fmt.usd(m.cost) },
     { key: "per", label: "Cost per call", num: true, value: (m) => m.cost / Math.max(1, m.calls), cell: (m) => fmt.usd(m.cost / Math.max(1, m.calls)) },
-    { key: "output", label: "Output tokens (transcript)", num: true, value: (m) => m.output, cell: (m) => fmt.compact(m.output) },
+    { key: "output", label: "Output tokens (transcript, undercount)", num: true, value: (m) => m.output, cell: (m) => fmt.compact(m.output) },
     { key: "cache", label: "Cache hit", num: true, value: hit, cell: (m) => fmt.pct(hit(m)) },
     { key: "errors", label: "API errors", num: true, value: (m) => m.errors },
     { key: "limits", label: "Limits hit", num: true, value: (m) => m.limits, more: true },

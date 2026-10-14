@@ -19,6 +19,8 @@ LEFT JOIN (SELECT session_id, count(*) FILTER (WHERE bad) AS bad_markers FROM ma
 LEFT JOIN (SELECT session_id, count(*) FILTER (WHERE api_error) AS api_errors, count(*) FILTER (WHERE api_limit) AS api_limits
            FROM api_calls GROUP BY 1) a USING (session_id);
 
+-- Token columns here, in v_model and in agents.*_tokens are what the transcript holds: output is 3-10x low, because most
+-- messages never get their final count. Costs are scaled to cost-state; the model_usage table has Claude Code's own totals.
 CREATE OR REPLACE VIEW v_skill AS
 WITH api AS (
     SELECT coalesce(skill, '(none)') AS skill, count(*) AS api_calls, sum(cost_usd) AS cost_usd,

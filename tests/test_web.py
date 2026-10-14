@@ -39,7 +39,7 @@ def metrics(ratio, n):
 def run(day, version, cost, session=None, task=EVIL):
     """A run row as bench.run_row writes it: the display fields and every measure's num and den."""
     return {"started": f"2026-10-0{day}T10:00:00+02:00", "session": session or f"s{day}{version}aaaa"[:8], "task": task, "version": version,
-            "repo": "r", "inv": 2, "invocations": 2, "cost": cost, "seconds": 600.0, "lc": 2 * (cost / 2 + 0.01), "ls": 2 * 6.0,
+            "repo": "r", "inv": 2, "inv_cost": 2, "invocations": 2, "cost": cost, "seconds": 600.0, "lc": 2 * (cost / 2 + 0.01), "ls": 2 * 6.0,
             "calls": 10, "call_errors": 1, "idle": 0, "turns": 5, "api_errors": 0, "incidents": 1, "interventions": 0, "bad": 0, "lines": 12}
 
 

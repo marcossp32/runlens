@@ -104,6 +104,7 @@ def build(con, cfg=None):
         t = epoch(ts)
         return None if t is None else t - (start.get(sid) or t)
 
+    # Token columns are the transcript's: output is a lower bound (see token_cost for Claude Code's own totals).
     call_cols = ("calls", "cost", "input", "cw5", "cw1", "cread", "output", "thinking", "think_ms", "errors", "limits", "unpriced")
     merged = {}
     for c in rows("""SELECT session_id, model, coalesce(effort, '(default)') AS effort, coalesce(skill, '(none)') AS skill,

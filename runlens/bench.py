@@ -15,6 +15,8 @@ much as its size and no run's rate is averaged with another's:
 - "log" measures (cost, time) are geometric means per invocation: num = Σ ln(x + offset)
   over the run's invocations, den = invocations. Costs are heavy-tailed (a tenth of the
   runs carry most of the spend), so an arithmetic mean would be the cost of the odd giant run.
+  Cost leaves out runs without cost-state (their tokens are a partial transcript at list price, about
+  30% too cheap) and invocations with a call that has no price; time keeps them. A verdict says how many.
 - "rate" measures are events over opportunities (failed tool calls over tool calls).
 - "count" measures are events per invocation (human prompts, failed checks).
 An invocation is a skill load (skill_loads), an agent spawn, or a group's run. A version's
@@ -54,7 +56,7 @@ MEASURES = [
     {"key": "outcome", "label": "Outcome", "unit": "rate", "type": "rate", "better": "higher", "num": "os", "den": "on",
      "weight": 3, "kinds": VERSIONED,
      "what": "The result the flow is meant to reach, as configured under [outcome]: a check that passes first time, or a PR opened."},
-    {"key": "cost", "label": "Cost per invocation", "unit": "usd", "type": "log", "better": "lower", "num": "lc", "den": "inv",
+    {"key": "cost", "label": "Cost per invocation", "unit": "usd", "type": "log", "better": "lower", "num": "lc", "den": "inv_cost",
      "weight": 2, "kinds": KINDS, "offset": 0.01,
      "what": "Model spend per invocation (skill load, subagent spawn or group run), as a geometric mean."},
     {"key": "seconds", "label": "Time per invocation", "unit": "s", "type": "log", "better": "lower", "num": "ls", "den": "inv",
@@ -691,21 +693,22 @@ def compute(data, groups=None, resamples=None, cfg=None):
         k = (uid, sid, vkey)
         if k not in acc:
             acc[k] = {"cost": 0.0, "seconds": 0.0, "turns": 0, "api_errors": 0, "calls": 0, "call_errors": 0, "idle": 0,
-                      "incidents": 0, "bad": 0, "prompts": 0, "lines": 0, "inv": defaultdict(lambda: [0.0, 0.0]),
+                      "incidents": 0, "bad": 0, "prompts": 0, "lines": 0, "inv": defaultdict(lambda: [0.0, 0.0, False]),
                       "loads": set(), "marks": [], "models": Counter(), "efforts": Counter()}
         return acc[k]
 
     for i, a in enumerate(api):
         for uid, vkey, inv in place(a["session_id"], a["agent_id"], a["ts"], a["skill"]):
             c = cell(uid, a["session_id"], vkey)
-            cost = a["cost_usd"] or 0.0
+            cost = a["cost_usd"]
             c["turns"] += 1
-            c["cost"] += cost
+            c["cost"] += cost or 0.0
             c["seconds"] += seconds[i]
             c["api_errors"] += bool(a["api_error"])
-            c["inv"][inv][0] += cost
+            c["inv"][inv][0] += cost or 0.0
+            c["inv"][inv][2] = c["inv"][inv][2] or cost is None  # no price: the invocation's cost is unknown, not zero
             c["inv"][inv][1] += seconds[i]
-            c["models"][family(a.get("model"))] += cost
+            c["models"][family(a.get("model"))] += cost or 0.0
             c["efforts"][a.get("effort") or "default"] += 1
     for t in kept(data["tools"]):
         for uid, vkey, _ in place(t["session_id"], t["agent_id"], t.get("ts"), t["skill"]):
@@ -820,10 +823,11 @@ def compute(data, groups=None, resamples=None, cfg=None):
             vmap = {uid.split(":", 1)[1]: (None if vkey.endswith("=unversioned") else vkey.split("=", 1)[1])}
         elif kind == "group":
             vmap = group_vmap(uid, sid)
+        priced = [x for x in inv if not x[2]] if not sessions[sid].get("cost_estimated") else []
         unit_rows[uid].append({
             "sid": sid, "vkey": vkey, "vmap": vmap, "started": sessions[sid].get("started"),
-            "inv": len(inv), "invocations": n_inv,
-            "lc": sum(math.log(x[0] + MEASURE["cost"]["offset"]) for x in inv),
+            "inv": len(inv), "inv_cost": len(priced), "invocations": n_inv,
+            "lc": sum(math.log(x[0] + MEASURE["cost"]["offset"]) for x in priced),
             "ls": sum(math.log(x[1] + MEASURE["seconds"]["offset"]) for x in inv),
             "cost": c["cost"], "seconds": c["seconds"], "turns": c["turns"], "api_errors": c["api_errors"],
             "calls": c["calls"], "call_errors": c["call_errors"], "idle": c["idle"], "incidents": c["incidents"],
@@ -892,7 +896,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
                 if p["vs_previous"]:
                     v = next(x for x in vlist if x["label"] == p["b"])
                     v.update(verdict=p["verdict"], direction=p["direction"], vs=p["a"], difference=p["difference"],
-                             confounders=p["confounders"])
+                             confounders=p["confounders"], notes=p["notes"])
                     v["delta"] = (v["score"] - vlist[vlist.index(v) - 1]["score"]
                                   if v["score"] is not None and vlist[vlist.index(v) - 1]["score"] is not None else None)
             pairs_out[uid] = pairs
@@ -1025,19 +1029,22 @@ def pair_entry(uid, va, vb, rows_a, rows_b, base, pseudo, weights, own_skills, c
     res = compare(rows_a, rows_b, base, pseudo, weights, f"{uid}|{va['key']}|{vb['key']}", st["resamples"],
                   st["confidence"], interval=enough)
     conf = confounders_of(rows_a, rows_b, own_skills, ctx)
+    notes = [f"cost leaves out {n} of {len(side)} runs of {label} (no cost-state: list price on a partial transcript)"
+             for label, side in ((va["label"], rows_a), (vb["label"], rows_b))
+             for n in [sum(1 for r in side if ctx["sessions"][r["sid"]].get("cost_estimated"))] if n]
     verdict, direction = verdict_of(res["ci"], n_a, n_b, conf, st["min_runs"])
     diff = {"score": 100 * math.exp(res["d"]) if res["d"] is not None else None,
             "ci": [100 * math.exp(x) for x in res["ci"]] if res["ci"] else None,
             "measures": res["measures"], "outcome": res["outcome"]}
     return {"a": va["label"], "b": vb["label"], "vs_previous": int(vb["label"][1:]) - int(va["label"][1:]) == 1,
             "runs_a": n_a, "runs_b": n_b, "invocations_a": va["invocations"], "invocations_b": vb["invocations"],
-            "verdict": verdict, "direction": direction, "difference": diff, "confounders": conf}
+            "verdict": verdict, "direction": direction, "difference": diff, "confounders": conf, "notes": notes}
 
 
 def run_row(r, version, task, repo, kind):
     """What the page needs to show a run and to recompute any score from it: each measure's num and den."""
     row = {"started": r["started"], "session": r["sid"][:8], "task": _clip(task), "version": version, "repo": repo,
-           "inv": r["inv"], "invocations": r["invocations"], "cost": r["cost"], "seconds": r["seconds"],
+           "inv": r["inv"], "inv_cost": r["inv_cost"], "invocations": r["invocations"], "cost": r["cost"], "seconds": r["seconds"],
            "lc": round(r["lc"], 4), "ls": round(r["ls"], 4), "calls": r["calls"], "call_errors": r["call_errors"],
            "idle": r["idle"], "turns": r["turns"], "api_errors": r["api_errors"], "incidents": r["incidents"],
            "interventions": r["interventions"], "bad": r["bad"], "lines": r["lines"]}
@@ -1093,12 +1100,12 @@ def versions_summary(model, uid):
             "recorded": v["recorded"], "first_seen": v["first_seen"], "last_seen": v["last_seen"],
             "runs": v["runs"], "invocations": v["invocations"], "score": v["score"], "ci95": v["ci"],
             "verdict": v["verdict"], "direction": v["direction"], "vs": v["vs"], "confounders": v["confounders"],
-            "difference": _diff_out(v["difference"]), "outcome": v["outcome"],
+            "notes": v.get("notes", []), "difference": _diff_out(v["difference"]), "outcome": v["outcome"],
             "measures": {k: d["value"] for k, d in v["metrics"].items()},
             "cost_per_success_usd": v["kpi"]["cost_per_success"], "cost_per_kloc_usd": v["kpi"]["cost_per_kloc"],
             "spend_usd": v["kpi"]["spend"], "diff": diff,
         })
-    pairs = [{k: p[k] for k in ("a", "b", "runs_a", "runs_b", "verdict", "direction", "confounders")}
+    pairs = [{k: p[k] for k in ("a", "b", "runs_a", "runs_b", "verdict", "direction", "confounders", "notes")}
              | {"difference": _diff_out(p["difference"])} for p in model["pairs"].get(uid, []) if not p["vs_previous"]]
     return {"skill": u["name"], "unit": uid, "unit_of_analysis": "invocation", "population": model["population"],
             "baseline": {k: display(MEASURE[k], v) for k, v in u["baseline"].items()}, "weights": u["weights"],
@@ -1121,7 +1128,7 @@ def load(con):
                  ORDER BY (l.source = 'human') DESC, l.labeled_at DESC LIMIT 1)""" if has("labels") else "NULL")
     return {
         "runs": rows("""SELECT session_id, started, title, cwd AS repo, cc_version, status, is_stub, pr_urls,
-                               lines_added, lines_removed FROM runs"""),
+                               lines_added, lines_removed, cost_estimated FROM runs"""),
         "agents": rows("SELECT session_id, agent_id, agent_type, role, description FROM agents"),
         "api": rows("SELECT session_id, agent_id, ts, skill, cost_usd, api_error, model, effort FROM api_calls"),
         "tools": rows("""SELECT session_id, agent_id, ts, skill, is_error, denied, idle, patch_added, patch_removed

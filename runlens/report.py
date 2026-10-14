@@ -242,7 +242,7 @@ def write_report(cfg, out=None, sessions=None):
                                  ("idle_calls", "Idle", num, R), ("incidents", "Incidents", num, R), ("bad_markers", "Bad markers", num, R)])),
         section("models", "Models, latency and context", "",
                 table(models, [("model", "Model", None, N), ("api_calls", "API calls", num, R), ("cost_usd", "Cost", usd, R),
-                               ("output_tokens", "Output tokens", num, R), ("thinking_tokens", "Thinking tokens", num, R), ("cache_hit", "Cache hit", pct, R)]),
+                               ("output_tokens", "Output tokens (transcript, undercount)", num, R), ("thinking_tokens", "Thinking tokens", num, R), ("cache_hit", "Cache hit", pct, R)]),
                 "<h3>Slowest tool calls</h3>",
                 table(slow, [("run", "Run", None, N), ("tool", "Tool", None, N), ("skill", "Skill", None, N), ("duration_ms", "Duration", dur, R),
                              ("input_summary", "Call", lambda v: f'<span class="mono">{esc(v)}</span>', L), ("tool_use_id", "Trace", show_cmd, L)], "wide"),
