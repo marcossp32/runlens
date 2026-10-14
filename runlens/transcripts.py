@@ -15,7 +15,7 @@ from .fs import fs_path
 # Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
 # 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
 #    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
 # https://platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Cache writes are 1.25x (5m) and 2x (1h)
@@ -101,6 +101,22 @@ def ts(value):
     except ValueError:
         return None
     return t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t
+
+
+def union_ms(spans):
+    """Milliseconds covered by the turn spans with overlaps counted once; a turn without a timestamp counts in full."""
+    total = sum(w for s, w in spans if s is None)
+    cur_s = cur_e = None
+    for s, e in sorted((x for x in spans if x[0] is not None), key=lambda x: x[0]):
+        if cur_e is not None and s <= cur_e:
+            cur_e = max(cur_e, e)
+            continue
+        if cur_e is not None:
+            total += (cur_e - cur_s).total_seconds() * 1000
+        cur_s, cur_e = s, e
+    if cur_e is not None:
+        total += (cur_e - cur_s).total_seconds() * 1000
+    return int(round(total))
 
 
 def as_dict(v):
@@ -309,6 +325,7 @@ def parse_run(main, info, cfg, now=None):
     run = {"session_id": sid, "project": info["project"], "archived_at": ts(info.get("archived_at")),
            "active_ms": 0, "human_prompts": 0, "parser_version": PARSER_VERSION}
     stats = {"bad_lines": 0}
+    turn_spans = []  # (start, end) of each main-agent turn; active_ms is their union, so nested turns count once
     cost_state, cost_state_ts, last_msg_ts = None, None, None
     tool_owner, statuses, spawn_prompts, pr_urls = {}, {}, {}, {}
 
@@ -479,8 +496,8 @@ def parse_run(main, info, cfg, now=None):
                 if sub == "turn_duration":
                     ms = r.get("durationMs") if isinstance(r.get("durationMs"), (int, float)) else None
                     rows["events"].append(ev(sid, agent_id, t, "turn", int(ms) if ms is not None else None, None, None))
-                    if is_main:
-                        run["active_ms"] += int(ms or 0)
+                    if is_main and ms:
+                        turn_spans.append((t - timedelta(milliseconds=ms), t) if t else (None, int(ms)))
                 elif sub == "compact_boundary":
                     # Claude Code also writes an isCompactSummary user record for the same compaction: counting
                     # only the boundary gives one event per real compaction.
@@ -513,6 +530,7 @@ def parse_run(main, info, cfg, now=None):
         a["prompt"] = spawn_prompts.get(a["parent_tool_use_id"])
     run["pr_urls"] = sorted(pr_urls, key=lambda u: pr_urls[u] or datetime.min.replace(tzinfo=timezone.utc))
     run["bad_lines"] = stats["bad_lines"]
+    run["active_ms"] = union_ms(turn_spans)
     finish(rows, run, cost_state, tool_owner, statuses, cfg.get("prices"))
     run_status(run, cost_state_ts, last_msg_ts, cfg.get("runs") or {}, now)
     return rows

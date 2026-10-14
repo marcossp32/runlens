@@ -103,7 +103,7 @@ const rangeCol = { key: "ci", label: "Range", num: true, value: (u) => (u.ci ? u
 const changeCol = { key: "delta", label: "Latest change", value: (u) => u.delta, cell: (u) => changeCell(u), csv: (u) => change(u).text };
 const runsCol = { key: "runs", label: "Runs", num: true, value: (u) => u.runs, cell: (u) => fmt.int(u.runs) };
 const costCol = { key: "cost", label: "Cost per invocation", num: true, value: (u) => u.kpi.cost, cell: (u) => fmt.usd(u.kpi.cost) };
-const timeCol = { key: "seconds", label: "Time per invocation", num: true, value: (u) => u.kpi.seconds, cell: (u) => fmt.secs(u.kpi.seconds) };
+const timeCol = { key: "seconds", label: "Agent time per invocation", num: true, value: (u) => u.kpi.seconds, cell: (u) => fmt.secs(u.kpi.seconds) };
 const errCol = { key: "error_rate", label: "Tool errors", num: true, value: (u) => u.kpi.error_rate, cell: (u) => fmt.pct(u.kpi.error_rate) };
 const outcomeCol = { key: "outcome", label: "Outcome", num: true, value: (u) => u.kpi.outcome, cell: (u) => fmt.pct(u.kpi.outcome) };
 const lastCol = { key: "last", label: "Last used", value: (u) => u.last_seen, cell: (u) => fmt.day(u.last_seen) };
@@ -492,8 +492,8 @@ function rolesPanel(list) {
         sub: "one mark per role · bigger marks ran in more runs · colour = agent type",
         points: top.filter((u) => u.kpi.cost > 0 && u.kpi.seconds > 0).map((u) => ({ x: u.kpi.seconds, y: u.kpi.cost, label: u.name, css: colourOf("agent", typeOf(u)).css,
           shape: colourOf("agent", typeOf(u)).shape, r: 4 + 5 * Math.sqrt(u.runs / Math.max(1, ...top.map((x) => x.runs))), href: hrefUnit(u.id), hollow: u.low_sample,
-          tip: { title: u.name, rows: [["Cost per invocation", fmt.usd(u.kpi.cost)], ["Time per invocation", fmt.secs(u.kpi.seconds)], ["Runs", fmt.int(u.runs)]] } })),
-        x: { title: "Time per invocation (log scale)", log: true, fmt: fmt.secs }, y: { title: "Cost per invocation, US$ (log scale)", log: true, fmt: fmt.usdTick }, labelTitle: "Role",
+          tip: { title: u.name, rows: [["Cost per invocation", fmt.usd(u.kpi.cost)], ["Agent time per invocation", fmt.secs(u.kpi.seconds)], ["Runs", fmt.int(u.runs)]] } })),
+        x: { title: "Agent time per invocation (log scale)", log: true, fmt: fmt.secs }, y: { title: "Cost per invocation, US$ (log scale)", log: true, fmt: fmt.usdTick }, labelTitle: "Role",
         legendItems: [...new Set(top.map(typeOf))].map((ty) => ({ label: ty, css: colourOf("agent", ty).css, shape: colourOf("agent", ty).shape })) }));
     if (write) setParams({ q: state.text || null, once: state.once ? "1" : null });
   };

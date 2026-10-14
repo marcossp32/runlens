@@ -26,7 +26,7 @@ function profileTable(periods) {
         h("span", { class: "sub" }, p.tag || h("span", {}, p.ci ? `likely ${fmt.interval(p.ci)} · ` : "", toneTag(v.tone, v.word)))];
     }],
     ["Cost per invocation", "typical model spend", (p) => fmt.usd(p.k.cost)],
-    ["Time per invocation", "typical working time", (p) => fmt.secs(p.k.seconds)],
+    ["Agent time per invocation", "typical agent time", (p) => fmt.secs(p.k.seconds)],
     ["Tool errors", "of its tool calls", (p) => fmt.pct(p.k.error_rate)],
     ["Problems", "per 100 tool calls", (p) => fmt.num(p.k.incidents, 2)],
   ];
