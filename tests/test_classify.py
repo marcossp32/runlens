@@ -419,6 +419,13 @@ class ClassifyTest(unittest.TestCase):
         self.assertIn('history_file: "history.jsonl"', (case / "case.yaml").read_text(encoding="utf-8"))
         self.assertIn('schema_version: "1.1"', (case / "case.yaml").read_text(encoding="utf-8"))
 
+    def test_export_eval_skips_cases_without_a_checking_grader(self):
+        for typ in ("repeated_call", "permission_denied"):
+            g, a = evals.checks(self.cfg, {"type": typ, "skill": "flow", "key": "x"}, None)  # failing call missing
+            self.assertEqual((g, a), ([], []))  # no bare skill-fired, no tool_used without input_match
+        g, _ = evals.checks(self.cfg, {"type": "idle_loop", "skill": "flow"}, None)
+        self.assertTrue(all(x.get("input_match") for x in g if x["type"] == "tool_used" and "max" in x))
+
     def test_export_eval_prompt_from_skill_args_without_history(self):
         out = self.tmp / "evals-args"
         with redirect_stdout(io.StringIO()):
@@ -443,6 +450,7 @@ class ClassifyTest(unittest.TestCase):
                 self.assertEqual(e["files"], [])
                 self.assertTrue(e["assertions"])
                 self.assertEqual(e["assertions"], e["expectations"])
+                self.assertNotIn("name", e)
         flow = json.loads((out / "skill-creator" / "flow" / "evals" / "evals.json").read_text(encoding="utf-8"))
         self.assertEqual(flow["evals"][0]["prompt"], "issue 7")
         build = json.loads((out / "skill-creator" / "build" / "evals" / "evals.json").read_text(encoding="utf-8"))
