@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from . import config, incidents
 from .fs import fs_path, makedirs, plain, read_json, signature
 from .privacy import redact_rows
-from .transcripts import PARSER_VERSION, parse_run, run_files
+from .transcripts import FAST, HAIKU_LONG, NO_GEO, PARSER_VERSION, PRICES, US_GEO, WEB_SEARCH_USD, parse_run, run_files
 
 SCHEMA = {
     "runs": [
@@ -31,7 +31,7 @@ SCHEMA = {
         ("status", "VARCHAR"), ("ended_by", "VARCHAR"), ("is_stub", "BOOLEAN"), ("entrypoint", "VARCHAR"),
         ("pr_urls", "VARCHAR[]"), ("api_ms_no_retries", "BIGINT"), ("total_ms", "BIGINT"),
         ("unknown_model_cost", "BOOLEAN"), ("unpriced_models", "VARCHAR[]"), ("n_api_calls", "INTEGER"),
-        ("bad_lines", "INTEGER"), ("parser_version", "INTEGER"),
+        ("bad_lines", "INTEGER"), ("parser_version", "INTEGER"), ("cost_uncovered_usd", "DOUBLE"),
     ],
     "agents": [
         ("session_id", "VARCHAR"), ("agent_id", "VARCHAR"), ("parent_agent_id", "VARCHAR"),
@@ -51,7 +51,7 @@ SCHEMA = {
         ("thinking_ms", "BIGINT"), ("stop_reason", "VARCHAR"), ("api_error", "BOOLEAN"), ("cost_usd", "DOUBLE"),
         ("api_limit", "BOOLEAN"), ("api_error_kind", "VARCHAR"), ("api_error_status", "INTEGER"),
         ("requested_model", "VARCHAR"), ("speed", "VARCHAR"), ("inference_geo", "VARCHAR"),
-        ("attribution_agent", "VARCHAR"), ("mcp_server", "VARCHAR"), ("mcp_tool", "VARCHAR"),
+        ("attribution_agent", "VARCHAR"), ("mcp_server", "VARCHAR"), ("mcp_tool", "VARCHAR"), ("web_searches", "INTEGER"),
     ],
     "tool_calls": [
         ("session_id", "VARCHAR"), ("agent_id", "VARCHAR"), ("tool_use_id", "VARCHAR"), ("msg_id", "VARCHAR"),
@@ -300,9 +300,11 @@ def record_errors(errors):
 # --- ingest ------------------------------------------------------------------------------------------------
 
 def config_hash(cfg):
-    """The parts of config.toml that change the rows a run produces. Editing them re-ingests every run."""
+    """The parts of config.toml, and the built-in price table, that change the rows a run produces. Editing them re-ingests every run."""
     keys = ("marker", "analysis", "prices", "runs", "privacy")
-    return hashlib.sha1(json.dumps({k: cfg.get(k) for k in keys}, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    built_in = [PRICES, HAIKU_LONG, FAST, US_GEO, sorted(NO_GEO), WEB_SEARCH_USD]
+    return hashlib.sha1(json.dumps({**{k: cfg.get(k) for k in keys}, "built_in_prices": built_in},
+                                   sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 def fingerprint(main):

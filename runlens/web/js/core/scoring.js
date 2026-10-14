@@ -361,7 +361,7 @@ function recompute(u) {
     const confounders = mp ? mp.confounders || [] : [];
     const [verdict, direction] = verdictOf(res.ci, ra.length, rb.length, confounders);
     return { a: A.label, b: B.label, vs_previous: j === i + 1, runs_a: ra.length, runs_b: rb.length, verdict, direction, confounders,
-      difference: { score: res.d === null ? null : 100 * Math.exp(res.d), ci: res.ci ? res.ci.map((x) => 100 * Math.exp(x)) : null,
+      notes: mp ? mp.notes || [] : [], difference: { score: res.d === null ? null : 100 * Math.exp(res.d), ci: res.ci ? res.ci.map((x) => 100 * Math.exp(x)) : null,
         measures: res.measures, outcome: res.outcome } };
   });
   for (const p of pairs.filter((x) => x.vs_previous)) {

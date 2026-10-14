@@ -9,7 +9,7 @@ open, models with no price, and sessions still waiting in the hook's queue.
 """
 from . import config, store
 from .fs import fs_path, read_json
-from .transcripts import PARSER_VERSION, iter_records, run_files
+from .transcripts import PARSER_VERSION, iter_records, price_of, run_files
 
 
 def raw_counts(main):
@@ -72,8 +72,8 @@ def run_problems(con, sid, main):
                (SELECT count(*) FROM api_calls WHERE session_id = $1),
                (SELECT count(*) FROM tool_calls WHERE session_id = $1),
                (SELECT count(*) FROM tool_calls WHERE session_id = $1 AND ts_result IS NOT NULL)""", [sid]).fetchone()))
-    cost, est, allocated, orphans, unpriced, models = con.execute("""
-        SELECT r.cost_usd, r.cost_estimated, (SELECT sum(cost_usd) FROM api_calls WHERE session_id = $1),
+    cost, est, uncovered, allocated, orphans, unpriced, models = con.execute("""
+        SELECT r.cost_usd, r.cost_estimated, r.cost_uncovered_usd, (SELECT sum(cost_usd) FROM api_calls WHERE session_id = $1),
                (SELECT count(*) FROM agents WHERE session_id = $1 AND agent_id <> 'main' AND parent_agent_id IS NULL),
                (SELECT count(*) FROM api_calls WHERE session_id = $1 AND cost_usd IS NULL),
                r.unpriced_models
@@ -90,9 +90,27 @@ def run_problems(con, sid, main):
     seen, total = con.execute("""SELECT (SELECT sum(output_tokens) FROM api_calls WHERE session_id = $1),
                                         (SELECT sum(output_tokens) FROM model_usage WHERE session_id = $1)""", [sid]).fetchone()
     notes = [f"agents={db['agents']} api={db['api_calls']} tools={db['tool_calls']} cost={cost or 0:.2f}{' (est)' if est else ''}"]
+    if uncovered:
+        notes.append(f"cost-state covers only part of the run (a resumed session): {uncovered:.2f} USD before its start is estimated at list price")
+    notes += price_notes(con, sid)
     if total:
         notes.append(f"output tokens {100 * (seen or 0) / total:.0f}% of cost-state")
     return problems, notes
+
+
+def price_notes(con, sid):
+    """Where Claude Code's cost for a model differs from the list price of its own token counts by more than 10%.
+    cost-state is Claude Code's estimate, not the invoice, so a gap points at a price it applied that the table does not."""
+    out = []
+    for model, inp, outp, read, write, cost in con.execute("""SELECT model, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, cost_usd FROM model_usage WHERE session_id = $1""", [sid]).fetchall():
+        p = price_of(model, prompt_tokens=(inp or 0) + (read or 0) + (write or 0))
+        if p is None or not cost:
+            continue
+        listed = ((inp or 0) * p[0] + (outp or 0) * p[1] + (read or 0) * p[2] + (write or 0) * p[3]) / 1e6  # writes as 5-minute
+        if listed and abs(cost / listed - 1) > 0.10:
+            out.append(f"cost-state for {model} is {100 * (cost / listed - 1):+.0f}% against list price")
+    return out
 
 
 def gaps(con, cfg, sessions=None, sources=True):

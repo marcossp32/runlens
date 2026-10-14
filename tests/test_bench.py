@@ -380,7 +380,7 @@ def synthetic_runs(rng, n, scale=1.0):
         costs = [scale * math.exp(rng.gauss(0, 1.2)) for _ in range(inv)]
         secs = [60 * math.exp(rng.gauss(0, 1.0)) for _ in range(inv)]
         calls = rng.randint(20, 400)
-        rows.append({"inv": inv, "invocations": inv, "lc": sum(math.log(c + 0.01) for c in costs), "ls": sum(math.log(s + 1) for s in secs),
+        rows.append({"inv": inv, "inv_cost": inv, "invocations": inv, "lc": sum(math.log(c + 0.01) for c in costs), "ls": sum(math.log(s + 1) for s in secs),
                      "calls": calls, "call_errors": sum(rng.random() < 0.06 for _ in range(calls)), "idle": sum(rng.random() < 0.02 for _ in range(calls)),
                      "incidents": sum(rng.random() < 0.01 for _ in range(calls)), "turns": calls, "api_errors": int(rng.random() < 0.1),
                      "interventions": int(rng.random() < 0.2), "bad": int(rng.random() < 0.1)})
