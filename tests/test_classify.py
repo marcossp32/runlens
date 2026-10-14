@@ -485,7 +485,8 @@ class RetroSkillTest(unittest.TestCase):
                 fields[key] = value
         self.assertEqual(fields["name"], "runlens-retro")
         self.assertLessEqual(len(fields["description"]), 1024)
-        self.assertIn("Use after", fields["description"])
+        self.assertIn("Run it yourself", fields["description"])  # it is user-invoked only, so the text must not promise automatic use
+        self.assertNotIn("Use after", fields["description"])
         self.assertTrue(fields.get("argument-hint"))
         self.assertIs(fields["disable-model-invocation"], True)
         self.assertLess(len(body.splitlines()), 500)

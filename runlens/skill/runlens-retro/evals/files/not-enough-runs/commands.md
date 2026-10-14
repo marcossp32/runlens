@@ -7,7 +7,12 @@
 
 ## runlens check
 ```
-ok   5 runs match the transcripts
+ok    c66287aa  agents=3 api=150 tools=90 cost=2.00 output tokens 98% of cost-state
+ok    d81f02bb  agents=3 api=163 tools=97 cost=2.35 output tokens 98% of cost-state
+ok    e93a1c44  agents=3 api=176 tools=104 cost=2.70 output tokens 98% of cost-state
+ok    27efa8c1  agents=3 api=189 tools=111 cost=3.05 output tokens 98% of cost-state
+ok    31aa90bd  agents=3 api=202 tools=118 cost=3.40 output tokens 98% of cost-state
+all checks passed
 ```
 
 ## runlens score --kind skill --json
@@ -32,7 +37,9 @@ ok   5 runs match the transcripts
 
 ## runlens incidents --skill m-plan
 ```
-(no incidents)
+incident_id  run  type  n  skill  role  key  policy
+-----------  ---  ----  -  -----  ----  ---  ------
+(0 rows)
 ```
 
 ## runlens agreement --json

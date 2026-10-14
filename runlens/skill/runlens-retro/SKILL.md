@@ -1,6 +1,6 @@
 ---
 name: runlens-retro
-description: "Runs a retrospective over recorded Claude Code runs with runlens: finds the skill versions that got worse and the skills with the weakest outcomes, traces them through incidents and failure labels to the skill instructions behind them, proposes evidence-backed edits, records each proposal and later checks whether it helped. Use after a batch of runs of a skill flow, or to check whether a skill change helped."
+description: "Runs a retrospective over recorded Claude Code runs with runlens: finds the skill versions that got worse and the skills with the weakest outcomes, traces them through incidents and failure labels to the skill instructions behind them, proposes evidence-backed edits, records each proposal and later checks whether it helped. Run it yourself as /runlens-retro after a batch of runs of a skill flow, or to check whether a skill change helped; Claude does not start it on its own because it writes proposals and can spend money."
 argument-hint: "[skill] [--since YYYY-MM-DD]"
 disable-model-invocation: true
 ---
@@ -29,7 +29,12 @@ Retro progress:
 ## 1. Refresh and check
 
 Run `runlens refresh` (add `--since` / `--skill` from the arguments), then `runlens check`.
-- **Any FAIL line**: stop. Report the failing lines and that every number after them would be wrong. Do nothing else.
+- **A FAIL about counts or ingest** (`api_calls: raw N vs db M`, `tool_calls`, `agents`, `tool_results`, `ingest <stage> failed`, `evidence file(s) ... have no blob`): stop. Report the failing lines and that every number after them would be wrong. Do nothing else.
+- **Any other FAIL** does not make the counts wrong: continue, put the line in the report as a warning and name the fix.
+  - `no price for <model> (add it under [prices])`: costs of that model are missing or low, so say cost-based scores are understated and suggest `[prices]` in the config, then `runlens refresh`.
+  - `ingested by parser v<N>, current is v<M>`: suggest `runlens refresh`; the numbers come from the old parser.
+  - `cost: cost-state ... vs allocated ...` and `subagent(s) without a parent`: name the run and say its cost and subagent numbers are doubtful.
+- `WARN` lines (archived but not ingested, queued, stale, never archived) are gaps: name them and suggest `runlens refresh`.
 - Lines about open or stale runs are not failures: name them in the report and continue (runlens leaves open runs out of verdicts).
 
 ## 2. Pick where to look
@@ -39,11 +44,11 @@ Run `runlens score --kind skill --json`, then `runlens versions <skill> --json` 
 Pick, in this order: versions whose verdict is `worse`; then skills whose outcome measure is falling or low within their own history; then the skills with the most incidents. Branches:
 - **`not enough runs`**: report the run counts and say the comparison is not meaningful yet. You may still read incidents in step 3, but make no claim that the version is better or worse.
 - **`confounded`**: report it as confounded and name what else changed (other skills, model mix, Claude Code version, project). Do not attribute the change to the skill text.
-- **A skill missing from `score`** usually runs only inside subagents. Check with `runlens sql "SELECT agent_id = 'main' AS in_main, count(*) FROM skill_loads WHERE skill = '<skill>' GROUP BY 1"`. Its tool calls and incidents are still attributed to it, so continue with step 3 on its incidents, and use the per-invocation numbers from `versions` if it lists them.
+- **A skill loaded only inside subagents** has its own unit and shows in `score` and `versions` like any other (check with `runlens sql "SELECT agent_id = 'main' AS in_main, count(*) FROM skill_loads WHERE skill = '<skill>' GROUP BY 1"`). Read its verdict as for any skill. If it is missing from `score` anyway, it has no complete runs or no loads: say so, and still read its incidents in step 3.
 
 ## 3. Incidents and labels
 
-For each picked skill: `runlens incidents --skill <skill>`. Unlabelled ones: `runlens classify --skill <skill> --limit 40` (a stratified random sample; tell the human the cost line it prints).
+For each picked skill: `runlens incidents --skill <skill>`. Unlabelled ones: each label is a `claude -p` call on the human's account, so first run `runlens classify --skill <skill> --limit 40 --dry-run` (no model call: it lists the incidents it would label and one judge prompt). Tell the human how many incidents that is, ask whether to go ahead, and only on a yes run it without `--dry-run` (a stratified random sample) and report the cost line it prints. On a no, work from the incident types and your own reading of the traces.
 
 Then `runlens agreement --json`. A category counts as a finding only when it is `verified` there.
 - **Too few human labels** (`enough` is false): say the label counts are hypotheses, work from the incident types and your own reading of the traces, and offer `runlens labels export sample.csv --limit 50 --blind`: the human fills `human_category` and `human_fault`, then `runlens labels import sample.csv`.
