@@ -197,7 +197,7 @@ def drain(cfg, wait_lock=False):
 
 def our_hook():
     # Synchronous on purpose: it returns in well under a second, and an async hook can be killed at teardown
-    # before it has queued anything. The timeout only bounds a pathological case (a stuck disk).
+    # (observed before it had queued anything). The timeout only bounds a pathological case (a stuck disk).
     return {"type": "command", "command": Path(sys.executable).as_posix(), "args": list(HOOK_ARGS), "timeout": 10}
 
 
