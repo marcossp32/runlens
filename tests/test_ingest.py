@@ -214,8 +214,9 @@ class Ingest(Sandbox):
         self.assertEqual(got, ["flow", "flow", "grill", "research", "flow", "plan", "flow", "review", "flow"])
 
     def test_main_session_fallback_ends_at_the_next_human_prompt(self):
+        # A skill the model invoked on its own ends when the person asks for something else.
         r = Run(self.projects, "abababab-0000-0000-0000-000000000002")
-        r.rec(type="user", message={"role": "user", "content": "/flow"}, promptSource="typed")
+        r.rec(type="user", message={"role": "user", "content": "review this"}, promptSource="typed")
         r.turn("m1", "t1", attr="flow")
         r.turn("m2", "t2", attr=None)
         r.rec(type="user", message={"role": "user", "content": "something else entirely"}, promptSource="typed")
@@ -226,6 +227,24 @@ class Ingest(Sandbox):
         got = self.q("SELECT skill, skill_inferred FROM tool_calls WHERE session_id = ? ORDER BY seq", r.sid)
         self.assertEqual(got, [("flow", False), ("flow", True), (None, False)])
         self.assertEqual(self.q("SELECT skill, skill_inferred FROM api_calls WHERE msg_id = 'm2'"), [("flow", True)])
+
+    def test_a_skill_the_person_typed_outlasts_their_answers(self):
+        # /flow typed by the person spans the session: answering one of its questions does not end it, but a
+        # sub-skill does end, and typing another skill command replaces it.
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000004")
+        r.rec(type="user", message={"role": "user", "content": "<command-message>flow</command-message>\n<command-name>/flow</command-name>"},
+              origin={"kind": "human"})
+        r.turn("m1", "t1", attr="flow")
+        r.turn("m2", "t2", attr="grill")
+        r.rec(type="user", message={"role": "user", "content": "yes, both"}, promptSource="typed")
+        r.turn("m3", "t3", attr=None)
+        r.rec(type="user", message={"role": "user", "content": "<command-name>/other</command-name>"}, origin={"kind": "human"})
+        r.turn("m4", "t4", attr=None)
+        r.end()
+        r.write()
+        self.assertEqual(self.refresh(), 1, self.out)
+        got = self.q("SELECT skill, skill_inferred FROM tool_calls WHERE session_id = ? ORDER BY seq", r.sid)
+        self.assertEqual(got, [("flow", False), ("grill", False), ("flow", True), (None, False)])
 
     def test_skill_loaded_in_a_subagent_wins_over_the_inherited_attribution(self):
         r = Run(self.projects, "abababab-0000-0000-0000-000000000003")

@@ -287,12 +287,13 @@ class SkillStack:
     another under the outermost one rather than nested in each other: a new skill
     replaces the one on top (never the outermost), and a change from a skill to None
     goes back to the outermost skill. That fallback is an inference (`inferred`),
-    and it ends at the next human prompt (`new_prompt`).
+    and it ends at the next human prompt (`new_prompt`), unless the person started
+    the outermost skill with a slash command: then it lasts until another one.
     """
 
     def __init__(self, main=False):
         self.stack, self.prev, self.main = [], None, main
-        self.inherited, self.loaded, self.inferred = None, False, False
+        self.inherited, self.loaded, self.inferred, self.typed = None, False, False, None
 
     def push(self, skill):
         """A skill the agent loaded."""
@@ -310,10 +311,16 @@ class SkillStack:
         else:
             self.stack.append(skill)
 
-    def new_prompt(self):
-        """A person typed a prompt in the main session: the skills of the earlier prompts have ended."""
-        if self.main:
-            self.stack, self.prev = [], None
+    def new_prompt(self, command=None):
+        """A person typed a prompt in the main session. A skill they started with a slash command (`command`) spans
+        the session: their later prompts answer it, so it stays as the outermost skill and only the skills under it
+        end. Anything else from the earlier prompts has ended."""
+        if not self.main:
+            return
+        if command:
+            self.typed = command
+        keep = self.typed if not command and self.stack[:1] == [self.typed] else None
+        self.stack, self.prev = ([keep] if keep else []), None
 
     def on_attribution(self, attr):
         if attr and not isinstance(attr, str):
@@ -502,7 +509,8 @@ def parse_run(main, info, cfg, now=None):
                 prompt = typed_text(content)
                 if is_main and not r.get("isMeta") and not has_tool_result(content) and is_human_prompt(r, prompt):
                     run["human_prompts"] += 1
-                    skills.new_prompt()
+                    command = COMMAND_NAME.search(prompt[:500])
+                    skills.new_prompt(skill_name(command.group(1)) if command else None)
                     rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, red(prompt)[:500],
                                              r.get("promptSource") or as_dict(r.get("origin")).get("kind")))
                 # not inside a tool result that happens to quote it, nor a compaction summary that does
