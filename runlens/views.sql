@@ -10,7 +10,7 @@ SELECT r.session_id, r.started, r.ended, r.cwd, r.git_branch, r.cc_version, r.ti
        t.tool_calls, t.tool_errors, round(t.tool_errors / nullif(t.tool_calls, 0), 4) AS error_rate,
        t.idle_calls, t.denied_calls, i.incidents, i.policy_incidents, m.bad_markers, a.api_errors, a.api_limits
 FROM runs r
-LEFT JOIN (SELECT session_id, count(*) AS tool_calls, count(*) FILTER (WHERE is_error) AS tool_errors,
+LEFT JOIN (SELECT session_id, count(*) AS tool_calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS tool_errors,
                   count(*) FILTER (WHERE idle) AS idle_calls, count(*) FILTER (WHERE denied IS NOT NULL) AS denied_calls
            FROM tool_calls GROUP BY 1) t USING (session_id)
 LEFT JOIN (SELECT session_id, count(*) AS incidents, count(*) FILTER (WHERE policy) AS policy_incidents
@@ -26,7 +26,7 @@ WITH api AS (
            count(DISTINCT session_id) AS runs
     FROM api_calls GROUP BY 1),
 tools AS (
-    SELECT coalesce(skill, '(none)') AS skill, count(*) AS tool_calls, count(*) FILTER (WHERE is_error) AS tool_errors,
+    SELECT coalesce(skill, '(none)') AS skill, count(*) AS tool_calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS tool_errors,
            count(*) FILTER (WHERE idle) AS idle_calls, sum(duration_ms) AS tool_ms
     FROM tool_calls GROUP BY 1),
 inc AS (SELECT coalesce(skill, '(none)') AS skill, count(*) AS incidents FROM incidents GROUP BY 1),
@@ -53,8 +53,8 @@ SELECT model, count(*) AS api_calls, sum(cost_usd) AS cost_usd, sum(output_token
 FROM api_calls GROUP BY 1;
 
 CREATE OR REPLACE VIEW v_tools AS
-SELECT tool, count(*) AS calls, count(*) FILTER (WHERE is_error) AS errors,
-       round(count(*) FILTER (WHERE is_error) / count(*), 4) AS error_rate,
+SELECT tool, count(*) AS calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS errors,
+       round(count(*) FILTER (WHERE is_error AND denied IS NULL) / count(*), 4) AS error_rate,
        median(duration_ms) AS median_ms, quantile_cont(duration_ms, 0.95) AS p95_ms, sum(duration_ms) AS total_ms
 FROM tool_calls GROUP BY 1;
 
@@ -96,7 +96,7 @@ CREATE OR REPLACE VIEW v_skill_version_stats AS
 WITH ver AS (
     SELECT session_id, skill, arg_max(content_hash, ts) AS content_hash FROM skill_loads GROUP BY 1, 2),
 api AS (SELECT session_id, skill, count(*) AS api_calls, sum(cost_usd) AS cost_usd FROM api_calls GROUP BY 1, 2),
-tools AS (SELECT session_id, skill, count(*) AS tool_calls, count(*) FILTER (WHERE is_error) AS tool_errors,
+tools AS (SELECT session_id, skill, count(*) AS tool_calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS tool_errors,
                  count(*) FILTER (WHERE idle) AS idle_calls FROM tool_calls GROUP BY 1, 2),
 inc AS (SELECT session_id, skill, count(*) AS incidents FROM incidents GROUP BY 1, 2),
 mk AS (SELECT session_id, skill, count(*) FILTER (WHERE bad) AS bad_markers, count(*) AS markers FROM markers GROUP BY 1, 2)

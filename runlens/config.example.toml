@@ -22,6 +22,7 @@ redact = false    # true: mask secrets, tokens and e-mail addresses in stored te
 [analysis]
 # Thresholds for the generic incident detectors.
 # repeat_min = 3          # identical tool calls in one agent before they are a repeated_call incident
+# repeat_window_s = 600  # seconds the identical calls must fall within
 # idle_min = 3            # wait/print-only shell calls in one agent before they are an idle_loop incident
 # error_streak_min = 2    # consecutive failing tool calls before they are an error_streak incident
 # context_steps = 8       # timeline steps kept before each incident

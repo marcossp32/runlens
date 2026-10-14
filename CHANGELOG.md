@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Data
+- Incident detectors, fewer false positives (#7). `test_edit_after_failure` needs a failing test run before it and ignores a `Write` that creates a new file. `repeated_call` needs the same output each time and all calls within `repeat_window_s` (600). `idle_loop` counts consecutive idle calls only. `error_streak` no longer includes permission denials. Idle detection splits on pipes, and a poll loop is idle only when nothing but reads follows it. `FAIL` in test output matches upper case only ("failed to parse" is not a test failure). Roles ignore `:` `;` `,` `.` so "Scan A: versions" and "Scan A versions" are one role. Permission denials no longer count as tool errors in the views. The parser version is bumped.
+- Incident ids are built from the tool call that anchors the incident, so turning on `privacy.redact` or re-ingesting no longer orphans labels (labels made before this change match no incident and need redoing). `runlens check` warns about labels that match no incident.
+
+### Data
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
 
 ### Dashboard

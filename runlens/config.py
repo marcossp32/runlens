@@ -21,6 +21,7 @@ ANALYSIS = {
     # Paths that hold tests, for "a build edited the tests" signals.
     "test_path": r"(^|[\\/])(tests?|__tests__|specs?|e2e)[\\/]|\.(test|spec)\.[A-Za-z0-9]+$|(^|[\\/])test_[^\\/]+\.py$|_test\.(py|go|rb)$",
     "repeat_min": 3,        # identical tool calls in one agent before it counts as a repeat
+    "repeat_window_s": 600,  # identical calls must fall within this many seconds to count as a repeat
     "idle_min": 3,          # idle calls in one agent before it counts as an idle loop
     "error_streak_min": 2,  # consecutive failing tool calls before it counts as a streak
     "context_steps": 8,     # steps of timeline kept before each incident

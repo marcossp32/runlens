@@ -400,6 +400,11 @@ class RunlensTest(unittest.TestCase):
         self.assertFalse(transcripts.is_idle("echo $(date) > log", parts))
         self.assertTrue(transcripts.is_idle('until grep -q done "$Q/log"; do sleep 30; done; tail -3 "$Q/log"', parts))
         self.assertFalse(transcripts.is_idle("while read l; do echo $l; done < f", parts))
+        self.assertFalse(transcripts.is_idle("echo data | gh pr create --body-file -", parts))
+        self.assertFalse(transcripts.is_idle("until grep -q ok f; do sleep 5; done; npm run build && git push --force", parts))
+        self.assertEqual(transcripts.error_class("failed to parse jq expression", None, False), "other")
+        self.assertEqual(transcripts.error_class("FAIL: test_x", None, False), "test_failure")
+        self.assertEqual(transcripts.role_of("Scan A: installed versions"), transcripts.role_of("Scan A installed versions"))
         self.assertTrue(transcripts.is_idle('S="C:/a b/c"; until grep -q "^exit" $S/r.txt; do sleep 20; done; grep -v x $S/r.txt', parts))
 
     def test_prices(self):

@@ -15,7 +15,9 @@ from .fs import fs_path
 # Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
 # 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
 #    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
-PARSER_VERSION = 3
+#    4: idle detection splits on pipes and needs a poll loop to be the whole command, "FAIL" matches upper case
+#    only, roles ignore punctuation.
+PARSER_VERSION = 4
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
 # https://platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Cache writes are 1.25x (5m) and 2x (1h)
@@ -63,7 +65,7 @@ ERROR_CLASSES = [
     ("network", r"ECONNREFUSED|ECONNRESET|getaddrinfo|Could not resolve host"),
     ("rate_limit", r"rate.?limit|\bHTTP[ /]\S* ?429\b|status(code)?\W{0,3}429\b|overloaded_error"),
     ("git", r"^fatal: |^error: (failed to push|Your local changes)|merge conflict|non-fast-forward"),
-    ("test_failure", r"\b\d+ (failed|failing)\b|AssertionError|^\s*FAIL(ED)?[:\s]"),
+    ("test_failure", r"\b\d+ (failed|failing)\b|AssertionError|^\s*(?-i:FAIL(ED)?)[:\s]"),
     ("nonzero_exit", r"^(Error: )?Exit code \d+"),
 ]
 ERROR_RX = [(name, re.compile(rx, re.I | re.M)) for name, rx in ERROR_CLASSES]
@@ -142,7 +144,8 @@ def role_of(description):
     if not description or not isinstance(description, str):
         return None
     d = re.sub(r"#?\d+", "#", description.strip())
-    d = re.sub(r"\(#\)|\s+", " ", d).strip()
+    d = re.sub(r"\(#\)|[:;,.]+(?=\s|$)", " ", d)
+    d = re.sub(r"\s+", " ", d).strip()
     return d[:60]
 
 
@@ -177,15 +180,18 @@ def api_error_kind(r, msg):
 
 POLL_LOOP = re.compile(r"""^(\s*(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S+)|cd\s+\S+)\s*(?:;|&&)\s*)*"""
                        r"(until|while)\b.*?;\s*do\s+sleep\s+[\d.]+\s*;?\s*done\b", re.S)
+# What may follow a poll loop without making it work: reading back what it waited for.
+POLL_TAIL = re.compile(r"\s*(?:(?:;|&&)\s*(?:tail|head|cat|grep|echo|ls|wc)\b[^;&|\n]*)*;?\s*")
 
 
 def is_idle(command, parts):
     """A shell command whose every part only waits or prints, or a loop that only sleeps until a condition holds."""
-    if command and POLL_LOOP.match(command):
+    m = POLL_LOOP.match(command) if command else None
+    if m and POLL_TAIL.fullmatch(command, m.end()):
         return True
     if not command or "$(" in command or "`" in command or ">" in command:
         return False
-    pieces = [p.strip() for p in re.split(r"&&|\|\||;|\n", command) if p.strip()]
+    pieces = [p.strip() for p in re.split(r"&&|\|\||\||;|\n", command) if p.strip()]
     return bool(pieces) and all(any(re.fullmatch(rx, p, re.I) for rx in parts) for p in pieces)
 
 
@@ -624,7 +630,7 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
     tools = defaultdict(lambda: [0, 0])
     for c in rows["tool_calls"]:
         tools[c["agent_id"]][0] += 1
-        tools[c["agent_id"]][1] += bool(c["is_error"])
+        tools[c["agent_id"]][1] += (bool(c["is_error"]) and not c.get("denied"))
     compactions = defaultdict(int)
     for c in rows["compactions"]:
         compactions[c["agent_id"]] += 1
