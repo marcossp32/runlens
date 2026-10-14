@@ -131,6 +131,11 @@ class Rejected(unittest.TestCase):
             self.assertIn(needle, str(ctx.exception))
         self.assertNotIn("\n", str(ctx.exception))
 
+    def test_every_default_key_is_in_the_schema(self):
+        # A new option added to a defaults table but not to SCHEMA would reject every config, the shipped ones too.
+        for section, defaults in (("analysis", config.ANALYSIS), ("runs", config.RUNS), ("privacy", config.PRIVACY)):
+            self.assertLessEqual(set(defaults), set(config.SCHEMA[section]), section)
+
     def test_unknown_key(self):
         self.fails("[runs]\nidle_hourz = 3\n", "[runs] idle_hourz", "unknown key")
         self.fails('[[marker]]\nname = "a"\npattern = "x"\nbadd = ["y"]\n', "[[marker]] #1 badd")

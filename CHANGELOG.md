@@ -2,23 +2,35 @@
 
 ## Unreleased
 
-### export-eval
-- A case with no grader that checks the failure is skipped and listed as skipped, instead of exported with only `skill-fired` (repeated calls and permission denials whose failing call is missing from the store). `tool_used` with `max` is never written without `input_match`, which would have meant "never use this tool". The skill-creator `evals.json` no longer carries the undocumented `name` field. The export README now says the one-arm default needs a path target and that `context.scaffold_script` runs only with `--scaffold` (#15).
-### Config, packaging and CI
-- `config.toml` is checked for typos and wrong types: an unknown section or key (`[runs] idle_hourz`, `[selectt]`) and a value of the wrong type (`[method] min_runs = "x"`, `resamples = 4000.5`) stop the command with a one-line error that names the key (#17).
-- `uv run pytest` works: pytest is a dev dependency group. pyproject lists the supported Python versions (3.11 to 3.14) and explains why `pytz` is a dependency although it is never imported (DuckDB needs it for TIMESTAMPTZ).
-- CI runs `install` and `uninstall` end to end from the built wheel, against a temporary `RUNLENS_HOME`, `CLAUDE_SETTINGS` and home directory, and fails when the dashboard tests are skipped on any OS, not only Linux.
-### Fixed
-- A drain now re-ingests runs last parsed by an older parser, so a parser bump no longer leaves the dashboard on old numbers until a manual `runlens ingest` (#5).
-- `CLAUDE_CONFIG_DIR` is honoured for settings, skills and the transcripts folder, and the hook passes its `transcript_path` to the drain, so sessions outside `~/.claude/projects` are no longer dropped as "not selected" (#5).
-- `runlens refresh` takes the drain lock while it archives and ingests; the drain looks at the queue once more after releasing the lock; the log no longer says "archived and ingested" for a run whose ingest failed (#5).
+### Data
+- The parser version is 4: every run is parsed again, once, on the next drain or `runlens refresh`. Labels made before this release match no incident and need redoing (`runlens check` lists them).
+- A run's active time (`active_ms`) is now the union of the main session's turn intervals, so a turn that contains others is no longer counted twice (it exceeded wall clock in many runs).
+- Skill attribution fixes (#2). A skill a subagent loads is no longer dropped by the `attributionSkill` the subagent inherited from its parent: the load wins, and the inherited value is only the spawn default. In the main session the fall-back to the outermost skill now ends at the next human prompt, and `api_calls` and `tool_calls` get a `skill_inferred` flag for work whose skill was inferred rather than recorded.
+- Plugin prefixes are dropped from skill names (`anthropic-skills:chrome-browser` is `chrome-browser`), so `skill_mentions.invoked` matches. Skills whose text follows the Skill call without a base directory (such as `artifact-design`) now produce a `skill_loads` row and so have versions.
+- `agent_failed` incidents are credited to the skill the agent was running last, not the alphabetically first. `v_skill_version_stats` splits a run between the versions it used instead of giving all of it to the last. A session that used both versions of a skill is left out of both arms of that comparison.
+- New-style forks (`fork-context-ref`) no longer double-count the parent's spawning call, lose its final token usage, or become their own parent.
+- Harness output (`<local-command-stdout>`, `<bash-input>`, `<bash-stdout>`, compaction summaries) and housekeeping commands (`/clear`, `/compact`, `/model`...) no longer count as human prompts; a typed slash command such as `/m-feature` still does; prompts with images do. A compaction summary that quotes "[Request interrupted" no longer creates an `interrupt` event.
+- A run whose archive is older than its source stays `open` instead of becoming `complete` through idleness, until it is archived again.
+- Sessions that share the first 8 characters of their id keep their full id in the explorer instead of merging.
+- Incident detectors, fewer false positives (#7). `test_edit_after_failure` needs a failing test run before it and ignores a `Write` that creates a new file. `repeated_call` needs the same output each time and all calls within `repeat_window_s` (600). `idle_loop` counts consecutive idle calls only. `error_streak` no longer includes permission denials. Idle detection splits on pipes, and a poll loop is idle only when nothing but reads follows it. `FAIL` in test output matches upper case only ("failed to parse" is not a test failure). Roles ignore `:` `;` `,` `.` so "Scan A: versions" and "Scan A versions" are one role. Permission denials no longer count as tool errors in the views.
+- Incident ids are built from the tool call that anchors the incident, so turning on `privacy.redact` or re-ingesting no longer orphans labels (labels made before this change match no incident and need redoing). `runlens check` warns about labels that match no incident.
+- Cost split across skills and agents no longer shifts cost to the main session. The transcript holds most messages with the output count from the start of the stream, so the missing output was spread evenly. Each token category (input, cache read, cache write, output) now gets its own gap against cost-state, and the output gap goes only to calls with no `stop_reason`, in proportion to the text, thinking and tool input they carry (#3).
+- A resumed session has one `cost-state` per process, each covering only its own process. They are added up, and calls from before the first one keep their list price. The run is marked `cost_estimated`, and `runlens check` notes how much was estimated (#3).
+- Web searches count at $10 per 1,000 (`api_calls.web_searches`). The 1.1x US inference geo applies only to Claude 4.6 and later. Bedrock (`anthropic.claude-...-v1:0`) and Vertex (`claude-...@date`) model ids find their price. A change to the built-in price table re-ingests every run (#3).
+- `runlens check` notes a model whose `cost-state` differs from the list price of its own token counts by more than 10%. `cost-state` is Claude Code's estimate, not the invoice; prices are not changed on that basis (#3).
+- Token columns from the transcript (`v_skill`, `v_model`, `agents.*_tokens`, the report and dashboard) are labelled as undercounts of output.
+- Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged.
+- Groups found automatically are steadier (#10). A set needs two shared edits, not one. A set inside a configured `[[group]]`, or nearly the same as one, is left out instead of being scored twice. A group member a run did not use keeps its nearest used version, so it no longer splits the group into extra versions.
+
+### Benchmark
+- The cost measure leaves out runs without `cost-state` (list price on a partial transcript is about 30% too cheap, which made newer versions look cheaper) and invocations with a call that has no price (it counted as $0). Time keeps them. A comparison says how many runs were left out (#3).
+
 ### Method
 - Confounders (#8): a change of model within a family (haiku-4-5 → haiku-5-5) and of Claude Code patch release (2.1.283 → 2.1.296) now confounds a verdict. Models are compared by full id, and `[method] cc_version` defaults to `"patch"` (set `"minor"` for the old behaviour).
 - The confounder check no longer depends on `PYTHONHASHSEED`: sessions are sorted, ties are broken by name, and another skill's versions are compared as distributions, not by their most common value.
 - The mix-shift threshold is 0.3 or 1.5 / √runs, whichever is higher, so two projects at 50/50 no longer trip it by chance with few runs.
 - The model mix counts the main agent only; a skill that delegates to a cheaper model in subagents is no longer confounded by it.
 - The dashboard no longer labels a pair better or worse when filtering produced a pair the model never checked for confounders.
-### Method
 - Proposals: `verify` now says `inconclusive` when the interval holds no change, and `refuted` only when the measure moved the other way beyond noise. "No clear change" is no longer reported as "no different" or as a refutation (#9).
 - A version is a hash over a contiguous stretch of runs: reverting a skill (A, B, A) gives three versions and the current one is the newest (#9).
 - New verdict `not scored` (enough runs, but every weight is 0) instead of `not enough runs` (#9).
@@ -27,37 +39,6 @@
 - Each unit gets a Benjamini-Hochberg q over the units compared (`p_adjusted` in `score --json`); the dashboard flags a `better` or `worse` it does not support. Per-measure intervals are marked exploratory. "Above/below its typical run" is shown as a description, not a verdict (#9).
 - README "The method" now states the limits: low power, peeking and multiplicity (#9).
 - The database queries behind the model have an explicit `ORDER BY` (#9).
-### Privacy
-- Redaction now runs before text is cut to its stored length, so a private key cut by the 2000- or 4000-character limit is no longer stored in clear; a private-key block with no `END` line is masked to the end of the text. `aws_secret_access_key = ...` is masked (keywords after `_` now match). Skill texts are redacted too. The parser version is bumped, so `runlens refresh` parses every run again, once.
-- `export-eval` masks the task prompt and `--history` transcript when `redact = true`.
-- The README lists which columns redaction covers (not the working directory, branch or PR links).
-- The run page links a PR only when its URL starts with `https://`.
-
-### Data
-- A run's active time (`active_ms`) is now the union of the main session's turn intervals, so a turn that contains others is no longer counted twice (it exceeded wall clock in many runs). The parser version is bumped.
-- Skill attribution fixes (#2). A skill a subagent loads is no longer dropped by the `attributionSkill` the subagent inherited from its parent: the load wins, and the inherited value is only the spawn default. In the main session the fall-back to the outermost skill now ends at the next human prompt, and `api_calls` and `tool_calls` get a `skill_inferred` flag for work whose skill was inferred rather than recorded. The parser version is bumped again.
-- Plugin prefixes are dropped from skill names (`anthropic-skills:chrome-browser` is `chrome-browser`), so `skill_mentions.invoked` matches. Skills whose text follows the Skill call without a base directory (such as `artifact-design`) now produce a `skill_loads` row and so have versions.
-- `agent_failed` incidents are credited to the skill the agent was running last, not the alphabetically first. `v_skill_version_stats` splits a run between the versions it used instead of giving all of it to the last. A session that used both versions of a skill is left out of both arms of that comparison.
-- New-style forks (`fork-context-ref`) no longer double-count the parent's spawning call, lose its final token usage, or become their own parent. The parser version is bumped.
-- Harness output (`<local-command-stdout>`, `<bash-input>`, `<bash-stdout>`, `<command-name>`, compaction summaries) no longer counts as a human prompt; prompts with images do. A compaction summary that quotes "[Request interrupted" no longer creates an `interrupt` event.
-- A run whose archive is older than its source stays `open` instead of becoming `complete` through idleness, until it is archived again.
-- Sessions that share the first 8 characters of their id keep their full id in the explorer instead of merging.
-- Incident detectors, fewer false positives (#7). `test_edit_after_failure` needs a failing test run before it and ignores a `Write` that creates a new file. `repeated_call` needs the same output each time and all calls within `repeat_window_s` (600). `idle_loop` counts consecutive idle calls only. `error_streak` no longer includes permission denials. Idle detection splits on pipes, and a poll loop is idle only when nothing but reads follows it. `FAIL` in test output matches upper case only ("failed to parse" is not a test failure). Roles ignore `:` `;` `,` `.` so "Scan A: versions" and "Scan A versions" are one role. Permission denials no longer count as tool errors in the views. The parser version is bumped.
-- Incident ids are built from the tool call that anchors the incident, so turning on `privacy.redact` or re-ingesting no longer orphans labels (labels made before this change match no incident and need redoing). `runlens check` warns about labels that match no incident.
-### Benchmark
-- The cost measure leaves out runs without `cost-state` (list price on a partial transcript is about 30% too cheap, which made newer versions look cheaper) and invocations with a call that has no price (it counted as $0). Time keeps them. A comparison says how many runs were left out (#3).
-
-### Data
-- Cost split across skills and agents no longer shifts cost to the main session. The transcript holds most messages with the output count from the start of the stream, so the missing output was spread evenly. Each token category (input, cache read, cache write, output) now gets its own gap against cost-state, and the output gap goes only to calls with no `stop_reason`, in proportion to the text, thinking and tool input they carry (#3).
-- A resumed session has one `cost-state` per process, each covering only its own process. They are added up, and calls from before the first one keep their list price. The run is marked `cost_estimated`, and `runlens check` notes how much was estimated (#3).
-- Web searches count at $10 per 1,000 (`api_calls.web_searches`). The 1.1x US inference geo applies only to Claude 4.6 and later. Bedrock (`anthropic.claude-...-v1:0`) and Vertex (`claude-...@date`) model ids find their price. A change to the built-in price table re-ingests every run (#3).
-- `runlens check` notes a model whose `cost-state` differs from the list price of its own token counts by more than 10%. `cost-state` is Claude Code's estimate, not the invoice; prices are not changed on that basis (#3).
-- Token columns from the transcript (`v_skill`, `v_model`, `agents.*_tokens`, the report and dashboard) are labelled as undercounts of output.
-- Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
-- Groups found automatically are steadier (#10). A set needs two shared edits, not one. A set inside a configured `[[group]]`, or nearly the same as one, is left out instead of being scored twice. A group member a run did not use keeps its nearest used version, so it no longer splits the group into extra versions.
-
-### Docs
-- Fixed false or misleading claims in the README and changelog: skills loaded only in subagents, which `check` lines are `WARN`, what comes from `cost-state`, the measures sentence, the demo commands, the unverifiable token-coverage figure, the Evals link title, the CI browser platform and the pinned ruff version (#16).
 
 ### Dashboard
 - The bench time measure is named "Agent time per invocation" and its description says what it is: model-turn gaps summed over all agents (parallel agents add up, waits for subagents or the user are included, each gap capped), not wall-clock time.
@@ -71,11 +52,33 @@
 - A clearer type scale (page 26, section 18, card 15, body 14, caption 12.5 px), an 8-point spacing scale, lighter card borders, and nested tabs drawn as pills so the two levels read apart.
 - Data fixes (#11): a score against another version (`prev`, `first`, `ver:vN`) now counts both versions the same way, so a version against itself scores 100. The "Pull requests" count is the real number (a run lists at most five links). The Runs page cost, the calendar's spend and the spend-per-day charts follow the model, effort and date filters (a date range now cuts spend by the day of each call). "Cost by token type" includes runs with no `model_usage` and follows the effort filter. The two "problems per 100 tool calls" are named "Scored problems" and "All problems". The cost-of-each-run chart says "log scale" only when it is one, the heatmap's weight heads show the default weights, and a role's "few runs" mark counts sessions. Problem rates on the Diagnostics page are indexed once instead of re-filtered per cell.
 
+### Privacy
+- Redaction now runs before text is cut to its stored length, so a private key cut by the 2000- or 4000-character limit is no longer stored in clear; a private-key block with no `END` line is masked to the end of the text. `aws_secret_access_key = ...` is masked (keywords after `_` now match). Skill texts are redacted too.
+- `export-eval` masks the task prompt and `--history` transcript when `redact = true`.
+- The README lists which columns redaction covers (not the working directory, branch or PR links).
+- The run page links a PR only when its URL starts with `https://`.
+
 ### Retro skill
 - `/runlens-retro` stops only on a FAIL about counts or ingest. An unpriced model, an old parser version, a cost-state mismatch or an orphan subagent now give a warning and the fix (`[prices]`, `runlens refresh`) and the retro goes on.
 - `/runlens-retro` runs `runlens classify --dry-run` first and asks before it spends `claude -p` calls on the sample.
 - Its description no longer says Claude uses it automatically: it is `disable-model-invocation`, so you run it yourself.
 - The eval fixtures use the real `runlens check` line format, a skill that only loads in subagents now has its own score, and two cases were added (unpriced model, `verify` confirmed and refuted). `tests/test_retro_fixtures.py` checks every fixture against the CLI output on the demo history.
+
+### export-eval
+- A case with no grader that checks the failure is skipped and listed as skipped, instead of exported with only `skill-fired` (repeated calls and permission denials whose failing call is missing from the store). `tool_used` with `max` is never written without `input_match`, which would have meant "never use this tool". The skill-creator `evals.json` no longer carries the undocumented `name` field. The export README now says the one-arm default needs a path target and that `context.scaffold_script` runs only with `--scaffold` (#15).
+
+### Fixed
+- A drain now re-ingests runs last parsed by an older parser, so a parser bump no longer leaves the dashboard on old numbers until a manual `runlens ingest` (#5).
+- `CLAUDE_CONFIG_DIR` is honoured for settings, skills and the transcripts folder, and the hook passes its `transcript_path` to the drain, so sessions outside `~/.claude/projects` are no longer dropped as "not selected" (#5).
+- `runlens refresh` takes the drain lock while it archives and ingests; the drain looks at the queue once more after releasing the lock; the log no longer says "archived and ingested" for a run whose ingest failed (#5).
+
+### Config, packaging and CI
+- `config.toml` is checked for typos and wrong types: an unknown section or key (`[runs] idle_hourz`, `[selectt]`) and a value of the wrong type (`[method] min_runs = "x"`, `resamples = 4000.5`) stop the command with a one-line error that names the key (#17).
+- `uv run pytest` works: pytest is a dev dependency group. pyproject lists the supported Python versions (3.11 to 3.14) and explains why `pytz` is a dependency although it is never imported (DuckDB needs it for TIMESTAMPTZ).
+- CI runs `install` and `uninstall` end to end from the built wheel, against a temporary `RUNLENS_HOME`, `CLAUDE_SETTINGS` and home directory, and fails when the dashboard tests are skipped on any OS, not only Linux.
+
+### Docs
+- Fixed false or misleading claims in the README and changelog: skills loaded only in subagents, which `check` lines are `WARN`, what comes from `cost-state`, the measures sentence, the demo commands, the unverifiable token-coverage figure, the Evals link title, the CI browser platform and the pinned ruff version (#16).
 
 ## 0.2.0 - 2026-10-13
 

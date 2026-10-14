@@ -16,10 +16,11 @@ from .privacy import redactor
 # Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
 # 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
 #    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
-#    4: idle detection splits on pipes and needs a poll loop to be the whole command, "FAIL" matches upper case
-#    only, roles ignore punctuation; cost allocated per token category, resumed sessions (one cost-state per
-#    process), web searches, geo scope, Bedrock/Vertex ids; text redacted
-#    before it is truncated.
+# 4: subagent skill loads win over the inherited attributionSkill, fallback ends at the next human prompt,
+#    skill_inferred; new-style forks, harness output and housekeeping commands are not prompts, stale archives;
+#    active time is the union of turns; idle detection splits on pipes, "FAIL" matches upper case only, roles
+#    ignore punctuation, denials are not tool errors; cost allocated per token category, one cost-state per
+#    process, web searches, geo scope, Bedrock/Vertex ids; text redacted before it is truncated.
 PARSER_VERSION = 4
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against

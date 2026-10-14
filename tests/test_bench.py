@@ -486,6 +486,17 @@ class MethodFixes(unittest.TestCase):
         self.assertEqual((u["current"], u["vs"]), ("v3", "v2"))
         self.assertEqual(sum(1 for r in model["runs"]["skill:flow"] if r["version"] == "v1"), 5)
 
+    def test_a_run_that_used_two_versions_is_not_a_revert(self):
+        for first in ("aaa", "bbb"):  # whichever version the shared run did first
+            d = history([("aaa", 5), ("bbb", 5)])
+            sid, t = "flow-1-0", 6000  # the run where the skill was edited: it loaded both texts
+            d["loads"] = [x for x in d["loads"] if x["session_id"] != sid]
+            second = "bbb" if first == "aaa" else "aaa"
+            d["loads"] += [load(sid, t + 1, "flow", first), load(sid, t + 20, "flow", second)]
+            d["api"].append(turn(sid, "main", t + 21, "flow"))
+            vs = bench.compute(d, resamples=200)["versions"]["skill:flow"]
+            self.assertEqual([v["vid"] for v in vs], ["skill:flow@aaa", "skill:flow@bbb"], first)
+
     def test_units_get_a_bh_q_and_listing_has_an_order(self):
         model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1 + 3 * v), resamples=2000)
         u = next(x for x in model["units"] if x["id"] == "skill:flow")

@@ -85,7 +85,7 @@ SCHEMA = {
     "select": {"since": "since", "skills": "strs", "projects": "strs"},
     "runs": {"idle_hours": "num", "stub_api_calls": "int", "stub_cost_usd": "num"},
     "privacy": {"redact": "bool", "patterns": "strs"},
-    "analysis": {"idle_parts": "strs", "test_path": "str", "repeat_min": "int", "idle_min": "int", "error_streak_min": "int",
+    "analysis": {"idle_parts": "strs", "test_path": "str", "repeat_min": "int", "repeat_window_s": "num", "idle_min": "int", "error_streak_min": "int",
                  "context_steps": "int"},
     "classify": {"model": "str", "before": "int", "after": "int", "skill_chars": "int", "timeline_chars": "int"},
     "evidence": {"name": "str", "glob": "str", "scope": "str", "slack_minutes": "num", "max_mb": "num", "exclude": "strs"},

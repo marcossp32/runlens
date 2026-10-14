@@ -949,13 +949,20 @@ def compute(data, groups=None, resamples=None, cfg=None):
             # A version is a hash over a contiguous stretch of runs: reverting A -> B -> A makes a new version
             # (key "<hash>#2"), so the pre- and post-B runs are not pooled and the newest span is the current one.
             by_version, spans, prev = defaultdict(list), Counter(), None
-            for r in sorted(rows, key=lambda r: (r["started"] or FAR, r["sid"])):
-                if r["vkey"] != prev:
-                    prev = r["vkey"]
-                    spans[prev] += 1
-                if spans[prev] > 1:
-                    r["vkey"] = f"{prev}#{spans[prev]}"
-                by_version[r["vkey"]].append(r)
+            by_run = defaultdict(list)
+            for r in rows:
+                by_run[(r["started"] or FAR, r["sid"])].append(r)
+            for run in sorted(by_run):
+                # A run that used two versions is one moment: the version already in progress goes first, so the
+                # run's other row does not look like a revert and split the span.
+                for r in sorted(by_run[run], key=lambda r: (r["vkey"] != prev, r["vkey"])):
+                    key = r["vkey"]
+                    if key != prev:
+                        prev = key
+                        spans[prev] += 1
+                    if spans[prev] > 1:
+                        r["vkey"] = f"{prev}#{spans[prev]}"
+                    by_version[r["vkey"]].append(r)
             ordered = sorted(by_version.items(), key=lambda kv: min((r["started"] or FAR) for r in kv[1]))
             prev_vmap = None
             for i, (vkey, xs) in enumerate(ordered):
