@@ -127,7 +127,7 @@ def model():
         "window": {"first": "2026-10-01T10:00:00+02:00", "last": "2026-10-06T10:00:00+02:00", "runs": 6, "excluded": {"open": 0}},
         "population": {"runs": 6, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"},
         "method": {"metrics": METRICS, "shrink": 2, "max_ratio": 2.0, "floor": 0.5, "turn_cap": 600, "resamples": 500, "min_runs": 5,
-                   "confidence": 0.95, "mix_shift": 0.3, "cc_version": "minor", "outcomes": [], "verdicts": list(bench.VERDICTS)},
+                   "confidence": 0.95, "mix_shift": 0.3, "cc_version": "patch", "outcomes": [], "verdicts": list(bench.VERDICTS)},
         "units": units, "versions": versions, "pairs": pairs, "runs": runs,
         "explore": ex, "views": [{"name": EVIL, "hash": "#/runs"}],
     }

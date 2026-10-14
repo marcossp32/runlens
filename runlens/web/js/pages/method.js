@@ -53,7 +53,7 @@ function methodPage() {
       li(h("strong", {}, "Combine. "), "The measures are combined with weights into one number. Weights can be set per skill under [weights] in config.toml, for example 0 for your messages in a skill that is meant to ask you questions.")),
     h("h2", {}, "The verdict"),
     h("p", {}, `A version is judged against the version before it. Their runs are resampled ${fmt.int(m.resamples)} times, by session so that a run's invocations stay together, and the weighted difference is worked out each time. If the ${pct}% interval of the difference is entirely on the better side the verdict is “better” (▲), entirely on the worse side “worse” (▼), otherwise “no clear change” (≈). The interval is widened for small samples, which keeps false “better” or “worse” calls at about ${100 - pct}% when nothing changed.`),
-    h("p", {}, `Fewer than ${m.min_runs} runs on either side is “not enough runs” (○): no verdict is given. When something else changed between the two sides, the verdict is “confounded” (?) and names it: another skill's text, the model or effort mix, the Claude Code version${m.cc_version === "patch" ? "" : " (its minor version)"}, or the project. A change can then not be put down to the skill text. Skills edited together are best judged together, as a group.`),
+    h("p", {}, `Fewer than ${m.min_runs} runs on either side is “not enough runs” (○): no verdict is given. When something else changed between the two sides, the verdict is “confounded” (?) and names it: another skill's text, the model or effort mix, the Claude Code version${m.cc_version === "minor" ? " (its minor version)" : ""}, or the project. A change can then not be put down to the skill text. Skills edited together are best judged together, as a group.`),
     h("details", { class: "more" }, h("summary", {}, "Exact formula and settings"),
       h("pre", { class: "formula" }, formula),
       plainTable("Settings", [{ label: "Setting" }, { label: "Value", num: true }, { label: "Meaning" }], [
@@ -64,7 +64,7 @@ function methodPage() {
         ["Resamples", fmt.int(m.resamples), "bootstrap resamples behind each interval"],
         ["Interval", `${pct}%`, "expanded for small samples (Hesterberg's expanded percentile)"],
         ["Runs for a verdict", `${m.min_runs} a side`, "fewer is “not enough runs”"],
-        ["Mix shift", m.mix_shift, "how different two sides' model, effort, Claude Code or project mix must be to count as a confounder"],
+        ["Mix shift", m.mix_shift, "least difference between two sides' model, effort, Claude Code or project mix that counts as a confounder (higher with few runs)"],
       ])));
 
   const measures = () => h("div", {},

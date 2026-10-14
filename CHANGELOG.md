@@ -12,6 +12,12 @@
 - A drain now re-ingests runs last parsed by an older parser, so a parser bump no longer leaves the dashboard on old numbers until a manual `runlens ingest` (#5).
 - `CLAUDE_CONFIG_DIR` is honoured for settings, skills and the transcripts folder, and the hook passes its `transcript_path` to the drain, so sessions outside `~/.claude/projects` are no longer dropped as "not selected" (#5).
 - `runlens refresh` takes the drain lock while it archives and ingests; the drain looks at the queue once more after releasing the lock; the log no longer says "archived and ingested" for a run whose ingest failed (#5).
+### Method
+- Confounders (#8): a change of model within a family (haiku-4-5 → haiku-5-5) and of Claude Code patch release (2.1.283 → 2.1.296) now confounds a verdict. Models are compared by full id, and `[method] cc_version` defaults to `"patch"` (set `"minor"` for the old behaviour).
+- The confounder check no longer depends on `PYTHONHASHSEED`: sessions are sorted, ties are broken by name, and another skill's versions are compared as distributions, not by their most common value.
+- The mix-shift threshold is 0.3 or 1.5 / √runs, whichever is higher, so two projects at 50/50 no longer trip it by chance with few runs.
+- The model mix counts the main agent only; a skill that delegates to a cheaper model in subagents is no longer confounded by it.
+- The dashboard no longer labels a pair better or worse when filtering produced a pair the model never checked for confounders.
 
 ### Data
 - A run's active time (`active_ms`) is now the union of the main session's turn intervals, so a turn that contains others is no longer counted twice (it exceeded wall clock in many runs). The parser version is bumped.

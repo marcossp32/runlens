@@ -359,7 +359,9 @@ function recompute(u) {
     const res = compareRows(ra, rb, baseline, pseudo, weights, `${u.id}|${A.key}|${B.key}`, S.ci, enough);
     const mp = modelPairs.find((p) => p.a === A.label && p.b === B.label);
     const confounders = mp ? mp.confounders || [] : [];
-    const [verdict, direction] = verdictOf(res.ci, ra.length, rb.length, confounders);
+    let [verdict, direction] = verdictOf(res.ci, ra.length, rb.length, confounders);
+    // A pair the model never compared (filtered runs can make new ones) has no confounder check: no direction is claimed.
+    if (!mp && (verdict === "better" || verdict === "worse")) verdict = "no clear change";
     return { a: A.label, b: B.label, vs_previous: j === i + 1, runs_a: ra.length, runs_b: rb.length, verdict, direction, confounders,
       notes: mp ? mp.notes || [] : [], difference: { score: res.d === null ? null : 100 * Math.exp(res.d), ci: res.ci ? res.ci.map((x) => 100 * Math.exp(x)) : null,
         measures: res.measures, outcome: res.outcome } };

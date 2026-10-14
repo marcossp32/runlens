@@ -7,7 +7,10 @@ first method gave against a cross-skill average.
 Run: python -m unittest tests.test_bench -v
 """
 import math
+import os
 import random
+import subprocess
+import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -348,16 +351,62 @@ class Verdicts(unittest.TestCase):
                                       cc=lambda v, i: "2.1.290" if v == 0 else "2.2.1"), resamples=200)
         conf = model["versions"]["skill:flow"][1]["confounders"]
         self.assertTrue(any(c.startswith("model mix") for c in conf), conf)
-        self.assertIn("Claude Code 2.1 → 2.2", conf)
-        # Patch releases alone are not a confounder unless asked for.
+        self.assertIn("Claude Code 2.1.290 → 2.2.1", conf)
+        # Patch releases confound by default; with "minor" they do not.
         model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"), resamples=200)
-        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], [])
-        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"),
-                              cfg={"method": {"cc_version": "patch"}}, resamples=200)
         self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code 2.1.290 → 2.1.291"])
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"),
+                              cfg={"method": {"cc_version": "minor"}}, resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], [])
         # A shift that leaves the most common version in place names the version whose share moved.
-        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: "2.2.1" if v == 1 and i < 2 else "2.1.290"), resamples=200)
-        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code version: 2.2 0% → 33%"])
+        model = bench.compute(history([("aaa", 20), ("bbb", 20)], cc=lambda v, i: "2.2.1" if v == 1 and i < 8 else "2.1.290"),
+                              cfg={"method": {"cc_version": "minor"}}, resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code version: 2.2 0% → 40%"])
+
+    def test_model_change_within_a_family_confounds(self):
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1.0 if v == 0 else 0.4,
+                                      model=lambda v, i: "claude-haiku-4-5" if v == 0 else "claude-haiku-5-5"), resamples=500)
+        v2 = model["versions"]["skill:flow"][1]
+        self.assertEqual(v2["verdict"], "confounded")
+        self.assertTrue(any(c.startswith("model mix") and "haiku-5-5" in c for c in v2["confounders"]), v2["confounders"])
+
+    def test_subagent_models_are_not_a_confounder(self):
+        d = history([("aaa", 6), ("bbb", 6)])
+        for r in list(d["api"]):
+            if r["session_id"].startswith("flow-1-"):
+                d["api"].append(turn(r["session_id"], "sub1", 5000, "flow", model="claude-haiku-5-5"))
+        model = bench.compute(d, resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], [])
+
+    def test_chance_does_not_trip_the_mix_threshold(self):
+        # Two projects, 3 of 5 runs against 2 of 5: a distance of 0.2 to 0.4 is chance at this size.
+        repos = lambda v, i: "C:\\work\\a" if (i < 3 if v == 0 else i < 1) else "C:\\work\\b"
+        d = history([("aaa", 5), ("bbb", 5)])
+        for r in d["runs"]:
+            v, i = int(r["session_id"].split("-")[1]), int(r["session_id"].split("-")[2])
+            r["repo"] = repos(v, i)
+        self.assertEqual(bench.compute(d, resamples=200)["versions"]["skill:flow"][1]["confounders"], [])
+        self.assertGreater(bench.mix_threshold(5), bench.mix_threshold(20))
+        self.assertEqual(bench.mix_threshold(10000), bench.MIX_SHIFT)
+
+    def test_confounders_do_not_depend_on_the_hash_seed(self):
+        code = '''
+import json, random
+from tests.test_bench import history
+from runlens import bench
+rng = random.Random(3)
+d = history([('aaa', 8), ('bbb', 8)], other=lambda v, i: f'h{(i * 7 + v) % 4}',
+            cc=lambda v, i: f'2.1.{280 + (i * 5 + v) % 6}', cost=lambda v, i: 1 + rng.random())
+m = bench.compute(d, resamples=200)
+print(json.dumps(m['pairs'], sort_keys=True, default=str))
+'''
+        outs = []
+        for seed in ("1", "2"):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            outs.append(subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True,
+                                       cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).stdout)
+        self.assertTrue(outs[0].strip())
+        self.assertEqual(outs[0], outs[1])
 
     def test_cli_summaries_follow_the_contract(self):
         model = bench.compute(history([("aaa", 5), ("bbb", 5)], cost=lambda v, i: 1 + i), resamples=200)
