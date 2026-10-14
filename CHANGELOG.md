@@ -15,6 +15,9 @@
 
 ### Data
 - A run's active time (`active_ms`) is now the union of the main session's turn intervals, so a turn that contains others is no longer counted twice (it exceeded wall clock in many runs). The parser version is bumped.
+- Skill attribution fixes (#2). A skill a subagent loads is no longer dropped by the `attributionSkill` the subagent inherited from its parent: the load wins, and the inherited value is only the spawn default. In the main session the fall-back to the outermost skill now ends at the next human prompt, and `api_calls` and `tool_calls` get a `skill_inferred` flag for work whose skill was inferred rather than recorded. The parser version is bumped again.
+- Plugin prefixes are dropped from skill names (`anthropic-skills:chrome-browser` is `chrome-browser`), so `skill_mentions.invoked` matches. Skills whose text follows the Skill call without a base directory (such as `artifact-design`) now produce a `skill_loads` row and so have versions.
+- `agent_failed` incidents are credited to the skill the agent was running last, not the alphabetically first. `v_skill_version_stats` splits a run between the versions it used instead of giving all of it to the last. A session that used both versions of a skill is left out of both arms of that comparison.
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
 
 ### Docs

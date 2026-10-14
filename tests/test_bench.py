@@ -323,6 +323,17 @@ class Verdicts(unittest.TestCase):
         self.assertLess(v2["difference"]["ci"][1], 100)
         self.assertEqual(model["pairs"]["skill:flow"][0]["verdict"], "worse")
 
+    def test_a_session_that_used_both_versions_is_in_neither_arm_of_the_comparison(self):
+        d = history([("aaa", 4), ("bbb", 4)])
+        for i in range(2):
+            sid = f"mixed-{i}"
+            d["runs"].append(run(sid, 50_000 + i * 1000))
+            d["loads"] += [load(sid, 50_001 + i * 1000, "flow", "aaa"), load(sid, 50_050 + i * 1000, "flow", "bbb")]
+            d["api"] += [turn(sid, "main", 50_002 + i * 1000, "flow"), turn(sid, "main", 50_060 + i * 1000, "flow")]
+        model = bench.compute(d, resamples=200)
+        pair = model["pairs"]["skill:flow"][0]
+        self.assertEqual((pair["runs_a"], pair["runs_b"]), (4, 4))
+
     def test_another_skill_changing_at_the_same_time_confounds(self):
         rng = random.Random(4)
         cost = lambda v, i: (1.0 if v == 0 else 3.0) * math.exp(rng.gauss(0, 0.2))

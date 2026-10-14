@@ -247,20 +247,31 @@ def list_cost(a, overrides=None):
 class SkillStack:
     """Which skill an agent is working under.
 
-    Inside subagents Claude Code records no `attributionSkill`, so a skill load
-    pushes and the outermost skill an agent loaded is never popped.
+    A subagent's records carry the `attributionSkill` it inherited from its parent
+    (the skill that was active when it was spawned). That value is only the spawn
+    default: once the subagent loads a skill itself, the load wins and the inherited
+    value, or its absence, no longer moves the stack. Without an inherited value a
+    skill load pushes and the outermost skill an agent loaded is never popped.
 
-    In the main session it records the skill on each turn and None after every
-    skill the session invokes ends, so skills invoked there run one after
-    another under the outermost one rather than nested in each other: a new
-    skill replaces the one on top (never the outermost), and a change from a
-    skill to None goes back to the outermost skill.
+    In the main session Claude Code records the skill on each turn and None after
+    every turn that skill did not run in, so skills invoked there run one after
+    another under the outermost one rather than nested in each other: a new skill
+    replaces the one on top (never the outermost), and a change from a skill to None
+    goes back to the outermost skill. That fallback is an inference (`inferred`),
+    and it ends at the next human prompt (`new_prompt`).
     """
 
     def __init__(self, main=False):
         self.stack, self.prev, self.main = [], None, main
+        self.inherited, self.loaded, self.inferred = None, False, False
 
     def push(self, skill):
+        """A skill the agent loaded."""
+        if skill and skill not in self.stack[-1:]:
+            self.loaded = True
+        self._push(skill)
+
+    def _push(self, skill):
         if not skill or skill in self.stack[-1:]:
             return
         if self.main and skill in self.stack:
@@ -270,19 +281,31 @@ class SkillStack:
         else:
             self.stack.append(skill)
 
+    def new_prompt(self):
+        """A person typed a prompt in the main session: the skills of the earlier prompts have ended."""
+        if self.main:
+            self.stack, self.prev = [], None
+
     def on_attribution(self, attr):
         if attr and not isinstance(attr, str):
             attr = None
+        if not self.main:
+            if self.inherited is None and not self.loaded and attr:
+                self.inherited = attr
+            elif self.loaded and self.inherited and attr in (None, self.inherited):
+                return self.stack[-1] if self.stack else None
         if attr:
             if attr in self.stack:
                 del self.stack[self.stack.index(attr) + 1:]
             else:
-                self.push(attr)
+                self._push(attr)
         elif self.prev and len(self.stack) > 1:
             # the outermost skill stays: Claude Code also drops it to None mid-run
             del self.stack[1 if self.main else -1:]
         self.prev = attr
-        return self.stack[-1] if self.stack else None
+        top = self.stack[-1] if self.stack else None
+        self.inferred = bool(self.main and top and attr != top)
+        return top
 
 
 class Markers:
@@ -336,6 +359,7 @@ def parse_run(main, info, cfg, now=None):
         stamps, agent_skills = [], set()
         seq = 0
         skills = SkillStack(main=is_main)
+        skill_calls, loaded_calls = {}, set()
         inherited = inherited_uuids(main, f, meta_by_agent.get(agent_id, {}))
         for r in iter_records(f, stats):
             msg = as_dict(r.get("message"))
@@ -365,6 +389,7 @@ def parse_run(main, info, cfg, now=None):
 
             if kind == "assistant":
                 skill = skills.on_attribution(r.get("attributionSkill"))
+                inferred = skills.inferred
                 if skill:
                     agent_skills.add(skill)
                 mid = msg.get("id") or r.get("uuid")
@@ -383,7 +408,7 @@ def parse_run(main, info, cfg, now=None):
                     a = msg_rows[mid] = {
                         "session_id": sid, "agent_id": agent_id, "msg_id": mid, "request_id": r.get("requestId"),
                         "ts": t, "model": msg.get("model"), "requested_model": r.get("requestedModel"),
-                        "effort": r.get("effort"), "skill": skill, **tokens,
+                        "effort": r.get("effort"), "skill": skill, "skill_inferred": inferred, **tokens,
                         "thinking_ms": r.get("thinkingDurationMs"), "stop_reason": msg.get("stop_reason"),
                         "api_error": is_err and not limit, "api_limit": limit, "api_error_kind": err_kind,
                         "api_error_status": r.get("apiErrorStatus") if isinstance(r.get("apiErrorStatus"), int) else None,
@@ -418,7 +443,7 @@ def parse_run(main, info, cfg, now=None):
                         path = (inp.get("file_path") or inp.get("notebook_path") or "") if isinstance(inp, dict) else ""
                         calls[b.get("id")] = {
                             "session_id": sid, "agent_id": agent_id, "tool_use_id": b.get("id"), "msg_id": mid, "seq": seq,
-                            "ts": t, "tool": name, "skill": skill, "input_hash": hashlib.sha1(raw.encode()).hexdigest()[:16],
+                            "ts": t, "tool": name, "skill": skill, "skill_inferred": inferred, "input_hash": hashlib.sha1(raw.encode()).hexdigest()[:16],
                             "input_summary": summarize(inp), "input_json": raw[:4000], "is_error": False,
                             "idle": is_idle(command if isinstance(command, str) else None, an["idle_parts"]),
                             "touches_test": name in EDIT_TOOLS and isinstance(path, str) and bool(test_rx.search(path)),
@@ -427,7 +452,8 @@ def parse_run(main, info, cfg, now=None):
                         if name in ("Agent", "Task") and isinstance(inp, dict):
                             spawn_prompts[b.get("id")] = str(inp.get("prompt") or "")[:8000]
                         if name == "Skill" and isinstance(inp, dict) and inp.get("skill"):
-                            mentions.append(("invoke", t, str(inp["skill"])))
+                            skill_calls[b.get("id")] = skill_name(inp["skill"])
+                            mentions.append(("invoke", t, skill_name(inp["skill"])))
                         markers.scan(rows, raw, "tool_input", session_id=sid, agent_id=agent_id, ts=t,
                                      tool_use_id=b.get("id"), skill=skill)
                     elif b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip():
@@ -442,6 +468,8 @@ def parse_run(main, info, cfg, now=None):
                 flat = text_of(content)
                 if is_main and isinstance(content, str) and not r.get("isMeta") and is_human_prompt(r, content):
                     run["human_prompts"] += 1
+                    if not r.get("isCompactSummary"):  # a compaction summary is not the person asking for something new
+                        skills.new_prompt()
                     rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, content[:500],
                                              r.get("promptSource") or as_dict(r.get("origin")).get("kind")))
                 if "[Request interrupted" in typed_text(content):  # not inside a tool result that happens to quote it
@@ -450,7 +478,12 @@ def parse_run(main, info, cfg, now=None):
                     statuses[task] = status
                 if r.get("isMeta"):
                     load = skill_load(flat)
+                    call_id = r.get("sourceToolUseID")
+                    if not load and call_id in skill_calls and call_id not in loaded_calls and flat.strip():
+                        # some skills have no base directory: their text follows the Skill call without the header
+                        load = (skill_calls[call_id], None, flat.strip(), None)
                     if load:
+                        loaded_calls.add(call_id)
                         loaded, skill_dir, body, args = load
                         skills.push(loaded)
                         digest = hashlib.sha1(body.encode()).hexdigest()[:12]
@@ -486,7 +519,7 @@ def parse_run(main, info, cfg, now=None):
             elif kind == "attachment":
                 att = as_dict(r.get("attachment"))
                 if att.get("type") == "skill_mention" and att.get("skillName"):
-                    mentions.append(("mention", t, str(att["skillName"])))
+                    mentions.append(("mention", t, skill_name(att["skillName"])))
                 elif att.get("type") == "invoked_skills":
                     names = [s.get("name") for s in att.get("skills") or [] if isinstance(s, dict) and s.get("name")]
                     rows["events"].append(ev(sid, agent_id, t, "skills_reinjected", len(names), ", ".join(names)[:500], None))
@@ -559,6 +592,11 @@ def skill_load(flat):
     body, _, args = flat[m.end():].partition("\nARGUMENTS: ")  # invocation args are not the skill
     skill_dir = m.group(1)
     return re.split(r"[\\/]", skill_dir.rstrip("\\/"))[-1], skill_dir, body.strip(), args.strip()[:2000] or None
+
+
+def skill_name(name):
+    """A skill's name without its plugin prefix: the Skill tool says `plugin:skill`, the load says `skill`."""
+    return str(name).rsplit(":", 1)[-1]
 
 
 def tool_result_fields(body, tur, decision):

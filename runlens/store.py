@@ -45,7 +45,7 @@ SCHEMA = {
     ],
     "api_calls": [
         ("session_id", "VARCHAR"), ("agent_id", "VARCHAR"), ("msg_id", "VARCHAR"), ("request_id", "VARCHAR"),
-        ("ts", "TIMESTAMPTZ"), ("model", "VARCHAR"), ("effort", "VARCHAR"), ("skill", "VARCHAR"),
+        ("ts", "TIMESTAMPTZ"), ("model", "VARCHAR"), ("effort", "VARCHAR"), ("skill", "VARCHAR"), ("skill_inferred", "BOOLEAN"),
         ("input_tokens", "BIGINT"), ("cache_read_tokens", "BIGINT"), ("cache_write_5m", "BIGINT"),
         ("cache_write_1h", "BIGINT"), ("output_tokens", "BIGINT"), ("thinking_tokens", "BIGINT"),
         ("thinking_ms", "BIGINT"), ("stop_reason", "VARCHAR"), ("api_error", "BOOLEAN"), ("cost_usd", "DOUBLE"),
@@ -56,7 +56,7 @@ SCHEMA = {
     "tool_calls": [
         ("session_id", "VARCHAR"), ("agent_id", "VARCHAR"), ("tool_use_id", "VARCHAR"), ("msg_id", "VARCHAR"),
         ("seq", "INTEGER"), ("ts", "TIMESTAMPTZ"), ("ts_result", "TIMESTAMPTZ"), ("duration_ms", "BIGINT"),
-        ("tool", "VARCHAR"), ("skill", "VARCHAR"), ("input_hash", "VARCHAR"), ("input_summary", "VARCHAR"),
+        ("tool", "VARCHAR"), ("skill", "VARCHAR"), ("skill_inferred", "BOOLEAN"), ("input_hash", "VARCHAR"), ("input_summary", "VARCHAR"),
         ("input_json", "VARCHAR"), ("is_error", "BOOLEAN"), ("error_class", "VARCHAR"), ("denied", "VARCHAR"),
         ("interrupted", "BOOLEAN"), ("idle", "BOOLEAN"), ("touches_test", "BOOLEAN"),
         ("result_len", "INTEGER"), ("result_head", "VARCHAR"),
