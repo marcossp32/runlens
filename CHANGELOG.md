@@ -18,6 +18,15 @@
 - The mix-shift threshold is 0.3 or 1.5 / √runs, whichever is higher, so two projects at 50/50 no longer trip it by chance with few runs.
 - The model mix counts the main agent only; a skill that delegates to a cheaper model in subagents is no longer confounded by it.
 - The dashboard no longer labels a pair better or worse when filtering produced a pair the model never checked for confounders.
+### Method
+- Proposals: `verify` now says `inconclusive` when the interval holds no change, and `refuted` only when the measure moved the other way beyond noise. "No clear change" is no longer reported as "no different" or as a refutation (#9).
+- A version is a hash over a contiguous stretch of runs: reverting a skill (A, B, A) gives three versions and the current one is the newest (#9).
+- New verdict `not scored` (enough runs, but every weight is 0) instead of `not enough runs` (#9).
+- A NaN in a measure no longer counts as "2x better" in Python (JS and Python agree: the measure is skipped). In bootstrap draws a measure without data counts as no change instead of renormalising the weights (#9).
+- 10,000 bootstrap resamples by default (was 4000), against Monte Carlo error at the ends of the interval (#9).
+- Each unit gets a Benjamini-Hochberg q over the units compared (`p_adjusted` in `score --json`); the dashboard flags a `better` or `worse` it does not support. Per-measure intervals are marked exploratory. "Above/below its typical run" is shown as a description, not a verdict (#9).
+- README "The method" now states the limits: low power, peeking and multiplicity (#9).
+- The database queries behind the model have an explicit `ORDER BY` (#9).
 
 ### Data
 - A run's active time (`active_ms`) is now the union of the main session's turn intervals, so a turn that contains others is no longer counted twice (it exceeded wall clock in many runs). The parser version is bumped.

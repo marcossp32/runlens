@@ -119,7 +119,7 @@ function comparison(sa, sb) {
       sub: `${tagB} compared with ${tagA} · dot = how much better or worse B is; line = its ${pct}% interval · right of “no change” (×1), B is better · ${pct}% intervals from resampling runs by session`,
       n: Math.min(A.runs, B.runs), minN: MIN_RUNS, rows: forestRows, leftLabel: "◀ B is worse", rightLabel: "B is better ▶",
       axisTitle: "B against A: how many times better (right) or worse (left), log scale",
-      notes: `A row is coloured only when its whole interval is clear of ×1. Effects are capped at ×${DATA.method.max_ratio} as in the score. The top row is the verdict's own difference; with fewer than ${MIN_RUNS} runs on a side it has no interval.`,
+      notes: `Per-measure intervals are exploratory: they are not adjusted for how many measures and pairs are looked at, so expect a false colour now and then. A row is coloured only when its whole interval is clear of ×1. Effects are capped at ×${DATA.method.max_ratio} as in the score. The top row is the verdict's own difference; with fewer than ${MIN_RUNS} runs on a side it has no interval.`,
     }),
     section({ title: "Each measure, A and B", intro: "The values behind the chart, with the number of runs on each side." }, sortTable({
       caption: "Measures compared",
@@ -129,7 +129,7 @@ function comparison(sa, sb) {
         { label: "Runs in A", num: true, value: (r) => r.na }, { label: "Runs in B", num: true, value: (r) => r.nb }],
       rows, csvName: `compare-${nameA}-${nameOf(A)}-${nameB}-${nameOf(B)}`,
     }).el),
-    note(`The verdict comes from the difference between the two versions' runs, resampled ${fmt.int(DATA.method.resamples)} times by session; it needs ${MIN_RUNS} runs on each side. A measure is marked better or worse only when its own interval is clear of no change.`));
+    note(`The verdict comes from the difference between the two versions' runs, resampled ${fmt.int(DATA.method.resamples)} times by session; it needs ${MIN_RUNS} runs on each side. A measure is marked better or worse only when its own interval is clear of no change; "no clear change" means the interval holds no change, not that the versions are alike.`));
 }
 
 function comparePage() {

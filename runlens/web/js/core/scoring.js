@@ -5,7 +5,8 @@
    works the scores out again from each run's num/den, exactly as bench.py does: the same measures, the
    same shrinkage, the same clip, and the same session bootstrap of the difference with the expanded
    percentile interval. Only the random draws differ (a seeded generator here), so a recomputed interval
-   can move by a point or two against the model's.
+   can move against the model's by several points when a side has only five or six runs (Monte Carlo error
+   at the ends of the interval); the model uses more resamples than this page may.
 
    URL keys (kept across pages):
      base=self|prev|first|ver:v2   what 100 means: the skill's typical run (default), the version before,
@@ -110,12 +111,17 @@ function estimates(sums, base, pseudo, shrink) {
   }
   return out;
 }
-function composite(ref, val, base, weights) {
+// `expect` names the measures the full sample could score: in a resample one with no data counts as no change
+// (l = 0) instead of dropping out, so the weights are not renormalised from draw to draw. Mirrors bench.composite.
+function composite(ref, val, base, weights, expect) {
   let acc = 0, wsum = 0;
   const parts = {};
   for (const [k, w] of Object.entries(weights)) {
     const l = ell(metricByKey.get(k), ref[k], val[k], base[k]);
-    if (l === null || l === undefined) continue;
+    if (l === null || l === undefined) {
+      if (expect && expect.has(k) && w > 0) wsum += w;
+      continue;
+    }
     parts[k] = l;
     if (w > 0) {
       acc += w * l;
@@ -181,7 +187,28 @@ function quantile(sorted, q) {
   const i = q * (sorted.length - 1), lo = Math.floor(i);
   return sorted[lo] + (sorted[Math.min(lo + 1, sorted.length - 1)] - sorted[lo]) * (i - lo);
 }
-const RESAMPLES = () => DATA.method.resamples || 2000;
+// At most 10000 here: the model's own count is used when smaller, and a page cannot afford more.
+const RESAMPLES = () => Math.min(DATA.method.resamples || 2000, 10000);
+
+// Two-sided p of "no change" from the sorted draws of a difference: the confidence level at which the expanded
+// interval would first touch 0. Mirrors bench.p_value.
+function pValue(draws, n) {
+  const m = draws.length;
+  if (m < 20) return null;
+  let below = 0;
+  while (below < m && draws[below] <= 0) below += 1;
+  let atOrAbove = 0;
+  while (atOrAbove < m && draws[m - 1 - atOrAbove] >= 0) atOrAbove += 1;
+  const q = (Math.min(below, atOrAbove) + 1) / (m + 1);
+  if (q >= tailOf(0, n)) return 1;
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 40; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (tailOf(1 - mid, n) < q) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
 
 // Per-run (num, den) vectors of some rows, so a resample is a few sums.
 function arm(rows, keys) {
@@ -218,13 +245,14 @@ function compareRows(rowsA, rowsB, base, pseudo, weights, seed, conf, interval) 
   const a = arm(rowsA, keys), b = arm(rowsB, keys);
   const rawA = estimates(a.sums(), base, pseudo, false), rawB = estimates(b.sums(), base, pseudo, false);
   const { d, parts } = composite(rawA, rawB, base, weights);
-  const out = { d, ci: null, measures: {}, outcome: null };
+  const out = { d, ci: null, p: null, measures: {}, outcome: null };
   const draws = [], mdraws = {}, odraws = [];
+  const expect = new Set(Object.keys(parts));
   if (interval && a.n && b.n && d !== null) {
     const next = rng(seedOf(seed));
     for (let i = 0; i < RESAMPLES(); i += 1) {
       const ea = estimates(a.draw(next), base, pseudo, false), eb = estimates(b.draw(next), base, pseudo, false);
-      const c = composite(ea, eb, base, weights);
+      const c = composite(ea, eb, base, weights, expect);
       if (c.d !== null) draws.push(c.d);
       for (const [k, v] of Object.entries(c.parts)) (mdraws[k] = mdraws[k] || []).push(v);
       if (ea.outcome !== undefined && eb.outcome !== undefined) odraws.push(eb.outcome - ea.outcome);
@@ -233,6 +261,7 @@ function compareRows(rowsA, rowsB, base, pseudo, weights, seed, conf, interval) 
   const lo = tailOf(conf, Math.min(rowsA.length, rowsB.length)), hi = 1 - lo;
   const ci = (xs) => (xs.length >= 20 ? (xs.sort((p, q) => p - q), [quantile(xs, lo), quantile(xs, hi)]) : null);
   out.ci = ci(draws);
+  if (out.ci) out.p = pValue(draws, Math.min(rowsA.length, rowsB.length));
   for (const k of keys) {
     if (!(k in parts)) continue;
     const m = metricByKey.get(k);
@@ -245,8 +274,10 @@ function compareRows(rowsA, rowsB, base, pseudo, weights, seed, conf, interval) 
   return out;
 }
 
-function verdictOf(ci, nA, nB, confounders) {
-  if (nA < MIN_RUNS || nB < MIN_RUNS || !ci) return ["not enough runs", null];
+function verdictOf(ci, nA, nB, confounders, scored) {
+  if (nA < MIN_RUNS || nB < MIN_RUNS) return ["not enough runs", null];
+  if (scored === false) return ["not scored", null]; // runs enough, but no measure with a weight above 0 to compare
+  if (!ci) return ["not enough runs", null];
   const direction = ci[0] > 0 ? "better" : ci[1] < 0 ? "worse" : "no clear change";
   return [confounders && confounders.length ? "confounded" : direction, direction];
 }
@@ -262,8 +293,9 @@ function versionScore(rows, ref, base, pseudo, weights, seed, conf) {
   if (d !== null && rows.length >= MIN_RUNS) {
     const next = rng(seedOf(seed));
     const draws = [];
+    const expect = new Set(Object.keys(parts));
     for (let i = 0; i < RESAMPLES(); i += 1) {
-      const c = composite(ref, estimates(a.draw(next), base, pseudo, true), base, weights);
+      const c = composite(ref, estimates(a.draw(next), base, pseudo, true), base, weights, expect);
       if (c.d !== null) draws.push(c.d);
     }
     draws.sort((p, q) => p - q);
@@ -359,10 +391,10 @@ function recompute(u) {
     const res = compareRows(ra, rb, baseline, pseudo, weights, `${u.id}|${A.key}|${B.key}`, S.ci, enough);
     const mp = modelPairs.find((p) => p.a === A.label && p.b === B.label);
     const confounders = mp ? mp.confounders || [] : [];
-    let [verdict, direction] = verdictOf(res.ci, ra.length, rb.length, confounders);
+    let [verdict, direction] = verdictOf(res.ci, ra.length, rb.length, confounders, res.d !== null);
     // A pair the model never compared (filtered runs can make new ones) has no confounder check: no direction is claimed.
     if (!mp && (verdict === "better" || verdict === "worse")) verdict = "no clear change";
-    return { a: A.label, b: B.label, vs_previous: j === i + 1, runs_a: ra.length, runs_b: rb.length, verdict, direction, confounders,
+    return { a: A.label, b: B.label, vs_previous: j === i + 1, runs_a: ra.length, runs_b: rb.length, verdict, direction, confounders, p: res.p,
       notes: mp ? mp.notes || [] : [], difference: { score: res.d === null ? null : 100 * Math.exp(res.d), ci: res.ci ? res.ci.map((x) => 100 * Math.exp(x)) : null,
         measures: res.measures, outcome: res.outcome } };
   });

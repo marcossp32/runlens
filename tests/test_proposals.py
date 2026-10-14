@@ -71,6 +71,12 @@ class Proposals(unittest.TestCase):
         self.assertEqual((got["cheaper"]["runs_before"], got["cheaper"]["runs_after"]), (6, 6))
         self.assertGreater(got["cheaper"]["difference"]["effect"], 1)
 
+    def test_no_clear_change_is_inconclusive_not_refuted(self):
+        same = model_of(lambda v: 1.0)
+        proposals.add(self.con, same, "flow", "cheaper", "cost", "lower", base_version="aaa", now=BEFORE_EDIT)
+        r = proposals.verify(self.con, same)[0]
+        self.assertEqual((r["verdict"], r["observed"]), ("inconclusive", "no clear change"))
+
     def test_a_proposal_made_after_the_new_version_appeared_waits_for_a_newer_one(self):
         cheaper = model_of(lambda v: 1.0 if v == 0 else 0.3)
         proposals.add(self.con, cheaper, "flow", "late", "cost", "lower", base_version="aaa", now=T0 + timedelta(days=30))
