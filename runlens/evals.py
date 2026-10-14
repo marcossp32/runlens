@@ -42,6 +42,7 @@ from pathlib import Path
 
 from . import classify, config, store
 from .incidents import TYPES
+from .privacy import redactor
 
 PLUGIN = "runlens-evals"
 SKIP = {"interrupt", "compaction", "api_error"}
@@ -236,7 +237,8 @@ def checks(cfg, inc, call):
     g, a = [], []
     t, tool = inc["type"], (call or {}).get("tool")
     what = (call or {}).get("summary") or inc.get("key") or ""
-    if t == "repeated_call" and tool:
+    # tool_used with max but no input_match would count every use of the tool, not the repeated or blocked call
+    if t == "repeated_call" and tool and input_match(call):
         most = max(1, an.get("repeat_min", 3) - 1)
         g.append({"name": "no-repeated-call", "type": "tool_used", "tool": tool, "input_match": input_match(call),
                   "min": 0, "max": most, "arm": "both"})
@@ -247,7 +249,7 @@ def checks(cfg, inc, call):
         g.append({"name": "no-polling", "type": "tool_used", "tool": tool, "input_match": r"\b(?:sleep|Start-Sleep|timeout)\s+-?\w*\s*\d",
                   "min": 0, "max": most, "arm": "both"})
         a.append(f"Does not poll with sleep/wait commands more than {most} times; waits for notifications instead.")
-    elif t == "permission_denied" and tool:
+    elif t == "permission_denied" and tool and input_match(call):
         g.append({"name": "no-blocked-call", "type": "tool_used", "tool": tool, "input_match": input_match(call),
                   "min": 0, "max": 0, "arm": "both"})
         a.append(f"Does not attempt the {tool} call the user's permission rules blocked: {what[:120]}.")
@@ -275,7 +277,7 @@ def checks(cfg, inc, call):
                   "FAIL if a subagent ends failed, killed or with an error, or Claude reports the task as incomplete.\n"
                   "PASS if every subagent finishes and the task is reported done."})
         a.append("Every subagent it starts finishes without failing, and the task is reported done.")
-    if inc.get("skill"):
+    if g and inc.get("skill"):  # skill-fired alone would not check the failure
         g.append({"name": "skill-fired", "type": "tool_used", "tool": "Skill",
                   "input_match": rf'"skill"\s*:\s*"(?:[\w-]+:)?{js_escape(inc["skill"])}"'})
     return g, a
@@ -283,7 +285,18 @@ def checks(cfg, inc, call):
 
 # ---------------------------------------------------------------- writing the files
 
-def history(inc, out):
+def redacted(value, fn):
+    """`value` (parsed JSON) with `fn` applied to every string in it."""
+    if isinstance(value, str):
+        return fn(value)
+    if isinstance(value, list):
+        return [redacted(v, fn) for v in value]
+    if isinstance(value, dict):
+        return {k: redacted(v, fn) for k, v in value.items()}
+    return value
+
+
+def history(inc, out, fn=None):
     """Copy the main transcript up to (not including) the message that made the failing call. Main session only:
     a subagent transcript is a sidechain and does not resume as a session."""
     if inc.get("agent_id") != "main" or not inc.get("anchor"):
@@ -300,6 +313,8 @@ def history(inc, out):
             break
     if not cut:
         return False
+    if fn:
+        recs = [redacted(r, fn) for r in recs[:cut]]
     out.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in recs[:cut] if r) + "\n", encoding="utf-8")
     return True
 
@@ -308,12 +323,17 @@ def write_case(con, cfg, inc, root, use_history):
     skill = classify.active_skill(con, inc)
     call = anchor_call(con, inc)
     graders, assertions = checks(cfg, inc, call)
+    if not assertions:
+        return None
     case = f"{slug(inc['type'])}-{inc['incident_id']}"
     d = root / "evals" / case
     (d / "graders").mkdir(parents=True, exist_ok=True)
-    resumed = use_history and history(inc, d / "history.jsonl")
+    mask = redactor(cfg)  # the archive is verbatim; with `redact = true` what is exported is masked like the database
+    resumed = use_history and history(inc, d / "history.jsonl", mask)
     prompt, source = ("Continue.", "the main transcript up to the failing step (history.jsonl)") if resumed \
         else task_prompt(con, inc, skill, namespaced=True)
+    if mask:
+        prompt = mask(prompt)
     tools = sorted(set(agent_tools(con, inc)) & (READ_ONLY | GRANTABLE) | {"Read", "Glob", "Grep"} | ({"Skill"} if skill else set()))
     expected = f"Completes the task without the failure seen in run {inc['session_id'][:8]}: {TYPES.get(inc['type'], inc['type'])} ({(inc.get('key') or '')[:160]})."
     (d / "prompt.md").write_text(frontmatter({
@@ -372,7 +392,7 @@ def write_skill_creator(cases, root):
         (d / "files").mkdir(parents=True, exist_ok=True)
         evals = []
         for n, c in enumerate(cs, 1):
-            evals.append({"id": n, "name": c["case"], "prompt": c["prompt_plain"], "expected_output": c["expected"],
+            evals.append({"id": n, "prompt": c["prompt_plain"], "expected_output": c["expected"],
                           "files": [], "assertions": c["assertions"], "expectations": c["assertions"]})
             (d / "files" / f"{c['case']}.context.md").write_text(context_note(c["incident"], c["skill"], c["source_plain"], c["steps"]),
                                                                  encoding="utf-8")
@@ -390,7 +410,7 @@ def readme(out, cases, fmt, copied, missing, skipped, sc_skills):
         lines += ["## claude plugin eval", "", "```", f"claude plugin eval \"{plugin.as_posix()}\""
                   + (f" --allow-tools {' '.join(grants)}" if grants else "") + " --runs 3", "```", "",
                   "- Granting Bash or PowerShell needs Claude Code's sandbox: on native Windows run under WSL2.",
-                  "- Cases with history.jsonl run one arm by default; add `--ablation with-without` for a baseline.",
+                  "- Cases with history.jsonl run one arm by default when the target is a path (as above); add `--ablation with-without` for a baseline.",
                   "- To compare the failing version with an edit, run the suite once per version of skills/<skill>/.",
                   f"- Skills copied into the plugin: {', '.join(copied) or 'none'}."]
         if missing:
@@ -402,7 +422,7 @@ def readme(out, cases, fmt, copied, missing, skipped, sc_skills):
     lines += ["## What these cases can and cannot tell you", "",
               "- The prompt is the real task: a subagent's spawn prompt, the skill's recorded arguments, or the run's first human prompt.",
               "- The repository is not reconstructed: every run starts in an empty directory. A task that needs your code needs a "
-              "`context.scaffold_script` (plugin eval) or input `files` (skill-creator) that you add.",
+              "`context.scaffold_script` (plugin eval, which runs only when you pass `--scaffold`) or input `files` (skill-creator) that you add.",
               "- Other skills, agents, hooks, MCP servers, your CLAUDE.md and permission rules are not loaded, and human replies "
               "mid-run are not replayed.",
               "- The skill under test is the version on disk now, not necessarily the one that failed (context.md has its hash).",
@@ -427,10 +447,16 @@ def export(cfg, ids=None, skills=None, labels=None, types=None, fmt="both", out=
     cases = []
     for inc in chosen:
         c = write_case(con, cfg, inc, plugin, use_history)
+        if c is None:  # no grader could check this failure (e.g. the failing call is not in the store)
+            skipped.append(f"{inc['incident_id']} ({inc['type']})")
+            continue
         c["prompt_plain"], c["source_plain"] = task_prompt(con, inc, c["skill"], namespaced=False)
         c["steps"] = classify.timeline(con, inc, 12, 4)
         cases.append(c)
     con.close()
+    if not cases:
+        print(f"no case has a checkable assertion; skipped {', '.join(skipped)}")
+        return None
     copied, missing = [], []
     if fmt in ("plugin-eval", "both"):
         (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)

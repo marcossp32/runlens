@@ -7,6 +7,9 @@
 // The confidence level in force: the score settings' (core/scoring.js), else the model's.
 const pctOf = () => Math.round((S.ci || DATA.method.confidence || 0.95) * 100);
 
+// Said of a unit listed among many: its q (Benjamini-Hochberg over every unit compared, from the model) is not clear.
+const notAdjusted = (x) => (x && x.adjusted === false ? ` Listed with many other skills, though, it is not clear once adjusted for that (q = ${Number(x.q).toFixed(2)}).` : "");
+
 // A verdict in words. `x` is a unit, a version or a pair from the model; without one (an old model), the
 // interval is read against 100.
 function verdict(score, ci, x) {
@@ -17,11 +20,13 @@ function verdict(score, ci, x) {
     const vs = x.vs || "the version before";
     switch (x.verdict) {
       case "better":
-        return { tone: "better", word: `Better than ${vs}`, sentence: `Better than ${vs}: the whole ${pctOf()}% interval of the difference is on the better side.` };
+        return { tone: "better", word: `Better than ${vs}`, sentence: `Better than ${vs}: the whole ${pctOf()}% interval of the difference is on the better side.${notAdjusted(x)}` };
       case "worse":
-        return { tone: "worse", word: `Worse than ${vs}`, sentence: `Worse than ${vs}: the whole ${pctOf()}% interval of the difference is on the worse side.` };
+        return { tone: "worse", word: `Worse than ${vs}`, sentence: `Worse than ${vs}: the whole ${pctOf()}% interval of the difference is on the worse side.${notAdjusted(x)}` };
       case "no clear change":
-        return { tone: "unclear", word: `No clear change from ${vs}`, sentence: `No clear change from ${vs}: the ${pctOf()}% interval of the difference includes no change.` };
+        return { tone: "unclear", word: `No clear change from ${vs}`, sentence: `No clear change from ${vs}: the ${pctOf()}% interval of the difference includes no change. That is not evidence that the versions are alike; with few runs a real improvement often looks like this.` };
+      case "not scored":
+        return { tone: "few", word: "Not scored", sentence: `Not scored against ${vs}: there are enough runs, but no measure with a weight above 0 could be compared.` };
       case "not enough runs":
         return { tone: "few", word: "Not enough runs", sentence: `Not enough runs to compare with ${vs}: a verdict needs ${MIN_RUNS} runs on each side.` };
       case "confounded":
@@ -33,19 +38,29 @@ function verdict(score, ci, x) {
     }
   }
   // No verdict object: describe where the score sits against the typical run (100). This is a description
-  // of one set of runs, not a verdict; verdicts only come from comparing two versions.
+  // of one set of runs, not a verdict; verdicts only come from comparing two versions. The typical run pools
+  // the version's own runs and is treated as fixed, so these are neutral: no better/worse tone.
   if (score == null) return { tone: "few", word: "No score yet", sentence: "There are not enough runs to score this yet." };
   if (!ci) return { tone: "few", word: "Too few runs for a range", sentence: "Too few runs for a range." };
-  if (ci[0] > 100) return { tone: "better", word: "Above its typical run", sentence: `Above its typical run: even the low end of its range (${fmt.score(ci[0])}) is above 100.` };
-  if (ci[1] < 100) return { tone: "worse", word: "Below its typical run", sentence: `Below its typical run: even the high end of its range (${fmt.score(ci[1])}) is below 100.` };
-  return { tone: "unclear", word: "About its typical run", sentence: `About its typical run: its range (${fmt.interval(ci)}) includes 100.` };
+  const note = " This describes the runs; it is not a test, since the typical run includes them.";
+  if (ci[0] > 100) return { tone: "unclear", word: "Above its typical run", sentence: `Above its typical run: even the low end of its range (${fmt.score(ci[0])}) is above 100.${note}` };
+  if (ci[1] < 100) return { tone: "unclear", word: "Below its typical run", sentence: `Below its typical run: even the high end of its range (${fmt.score(ci[1])}) is below 100.${note}` };
+  return { tone: "unclear", word: "About its typical run", sentence: `About its typical run: its range (${fmt.interval(ci)}) includes 100.${note}` };
 }
+
+// The outcome definition a unit's outcome summary was measured with (DATA.method.outcomes), by name. Its words
+// come from its kind: a PR opened is not a check passing first time.
+const outcomeDef = (summary) => (DATA.method.outcomes || []).find((o) => summary && o.name === summary.measure) || null;
+const outcomeWords = (o) => (o && o.kind === "pr"
+  ? { rate: "PR-opened rate", verb: "opened a PR", sub: "runs that opened a PR" }
+  : o ? { rate: "First-pass rate", verb: "passed first time", sub: `${human(o.marker)} passing on the first try` }
+    : { rate: "Outcome rate", verb: "reached their outcome", sub: "each skill's own configured outcome" });
 
 // The change of a version against the one before it, as the model judged it.
 function change(v) {
   if (v.verdict !== undefined) {
     if (!v.vs) return { tone: "first", text: "" };
-    const tone = { better: "better", worse: "worse", "no clear change": "unclear", "not enough runs": "few", confounded: "confounded" }[v.verdict] || "unclear";
+    const tone = { better: "better", worse: "worse", "no clear change": "unclear", "not enough runs": "few", "not scored": "few", confounded: "confounded" }[v.verdict] || "unclear";
     return { tone, text: v.verdict };
   }
   if (v.delta == null) return { tone: "first", text: "" };
@@ -159,6 +174,7 @@ function ell(m, ref, val, base) {
     const f = DATA.method.floor * base;
     x = Math.log((ref + f) / (val + f));
   }
+  if (Number.isNaN(x)) return null;
   return Math.min(LOG_CAP, Math.max(-LOG_CAP, x));
 }
 

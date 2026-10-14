@@ -39,7 +39,7 @@ def metrics(ratio, n):
 def run(day, version, cost, session=None, task=EVIL):
     """A run row as bench.run_row writes it: the display fields and every measure's num and den."""
     return {"started": f"2026-10-0{day}T10:00:00+02:00", "session": session or f"s{day}{version}aaaa"[:8], "task": task, "version": version,
-            "repo": "r", "inv": 2, "invocations": 2, "cost": cost, "seconds": 600.0, "lc": 2 * (cost / 2 + 0.01), "ls": 2 * 6.0,
+            "repo": "r", "inv": 2, "inv_cost": 2, "invocations": 2, "cost": cost, "seconds": 600.0, "lc": 2 * (cost / 2 + 0.01), "ls": 2 * 6.0,
             "calls": 10, "call_errors": 1, "idle": 0, "turns": 5, "api_errors": 0, "incidents": 1, "interventions": 0, "bad": 0, "lines": 12}
 
 
@@ -127,10 +127,41 @@ def model():
         "window": {"first": "2026-10-01T10:00:00+02:00", "last": "2026-10-06T10:00:00+02:00", "runs": 6, "excluded": {"open": 0}},
         "population": {"runs": 6, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"},
         "method": {"metrics": METRICS, "shrink": 2, "max_ratio": 2.0, "floor": 0.5, "turn_cap": 600, "resamples": 500, "min_runs": 5,
-                   "confidence": 0.95, "mix_shift": 0.3, "cc_version": "minor", "outcomes": [], "verdicts": list(bench.VERDICTS)},
+                   "confidence": 0.95, "mix_shift": 0.3, "cc_version": "patch", "outcomes": [], "verdicts": list(bench.VERDICTS)},
         "units": units, "versions": versions, "pairs": pairs, "runs": runs,
         "explore": ex, "views": [{"name": EVIL, "hash": "#/runs"}],
     }
+
+
+def visible(dom):
+    """The text a reader sees: the DOM without its scripts, styles and tags."""
+    return re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style)\b.*?</\1>", " ", dom)).replace("&nbsp;", " ")
+
+
+def wording_model():
+    """The model with a PR outcome on one skill, a check outcome on another, and a confounded group whose range starts at 100.2."""
+    m = copy.deepcopy(model())
+    out = next(x for x in bench.MEASURES if x["key"] == "outcome")
+    m["method"]["metrics"] = [{**{k: v for k, v in out.items() if k != "kinds"}, "kinds": list(out["kinds"])}] + m["method"]["metrics"]
+    m["method"]["outcomes"] = [{"name": "PR opened", "kind": "pr", "marker": None, "skills": ["flow"], "success": [], "failure": []},
+                               {"name": "step_check first-pass rate", "kind": "marker", "marker": "step_check", "skills": ["once_only"], "success": ["PASS"], "failure": []}]
+    flow, once = m["units"][0], m["units"][1]
+    for u, name, rate in ((flow, "PR opened", 0.6), (once, "step_check first-pass rate", 0.8)):
+        u["outcome"] = {"measure": name, "value": rate, "n": 4}
+        u["kpi"]["outcome"] = rate
+        u["baseline"]["outcome"], u["pseudo"]["outcome"], u["weights"]["outcome"] = 0.9, 2.0, 3.0
+    for r in m["runs"]["skill:flow"] + m["runs"]["skill:once_only"]:
+        r.update(on=1, os=1, oe=1)
+    # the latest flow version did far worse than usual on the rate: its ratio sits at the cap (2.0)
+    m["versions"]["skill:flow"][-1]["metrics"]["outcome"] = {"value": 0.6, "counted": 0.6, "n": 6, "ref": 0.9, "ratio": 2.0, "weight": 3}
+    group = unit("group:release-flow", "group", "release-flow", 6, 130.0, [100.2, 174.0], "g1", weights=False)
+    group.update(members=["skill:flow"], verdict="confounded", direction="better", vs="g0", confounders=["Claude Code 2.1 → 2.2"], delta=30.0)
+    m["units"].append(group)
+    g1 = version("g1", "g1", 4, 6, 130.0, [100.2, 174.0], 6, uid="group:release-flow")
+    g1.update(verdict="confounded", direction="better", vs="g0", confounders=["Claude Code 2.1 → 2.2"], delta=30.0)
+    m["versions"]["group:release-flow"] = [version("g0", "g0", 1, 3, 100.0, [90.0, 110.0], 6, uid="group:release-flow"), g1]
+    m["runs"]["group:release-flow"] = [run(d, "g0" if d <= 3 else "g1", 1.0, session=f"g{d}aaaaaa") for d in range(1, 7)]
+    return m
 
 
 def empty_model():
@@ -155,10 +186,15 @@ def find_browser():
 
 def dump(path, route, budget=5000):
     """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile."""
-    prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
-    cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-           f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+    for attempt in range(2):  # headless Chrome now and then hangs on a CI runner (seen on macOS): one retry
+        prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
+        cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
+               f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+        except subprocess.TimeoutExpired:
+            if attempt:
+                raise
 
 
 class Assembly(unittest.TestCase):
@@ -284,6 +320,53 @@ class Renders(unittest.TestCase):
         self.assertTrue(re.findall(r'<svg[^>]*class="[^"]*\bchart\b[^"]*"[^>]*>', dom), "no chart was drawn")
         self.assertIsNone(re.search(r'<svg[^>]*viewBox="0 0 640 ', dom), "a chart still uses the old fixed 640-wide viewBox")
 
+    def test_text_does_not_rank_skills_or_mislabel_outcomes(self):
+        path = TMP / "wording.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost")
+        text = visible(dom)
+        self.assertNotIn("On the Pareto frontier", text)
+        self.assertNotIn("nothing is both cheaper and better", text)
+        # two outcome definitions: one chart each, never one axis mixing a PR opened with a check passing
+        self.assertIn("PR-opened rate against cost per invocation (PR opened)", text)
+        self.assertIn("First-pass rate against cost per invocation (step_check first-pass rate)", text)
+        dom = dump(path, "#/?tab=outcome")
+        text = visible(dom)
+        self.assertNotIn("most often", text)
+        self.assertNotIn("passes first time", text)
+        dom = dump(path, "#/unit/skill%3Aflow?tab=outcome")
+        text = visible(dom)
+        self.assertIn("opened a PR over", text)
+        self.assertNotIn("passed first time", text)
+        self.assertNotIn("first-pass rate", text.lower())
+
+    def test_diagnostics_does_not_name_a_worst_skill_or_deny_error_streaks(self):
+        path = TMP / "diag.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics"))
+        self.assertNotIn("hits the most", text)
+        self.assertNotIn("without a tool failing", text)
+
+    def test_measures_heatmap_is_alphabetical_and_ratios_are_not_percentages(self):
+        path = TMP / "heat.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=measures")
+        rows = re.findall(r'class="rowlabel"[^>]*>([^<]+)<', dom)
+        self.assertEqual(rows, sorted(rows, key=str.lower), "rows are not ordered by score")
+        text = visible(dom)
+        self.assertRegex(text, r"60 ?% vs 90 ?%")  # a rate shows its value against the reference
+        self.assertNotRegex(text, r"[+−]\d+%")  # no signed percentage of a ratio
+        self.assertIn("×", text)
+
+    def test_confounded_version_is_not_called_clearly_above(self):
+        path = TMP / "conf.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        for route in ("#/?kind=groups", "#/"):
+            text = visible(dump(path, route))
+            self.assertNotRegex(text, r"release-flow is clearly above", route)
+        text = visible(dump(path, "#/?kind=groups"))
+        self.assertIn("1 confounded", text)
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")
@@ -404,6 +487,30 @@ class Recompute(unittest.TestCase):
         v = self.model["versions"]["skill:review-pr"][-1]
         self.assertAlmostEqual(cost_only, 100 * v["metrics"]["cost"]["ratio"], places=1)  # with cost alone, the score is its ratio
         self.assertNotAlmostEqual(cost_only, u["score"], places=1)
+
+    def test_a_version_against_itself_scores_100_under_a_custom_baseline(self):
+        # base=ver:<label> reads the page's own current version against itself; both sides must be counted the same way.
+        for name in ("review-pr", "write-tests"):
+            u = next(x for x in self.model["units"] if x["id"] == f"skill:{name}")
+            label = next(v["label"] for v in self.model["versions"][u["id"]] if v["key"] == u["current"] or v["label"] == u["current"])
+            score, _ = self.score_at(f"#/unit/skill%3A{name}?base=ver:{label}")
+            self.assertAlmostEqual(score, 100.0, places=1, msg=name)
+
+    def test_runs_kpis_match_sql(self):
+        # The visible Runs KPIs against the database itself, including pull requests (a run keeps only 5 links).
+        code = ("import json; from runlens import store; con = store.connect(read_only=True); "
+                "print(json.dumps(con.execute(\"SELECT count(*), coalesce(sum(len(pr_urls)), 0), coalesce(sum(cost_usd), 0) FROM runs "
+                "WHERE status = 'complete' AND NOT coalesce(is_stub, false)\").fetchone()))")
+        env = {**os.environ, "RUNLENS_HOME": str(TMP / "demo-home"), "PYTHONIOENCODING": "utf-8"}
+        out = subprocess.run([sys.executable, "-c", code], check=True, env=env, cwd=ROOT, capture_output=True, text=True).stdout
+        runs, prs, spend = json.loads(out)
+        dom = dump(self.path, "#/runs")
+        big = re.finditer(r'<div class="kl">([^<]+)</div><div class="kv">(.*?)</div>', dom)  # the first four figures
+        small = re.finditer(r"<dt>([^<]+)</dt><dd><strong>(.*?)</strong>", dom)  # the rest, on one line
+        kpis = {m.group(1): re.sub(r"<[^>]+>", "", m.group(2)) for m in [*big, *small]}
+        self.assertEqual(int(kpis["Runs"].replace(",", "")), runs)
+        self.assertEqual(int(kpis["Pull requests"].replace(",", "")), prs)
+        self.assertEqual(re.sub(r"\D", "", kpis["Spend"]), f"{round(spend * 100)}")  # digits only: the separators follow the browser's locale
 
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")

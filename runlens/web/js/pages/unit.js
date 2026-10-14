@@ -26,9 +26,9 @@ function profileTable(periods) {
         h("span", { class: "sub" }, p.tag || h("span", {}, p.ci ? `likely ${fmt.interval(p.ci)} · ` : "", toneTag(v.tone, v.word)))];
     }],
     ["Cost per invocation", "typical model spend", (p) => fmt.usd(p.k.cost)],
-    ["Time per invocation", "typical working time", (p) => fmt.secs(p.k.seconds)],
+    ["Agent time per invocation", "typical agent time", (p) => fmt.secs(p.k.seconds)],
     ["Tool errors", "of its tool calls", (p) => fmt.pct(p.k.error_rate)],
-    ["Problems", "per 100 tool calls", (p) => fmt.num(p.k.incidents, 2)],
+    ["Scored problems", "per 100 tool calls", (p) => fmt.num(p.k.incidents, 2)],
   ];
   return h("section", { class: "profile", "aria-label": "Profile" },
     h("div", { class: "tw", tabindex: "0", role: "region", "aria-label": "Profile: the unit's numbers by period" },
@@ -90,17 +90,17 @@ function unitPage(id) {
       { id: "versions", label: "Versions", build: () => versionsPanel(u, versions) },
       { id: "drivers", label: "What drives the score", build: () => driversPanel(u, versions) },
       { id: "runs", label: "Runs", build: () => runsPanel(u, runs, versions) },
-      base.outcome ? { id: "outcome", label: "Outcome", build: () => h("div", { class: "charts" }, rateFacets({
+      base.outcome ? { id: "outcome", label: "Outcome", build: () => h("div", { class: "charts" }, ((ow) => rateFacets({
         title: `${base.outcome.measure ? human(base.outcome.measure) : "Outcome"} over time`, question: "Does it reach its outcome more often than before?",
         takeaway: () => {
           const on = runs.filter((r) => r.on);
           const n = sumOf(on, (r) => r.on), k = sumOf(on, (r) => r.os || 0);
-          return n ? `${fmt.pct(k / n, 0)} passed first time over ${plural(n, "attempt")}.` : null;
+          return n ? `${fmt.pct(k / n, 0)} ${ow.verb} over ${plural(n, "attempt")}.` : null;
         },
-        sub: "weekly first-pass rate · dotted lines: new versions",
+        sub: `${ow.sub} · weekly · dotted lines: new versions`,
         facets: [{ label: u.name, points: runs.filter((r) => r.on).map((r) => ({ t: timeOf(r.started), k: r.os || 0, n: r.on })),
           vlines: versions.slice(1).filter((x) => x.first_seen).map((x) => ({ t: timeOf(x.first_seen), label: x.label, kind: "skill" })) }],
-        rateTitle: "First-pass rate", notes: `Dot size is the week's attempts, hollow under ${MIN_RUNS}; the band is the ${Math.round(S.ci * 100)}% Wilson interval.` })) } : null,
+        rateTitle: ow.rate, notes: `Dot size is the week's attempts, hollow under ${MIN_RUNS}; the band is the ${Math.round(S.ci * 100)}% Wilson interval.` }))(outcomeWords(outcomeDef(base.outcome)))) } : null,
     ], { param: "tab" }));
 }
 

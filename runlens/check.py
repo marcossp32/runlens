@@ -72,8 +72,8 @@ def run_problems(con, sid, main):
                (SELECT count(*) FROM api_calls WHERE session_id = $1),
                (SELECT count(*) FROM tool_calls WHERE session_id = $1),
                (SELECT count(*) FROM tool_calls WHERE session_id = $1 AND ts_result IS NOT NULL)""", [sid]).fetchone()))
-    cost, est, allocated, orphans, unpriced, models = con.execute("""
-        SELECT r.cost_usd, r.cost_estimated, (SELECT sum(cost_usd) FROM api_calls WHERE session_id = $1),
+    cost, est, uncovered, allocated, orphans, unpriced, models = con.execute("""
+        SELECT r.cost_usd, r.cost_estimated, r.cost_uncovered_usd, (SELECT sum(cost_usd) FROM api_calls WHERE session_id = $1),
                (SELECT count(*) FROM agents WHERE session_id = $1 AND agent_id <> 'main' AND parent_agent_id IS NULL),
                (SELECT count(*) FROM api_calls WHERE session_id = $1 AND cost_usd IS NULL),
                r.unpriced_models
@@ -90,6 +90,8 @@ def run_problems(con, sid, main):
     seen, total = con.execute("""SELECT (SELECT sum(output_tokens) FROM api_calls WHERE session_id = $1),
                                         (SELECT sum(output_tokens) FROM model_usage WHERE session_id = $1)""", [sid]).fetchone()
     notes = [f"agents={db['agents']} api={db['api_calls']} tools={db['tool_calls']} cost={cost or 0:.2f}{' (est)' if est else ''}"]
+    if uncovered:
+        notes.append(f"cost-state covers only part of the run (a resumed session): {uncovered:.2f} USD before its start is estimated at list price")
     if total:
         notes.append(f"output tokens {100 * (seen or 0) / total:.0f}% of cost-state")
     return problems, notes
@@ -112,6 +114,11 @@ def gaps(con, cfg, sessions=None, sources=True):
     if missing:
         n += 1
         print(f"FAIL  evidence  {missing} evidence file(s) listed in a manifest have no blob in {config.BLOBS}")
+    orphans = orphan_labels(con)
+    if orphans:
+        n += 1
+        print(f"WARN  labels  {orphans} label(s) match no incident (incident ids changed, or their run was deleted): "
+              "they are ignored until the incident is labelled again")
     if not sources or not fs_path(config.PROJECTS).is_dir():
         return n
     for sid, _project, reason in stale_runs():
@@ -125,6 +132,13 @@ def gaps(con, cfg, sessions=None, sources=True):
             n += 1
             print(f"WARN  {main.stem[:8]}  selected by [select] but never archived ({(info['started'] or '')[:10]}): run `runlens refresh`")
     return n
+
+
+def orphan_labels(con):
+    """Labels whose incident no longer exists. Returns how many distinct incident ids they name."""
+    if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'labels'").fetchone()[0]:
+        return 0
+    return con.execute("SELECT count(DISTINCT incident_id) FROM labels WHERE incident_id NOT IN (SELECT incident_id FROM incidents)").fetchone()[0]
 
 
 def evidence_check():

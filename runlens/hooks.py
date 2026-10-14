@@ -21,8 +21,8 @@ from pathlib import Path
 from . import config
 from .fs import write_atomic
 
-SETTINGS = Path(os.environ.get("CLAUDE_SETTINGS", Path.home() / ".claude" / "settings.json"))
-SKILLS = Path.home() / ".claude" / "skills"
+SETTINGS = Path(os.environ.get("CLAUDE_SETTINGS", config.CLAUDE_DIR / "settings.json"))
+SKILLS = config.CLAUDE_DIR / "skills"
 HOOK_ARGS = ["-m", "runlens", "hook"]
 LOG_MAX = 1_000_000  # bytes; hooks.log is rotated to hooks.log.1 beyond this
 
@@ -62,6 +62,15 @@ def pending():
     return sorted(p for p in config.PENDING.iterdir() if p.is_file() and not p.name.startswith("."))
 
 
+def queued_transcript(sid):
+    """The transcript_path the hook was given for a queued session, if it is a plain string."""
+    try:
+        path = json.loads((config.PENDING / sid).read_text(encoding="utf-8")).get("transcript_path")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return path if isinstance(path, str) and path else None
+
+
 def handle(cfg, payload):
     """The hook itself: queue the session and start a detached drain. Returns at once."""
     if os.environ.get("RUNLENS_JUDGE"):
@@ -74,7 +83,7 @@ def handle(cfg, payload):
         if not sid.replace("-", "").isalnum():
             return 0
         log(f"queued {sid} ({data.get('reason')})")
-        enqueue(sid, {"session_id": sid, "reason": data.get("reason"), "queued_at": datetime.now().astimezone().isoformat()})
+        enqueue(sid, {"session_id": sid, "reason": data.get("reason"), "transcript_path": data.get("transcript_path"), "queued_at": datetime.now().astimezone().isoformat()})
         if os.environ.get("RUNLENS_HOOK_INLINE"):
             drain(cfg)
         else:
@@ -142,12 +151,13 @@ class DrainLock:
 def drain(cfg, wait_lock=False):
     """Archive and ingest every queued session, then rebuild the dashboard once.
 
+    Runs last ingested by an older parser are re-ingested too, so a parser bump never leaves old numbers behind.
     Only one drain runs at a time. A drain that finds another one running leaves: that one re-reads the queue
     after it releases the lock, so a session queued meanwhile is never stranded. Returns how many were ingested.
     """
     from .archive import archive
-    from .store import ingest, is_locked
-    total, tried = 0, set()
+    from .store import failed_sessions, ingest, is_locked, outdated_sessions
+    total, tried, upgraded = 0, set(), False
     while True:
         lock = DrainLock()
         got = lock.acquire()
@@ -156,48 +166,63 @@ def drain(cfg, wait_lock=False):
             got = lock.acquire()
         if not got:
             return total
+        idle = False
         try:
             sids = [p.name for p in pending() if p.name not in tried]  # a session that failed waits for the next drain
-            if not sids:
-                return total
-            tried.update(sids)
-            log(f"drain start: {len(sids)} queued")
-            selected = set()
-            for sid in sids:
+            stale = []
+            if not upgraded:
+                upgraded = True
                 try:
-                    if archive(cfg, quiet=True, sessions=[sid]):
-                        selected.add(sid)
-                    else:
-                        log(f"skipped {sid}: not selected by [select] in config.toml")
-                        (config.PENDING / sid).unlink(missing_ok=True)
+                    stale = outdated_sessions()
                 except Exception as e:
-                    log(f"error archiving {sid}: {type(e).__name__}: {e}")
-            if selected:
-                for attempt in range(8):  # another writer (a CLI command, classify) may hold the database
+                    log(f"parser check: {type(e).__name__}: {e}")
+            if not sids and not stale:
+                idle = True
+            else:
+                tried.update(sids)
+                log(f"drain start: {len(sids)} queued" + (f", {len(stale)} on an older parser" if stale else ""))
+                selected = set()
+                for sid in sids:
                     try:
-                        n = ingest(cfg, sessions=sorted(selected), quiet=True)
-                        break
+                        if archive(cfg, quiet=True, sessions=[sid], transcripts=[t for t in [queued_transcript(sid)] if t]):
+                            selected.add(sid)
+                        else:
+                            log(f"skipped {sid}: not selected by [select] in config.toml")
+                            (config.PENDING / sid).unlink(missing_ok=True)
                     except Exception as e:
-                        if not is_locked(e) or attempt == 7:
-                            raise
-                        time.sleep(min(5 * 2 ** attempt, 60))
-                for sid in selected:
-                    (config.PENDING / sid).unlink(missing_ok=True)
-                    log(f"archived and ingested {sid}")
-                total += n
-                refresh_dashboard(cfg)
+                        log(f"error archiving {sid}: {type(e).__name__}: {e}")
+                if selected or stale:
+                    for attempt in range(8):  # another writer (a CLI command, classify) may hold the database
+                        try:
+                            n = ingest(cfg, sessions=sorted(selected | set(stale)), quiet=True)
+                            break
+                        except Exception as e:
+                            if not is_locked(e) or attempt == 7:
+                                raise
+                            time.sleep(min(5 * 2 ** attempt, 60))
+                    failed = failed_sessions(selected) if selected else set()
+                    for sid in selected:
+                        (config.PENDING / sid).unlink(missing_ok=True)
+                        log(f"archived, ingest failed (see `runlens check`) {sid}" if sid in failed else f"archived and ingested {sid}")
+                    if stale:
+                        log(f"re-ingested {len(stale)} run(s) for the current parser")
+                    total += n
+                    refresh_dashboard(cfg)
         except Exception as e:
             log(f"error: {type(e).__name__}: {e} @ {traceback.format_exc().splitlines()[-3].strip()}")
             return total
         finally:
             lock.release()
+        # A session queued after the empty read above but before the release would wait for the next drain: look again.
+        if idle and not any(p.name not in tried for p in pending()):
+            return total
 
 
 # --- install ------------------------------------------------------------------------------------------------
 
 def our_hook():
     # Synchronous on purpose: it returns in well under a second, and an async hook can be killed at teardown
-    # before it has queued anything. The timeout only bounds a pathological case (a stuck disk).
+    # (observed before it had queued anything). The timeout only bounds a pathological case (a stuck disk).
     return {"type": "command", "command": Path(sys.executable).as_posix(), "args": list(HOOK_ARGS), "timeout": 10}
 
 

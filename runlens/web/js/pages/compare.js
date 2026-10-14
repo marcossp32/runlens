@@ -96,7 +96,9 @@ function comparison(sa, sb) {
   const forestRows = pair && d ? [
     ...(d.score != null ? [{ label: "Weighted score", bold: true, effect: d.score / 100, ci: d.ci ? [d.ci[0] / 100, d.ci[1] / 100] : null,
       tone: { better: "better", worse: "worse" }[pair.direction] || "unclear", word: pair.verdict, tip: [["Weights", customWeights() ? "yours" : "the defaults"]] }] : []),
+    // A rate's effect is worked out on 1 − p (floored) and clipped, so a rate reads as its two values, not as a percentage.
     ...rows.filter((r) => r.pm).map((r) => ({ label: r.label, effect: r.pm.effect, ci: r.pm.ci, tone: r.tone,
+      words: r.m.type === "rate" ? `${fmt.metric(r.m, r.a)} → ${fmt.metric(r.m, r.b)}` : null,
       tip: [["A", fmt.metric(r.m, r.a)], ["B", fmt.metric(r.m, r.b)], ["Weight", `×${r.pm.weight}`]] })),
   ] : [];
   const conf = pair && pair.confounders ? pair.confounders : [];
@@ -105,20 +107,21 @@ function comparison(sa, sb) {
       conf.length ? h("details", { class: "confounders", open: conf.length <= 2 ? true : null },
         h("summary", {}, h("strong", {}, pair.verdict === "confounded" ? `What else changed between A and B (${conf.length})` : `Also changed (${conf.length})`)),
         h("ul", {}, conf.map((c) => h("li", {}, c)))) : null,
-      conf.length && pair.verdict === "confounded" && pair.direction ? h("p", { class: "muted" }, `Without these, the interval alone would say: ${pair.direction}.`) : null),
+      conf.length && pair.verdict === "confounded" && pair.direction ? h("p", { class: "muted" }, `Without these, the interval alone would say: ${pair.direction}.`) : null,
+      pair && (pair.notes || []).length ? h("p", { class: "muted" }, pair.notes.join("; ")) : null),
     scoreSettingsNote(),
     h("div", { class: "sides" }, sideCard("A", A, nameA), sideCard("B", B, nameB)),
     crossSkill || !forestRows.length ? null : forestPlot({
       title: "B against A, with the interval of each difference", question: "What changed between the two versions, and how sure is it?",
       takeaway: () => {
         const clear = forestRows.filter((r) => !r.bold && r.ci && (r.ci[0] > 1 || r.ci[1] < 1));
-        return clear.length ? `Clear differences: ${listWords(clear.map((r) => `${r.label.toLowerCase()} (B ${effectWords(r.effect)})`))}. Every other line crosses “no change”.`
+        return clear.length ? `Clear differences: ${listWords(clear.map((r) => `${r.label.toLowerCase()} (${r.words ? `B ${r.words}` : `B ${effectWords(r.effect)}`})`))}. Every other line crosses “no change”.`
           : "No measure differs clearly: every line crosses “no change”, so the runs cannot tell the two versions apart.";
       },
       sub: `${tagB} compared with ${tagA} · dot = how much better or worse B is; line = its ${pct}% interval · right of “no change” (×1), B is better · ${pct}% intervals from resampling runs by session`,
       n: Math.min(A.runs, B.runs), minN: MIN_RUNS, rows: forestRows, leftLabel: "◀ B is worse", rightLabel: "B is better ▶",
       axisTitle: "B against A: how many times better (right) or worse (left), log scale",
-      notes: `A row is coloured only when its whole interval is clear of ×1. Effects are capped at ×${DATA.method.max_ratio} as in the score. The top row is the verdict's own difference; with fewer than ${MIN_RUNS} runs on a side it has no interval.`,
+      notes: `Per-measure intervals are exploratory: they are not adjusted for how many measures and pairs are looked at, so expect a false colour now and then. A row is coloured only when its whole interval is clear of ×1. Effects are capped at ×${DATA.method.max_ratio} as in the score. The top row is the verdict's own difference; with fewer than ${MIN_RUNS} runs on a side it has no interval.`,
     }),
     section({ title: "Each measure, A and B", intro: "The values behind the chart, with the number of runs on each side." }, sortTable({
       caption: "Measures compared",
@@ -128,7 +131,7 @@ function comparison(sa, sb) {
         { label: "Runs in A", num: true, value: (r) => r.na }, { label: "Runs in B", num: true, value: (r) => r.nb }],
       rows, csvName: `compare-${nameA}-${nameOf(A)}-${nameB}-${nameOf(B)}`,
     }).el),
-    note(`The verdict comes from the difference between the two versions' runs, resampled ${fmt.int(DATA.method.resamples)} times by session; it needs ${MIN_RUNS} runs on each side. A measure is marked better or worse only when its own interval is clear of no change.`));
+    note(`The verdict comes from the difference between the two versions' runs, resampled ${fmt.int(DATA.method.resamples)} times by session; it needs ${MIN_RUNS} runs on each side. A measure is marked better or worse only when its own interval is clear of no change; "no clear change" means the interval holds no change, not that the versions are alike.`));
 }
 
 function comparePage() {

@@ -10,7 +10,7 @@ SELECT r.session_id, r.started, r.ended, r.cwd, r.git_branch, r.cc_version, r.ti
        t.tool_calls, t.tool_errors, round(t.tool_errors / nullif(t.tool_calls, 0), 4) AS error_rate,
        t.idle_calls, t.denied_calls, i.incidents, i.policy_incidents, m.bad_markers, a.api_errors, a.api_limits
 FROM runs r
-LEFT JOIN (SELECT session_id, count(*) AS tool_calls, count(*) FILTER (WHERE is_error) AS tool_errors,
+LEFT JOIN (SELECT session_id, count(*) AS tool_calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS tool_errors,
                   count(*) FILTER (WHERE idle) AS idle_calls, count(*) FILTER (WHERE denied IS NOT NULL) AS denied_calls
            FROM tool_calls GROUP BY 1) t USING (session_id)
 LEFT JOIN (SELECT session_id, count(*) AS incidents, count(*) FILTER (WHERE policy) AS policy_incidents
@@ -19,6 +19,8 @@ LEFT JOIN (SELECT session_id, count(*) FILTER (WHERE bad) AS bad_markers FROM ma
 LEFT JOIN (SELECT session_id, count(*) FILTER (WHERE api_error) AS api_errors, count(*) FILTER (WHERE api_limit) AS api_limits
            FROM api_calls GROUP BY 1) a USING (session_id);
 
+-- Token columns here, in v_model and in agents.*_tokens are what the transcript holds: output is 3-10x low, because most
+-- messages never get their final count. Costs are scaled to cost-state; the model_usage table has Claude Code's own totals.
 CREATE OR REPLACE VIEW v_skill AS
 WITH api AS (
     SELECT coalesce(skill, '(none)') AS skill, count(*) AS api_calls, sum(cost_usd) AS cost_usd,
@@ -26,7 +28,7 @@ WITH api AS (
            count(DISTINCT session_id) AS runs
     FROM api_calls GROUP BY 1),
 tools AS (
-    SELECT coalesce(skill, '(none)') AS skill, count(*) AS tool_calls, count(*) FILTER (WHERE is_error) AS tool_errors,
+    SELECT coalesce(skill, '(none)') AS skill, count(*) AS tool_calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS tool_errors,
            count(*) FILTER (WHERE idle) AS idle_calls, sum(duration_ms) AS tool_ms
     FROM tool_calls GROUP BY 1),
 inc AS (SELECT coalesce(skill, '(none)') AS skill, count(*) AS incidents FROM incidents GROUP BY 1),
@@ -53,8 +55,8 @@ SELECT model, count(*) AS api_calls, sum(cost_usd) AS cost_usd, sum(output_token
 FROM api_calls GROUP BY 1;
 
 CREATE OR REPLACE VIEW v_tools AS
-SELECT tool, count(*) AS calls, count(*) FILTER (WHERE is_error) AS errors,
-       round(count(*) FILTER (WHERE is_error) / count(*), 4) AS error_rate,
+SELECT tool, count(*) AS calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS errors,
+       round(count(*) FILTER (WHERE is_error AND denied IS NULL) / count(*), 4) AS error_rate,
        median(duration_ms) AS median_ms, quantile_cont(duration_ms, 0.95) AS p95_ms, sum(duration_ms) AS total_ms
 FROM tool_calls GROUP BY 1;
 
@@ -92,20 +94,42 @@ SELECT skill, content_hash, min(ts) AS first_seen, max(ts) AS last_seen, count(*
        count(DISTINCT session_id) AS runs, any_value(content_len) AS content_len
 FROM skill_loads GROUP BY 1, 2;
 
+-- Each piece of work counts under the version loaded most recently before it (the first one, when it came earlier),
+-- so a run that used two versions of a skill is split between them rather than given to the last.
 CREATE OR REPLACE VIEW v_skill_version_stats AS
 WITH ver AS (
-    SELECT session_id, skill, arg_max(content_hash, ts) AS content_hash FROM skill_loads GROUP BY 1, 2),
-api AS (SELECT session_id, skill, count(*) AS api_calls, sum(cost_usd) AS cost_usd FROM api_calls GROUP BY 1, 2),
-tools AS (SELECT session_id, skill, count(*) AS tool_calls, count(*) FILTER (WHERE is_error) AS tool_errors,
-                 count(*) FILTER (WHERE idle) AS idle_calls FROM tool_calls GROUP BY 1, 2),
-inc AS (SELECT session_id, skill, count(*) AS incidents FROM incidents GROUP BY 1, 2),
-mk AS (SELECT session_id, skill, count(*) FILTER (WHERE bad) AS bad_markers, count(*) AS markers FROM markers GROUP BY 1, 2)
+    SELECT DISTINCT session_id, skill, content_hash FROM skill_loads),
+loads AS (
+    SELECT session_id, skill, content_hash, ts FROM skill_loads WHERE ts IS NOT NULL),
+first AS (
+    SELECT session_id, skill, arg_min(content_hash, ts) AS content_hash FROM skill_loads GROUP BY 1, 2),
+api_v AS (
+    SELECT a.session_id, a.skill, coalesce(l.content_hash, f.content_hash) AS content_hash, a.cost_usd
+    FROM api_calls a ASOF LEFT JOIN loads l ON a.session_id = l.session_id AND a.skill = l.skill AND a.ts >= l.ts
+    LEFT JOIN first f ON f.session_id = a.session_id AND f.skill = a.skill),
+tools_v AS (
+    SELECT t.session_id, t.skill, coalesce(l.content_hash, f.content_hash) AS content_hash, t.is_error, t.denied, t.idle
+    FROM tool_calls t ASOF LEFT JOIN loads l ON t.session_id = l.session_id AND t.skill = l.skill AND t.ts >= l.ts
+    LEFT JOIN first f ON f.session_id = t.session_id AND f.skill = t.skill),
+inc_v AS (
+    SELECT i.session_id, i.skill, coalesce(l.content_hash, f.content_hash) AS content_hash
+    FROM incidents i ASOF LEFT JOIN loads l ON i.session_id = l.session_id AND i.skill = l.skill AND i.ts >= l.ts
+    LEFT JOIN first f ON f.session_id = i.session_id AND f.skill = i.skill),
+mk_v AS (
+    SELECT m.session_id, m.skill, coalesce(l.content_hash, f.content_hash) AS content_hash, m.bad
+    FROM markers m ASOF LEFT JOIN loads l ON m.session_id = l.session_id AND m.skill = l.skill AND m.ts >= l.ts
+    LEFT JOIN first f ON f.session_id = m.session_id AND f.skill = m.skill),
+api AS (SELECT session_id, skill, content_hash, count(*) AS api_calls, sum(cost_usd) AS cost_usd FROM api_v GROUP BY 1, 2, 3),
+tools AS (SELECT session_id, skill, content_hash, count(*) AS tool_calls, count(*) FILTER (WHERE is_error AND denied IS NULL) AS tool_errors,
+                 count(*) FILTER (WHERE idle) AS idle_calls FROM tools_v GROUP BY 1, 2, 3),
+inc AS (SELECT session_id, skill, content_hash, count(*) AS incidents FROM inc_v GROUP BY 1, 2, 3),
+mk AS (SELECT session_id, skill, content_hash, count(*) FILTER (WHERE bad) AS bad_markers, count(*) AS markers FROM mk_v GROUP BY 1, 2, 3)
 SELECT v.skill, v.content_hash, count(*) AS runs, sum(api.api_calls) AS api_calls, sum(api.cost_usd) AS cost_usd,
        avg(api.cost_usd) AS cost_per_run, sum(tools.tool_calls) AS tool_calls, sum(tools.tool_errors) AS tool_errors,
        round(sum(tools.tool_errors) / nullif(sum(tools.tool_calls), 0), 4) AS error_rate, sum(tools.idle_calls) AS idle_calls,
        sum(inc.incidents) AS incidents, sum(mk.bad_markers) AS bad_markers, sum(mk.markers) AS markers
-FROM ver v LEFT JOIN api USING (session_id, skill) LEFT JOIN tools USING (session_id, skill)
-LEFT JOIN inc USING (session_id, skill) LEFT JOIN mk USING (session_id, skill)
+FROM ver v LEFT JOIN api USING (session_id, skill, content_hash) LEFT JOIN tools USING (session_id, skill, content_hash)
+LEFT JOIN inc USING (session_id, skill, content_hash) LEFT JOIN mk USING (session_id, skill, content_hash)
 GROUP BY 1, 2;
 
 CREATE OR REPLACE VIEW v_incident_summary AS

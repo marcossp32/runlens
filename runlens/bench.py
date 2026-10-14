@@ -15,6 +15,8 @@ much as its size and no run's rate is averaged with another's:
 - "log" measures (cost, time) are geometric means per invocation: num = Σ ln(x + offset)
   over the run's invocations, den = invocations. Costs are heavy-tailed (a tenth of the
   runs carry most of the spend), so an arithmetic mean would be the cost of the odd giant run.
+  Cost leaves out runs without cost-state (their tokens are a partial transcript at list price, about
+  30% too cheap) and invocations with a call that has no price; time keeps them. A verdict says how many.
 - "rate" measures are events over opportunities (failed tool calls over tool calls).
 - "count" measures are events per invocation (human prompts, failed checks).
 An invocation is a skill load (skill_loads), an agent spawn, or a group's run. A version's
@@ -27,8 +29,16 @@ finite, clipped to ±ln MAX_RATIO; positive is better. score = 100 x exp(Σ w·l
 Verdicts. Version B against version A comes from a bootstrap of the DIFFERENCE: the runs of
 each version are resampled by session (a session's invocations stay together), the
 weighted difference is recomputed each time, and its central interval decides: entirely
-above 0 is "better", below 0 "worse", otherwise "no clear change". Fewer than MIN_RUNS
-runs on either side is "not enough runs". When something else changed between the two
+above 0 is "better", below 0 "worse", otherwise "no clear change". That last one means the
+interval holds 0, not that the versions are alike: with a handful of runs a real
+improvement is mostly "no clear change" (the interval is wide and each measure's noise
+enters in full), so it is never evidence of equivalence. Fewer than MIN_RUNS
+runs on either side is "not enough runs"; runs enough but no measure with a weight above
+0 to compare is "not scored". A version is a hash over a contiguous stretch of runs, so
+reverting A -> B -> A gives three versions. Each listed unit is also given a Benjamini-Hochberg
+q over all units compared, and a per-measure interval is exploratory (not adjusted).
+The verdict is recomputed on every refresh with the runs so far, so it is not an
+anytime-valid interval: a fixed number of runs per version would be needed for that. When something else changed between the two
 sides (another skill's text, the model or effort mix, the Claude Code version, the
 project), the verdict is "confounded" and names what changed: a change can then not be
 put down to the skill text.
@@ -54,16 +64,16 @@ MEASURES = [
     {"key": "outcome", "label": "Outcome", "unit": "rate", "type": "rate", "better": "higher", "num": "os", "den": "on",
      "weight": 3, "kinds": VERSIONED,
      "what": "The result the flow is meant to reach, as configured under [outcome]: a check that passes first time, or a PR opened."},
-    {"key": "cost", "label": "Cost per invocation", "unit": "usd", "type": "log", "better": "lower", "num": "lc", "den": "inv",
+    {"key": "cost", "label": "Cost per invocation", "unit": "usd", "type": "log", "better": "lower", "num": "lc", "den": "inv_cost",
      "weight": 2, "kinds": KINDS, "offset": 0.01,
      "what": "Model spend per invocation (skill load, subagent spawn or group run), as a geometric mean."},
-    {"key": "seconds", "label": "Time per invocation", "unit": "s", "type": "log", "better": "lower", "num": "ls", "den": "inv",
+    {"key": "seconds", "label": "Agent time per invocation", "unit": "s", "type": "log", "better": "lower", "num": "ls", "den": "inv",
      "weight": 1, "kinds": KINDS, "offset": 1.0,
-     "what": "Working time per invocation, from each model turn to the same agent's next, capped per turn; a geometric mean."},
+     "what": "Agent time per invocation, from each model turn to the same agent's next, capped per turn; a geometric mean. Parallel agents add up, and waiting on subagents or the user counts, so it is not wall-clock time."},
     {"key": "error_rate", "label": "Tool error rate", "unit": "rate", "type": "rate", "better": "lower", "num": "call_errors",
      "den": "calls", "weight": 2, "kinds": KINDS,
      "what": "Failing tool calls over all tool calls. Calls a permission rule denied are not errors of the skill."},
-    {"key": "incidents", "label": "Problems per 100 tool calls", "unit": "count", "type": "rate", "better": "lower",
+    {"key": "incidents", "label": "Scored problems per 100 tool calls", "unit": "count", "type": "rate", "better": "lower",
      "num": "incidents", "den": "calls", "scale": 100, "weight": 2, "kinds": KINDS,
      "what": "Repeated calls, interrupts, failed subagents, test edits after a failure and similar. Not counted: policy "
              "denials, failed checks, idle loops and error streaks (other measures already count them), and incidents "
@@ -85,10 +95,11 @@ SHRINK = 2          # pseudo-runs at the skill's own value that every version st
 MAX_RATIO = 2.0     # one measure counts for at most this factor either way
 FLOOR = 0.5         # fraction of the skill's own rate added to both sides of a rate ratio, so zeros stay finite
 TURN_CAP = 600.0    # seconds: the gap between two model turns counts for at most this long
-RESAMPLES = 4000    # bootstrap resamples per interval: the expanded tails at n = 5 are 0.1% each, so many are needed
+RESAMPLES = 10000   # bootstrap resamples per interval: the expanded tails at n = 5 are 0.1% each, so many are needed (Hesterberg 2015: at least 10^4)
 MIN_RUNS = 5        # runs needed on each side before a verdict is given
 CONFIDENCE = 0.95   # central interval of the bootstrap difference
-MIX_SHIFT = 0.3     # total variation distance between two sides' mixes that counts as a confounder
+MIX_SHIFT = 0.3     # smallest total variation distance between two sides' mixes that counts as a confounder
+MIX_NOISE = 1.5     # ... and at least MIX_NOISE / sqrt(runs on the smaller side): two samples of one mix differ by chance
 ALL_PAIRS = 6       # with at most this many versions every pair is compared, else consecutive ones only
 DIFF_LINES = 800    # longest diff kept per changed skill
 CLIP = math.log(MAX_RATIO)
@@ -96,7 +107,7 @@ ONCE = "roles seen in one run"
 SKIP_INCIDENTS = {"bad_marker", "idle_loop", "error_streak"}
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
 FAR = datetime.max.replace(tzinfo=timezone.utc)
-VERDICTS = ("better", "worse", "no clear change", "not enough runs", "confounded")
+VERDICTS = ("better", "worse", "no clear change", "not enough runs", "not scored", "confounded")
 
 
 # ---- settings from config.toml ---------------------------------------------------------
@@ -194,7 +205,7 @@ def settings(cfg=None, groups=None):
         "min_runs": int(method.get("min_runs", MIN_RUNS)),
         "resamples": int(method.get("resamples", RESAMPLES)),
         "confidence": float(method.get("confidence", CONFIDENCE)),
-        "cc_version": method.get("cc_version", "minor"),
+        "cc_version": method.get("cc_version", "patch"),
         "auto_groups": bool(method.get("auto_groups", True)),
     }
     if s["min_runs"] < 2:
@@ -247,16 +258,23 @@ def ell(m, ref, val, base):
             return None  # the event never happened in this skill: no information either way
         f = FLOOR * base
         x = math.log((ref + f) / (val + f))
+    if math.isnan(x):
+        return None  # max/min would turn a NaN into the clip: "2x better"
     return max(-CLIP, min(CLIP, x))
 
 
-def composite(ref_est, val_est, base, weights):
-    """Σ w·l / Σ w over the measures known on both sides, and each l."""
+def composite(ref_est, val_est, base, weights, expect=()):
+    """Σ w·l / Σ w over the measures known on both sides, and each l.
+
+    `expect` names the measures the full sample could score: in a bootstrap resample one that has no data
+    counts as no change (l = 0) instead of dropping out, so the weights are not renormalised from draw to draw."""
     acc = wsum = 0.0
     parts = {}
     for key, w in weights.items():
         lx = ell(MEASURE[key], ref_est.get(key), val_est.get(key), base.get(key))
         if lx is None:
+            if key in expect and w > 0:
+                wsum += w
             continue
         parts[key] = lx
         if w > 0:
@@ -300,6 +318,32 @@ def tail(confidence, n):
     return 1 - NormalDist().cdf(z)
 
 
+def p_value(draws, n):
+    """Two-sided p of 'no change' from the sorted bootstrap draws of a difference: the confidence level at which
+    the expanded percentile interval (see `tail`) would first touch 0. None with too few draws."""
+    m = len(draws)
+    if m < 20:
+        return None
+    q = max(min(bisect.bisect_right(draws, 0), m - bisect.bisect_left(draws, 0)), 0.5) / m
+    if q >= tail(0.0, n):
+        return 1.0
+    lo, hi = 0.0, 1.0  # alpha: tail(1 - alpha, n) grows with alpha
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if tail(1 - mid, n) < q else (lo, mid)
+    return (lo + hi) / 2
+
+
+def benjamini_hochberg(ps):
+    """BH-adjusted p-values (q) for a list of p-values; None stays None and does not count towards the number of tests."""
+    idx = sorted((i for i, p in enumerate(ps) if p is not None), key=lambda i: ps[i])
+    out, running, m = [None] * len(ps), 1.0, len(idx)
+    for rank, i in reversed(list(enumerate(idx, 1))):
+        running = min(running, ps[i] * m / rank)
+        out[i] = running
+    return out
+
+
 class Arm:
     """The runs of one side of a comparison, as per-run (num, den) vectors so a resample is a few C-level sums."""
 
@@ -334,13 +378,14 @@ def compare(rows_a, rows_b, base, pseudo, weights, seed, resamples=RESAMPLES, co
     a, b = Arm(rows_a, keys), Arm(rows_b, keys)
     raw_a, raw_b = a.estimates(a.sums(), base, pseudo, shrink=False), b.estimates(b.sums(), base, pseudo, shrink=False)
     d, parts = composite(raw_a, raw_b, base, weights)
-    out = {"d": d, "ci": None, "measures": {}, "outcome": None}
+    out = {"d": d, "ci": None, "p": None, "measures": {}, "outcome": None}
     draws, mdraws, odraws = [], defaultdict(list), []
+    expect = set(parts)
     if interval and a.n and b.n and d is not None:
         rng = random.Random(seed)
         for _ in range(resamples):
             ea, eb = a.estimates(a.draw(rng), base, pseudo, False), b.estimates(b.draw(rng), base, pseudo, False)
-            dd, pp = composite(ea, eb, base, weights)
+            dd, pp = composite(ea, eb, base, weights, expect)
             if dd is not None:
                 draws.append(dd)
             for k, v in pp.items():
@@ -351,7 +396,9 @@ def compare(rows_a, rows_b, base, pseudo, weights, seed, resamples=RESAMPLES, co
     hi_q = 1 - lo_q
     ci = lambda xs: [quantile(xs, lo_q), quantile(xs, hi_q)] if len(xs) >= 20 else None
     if draws:
-        out["ci"] = ci(sorted(draws))
+        draws.sort()
+        out["ci"] = ci(draws)
+        out["p"] = p_value(draws, min(n_runs(rows_a), n_runs(rows_b)))
     for k in keys:
         m = MEASURE[k]
         if k not in parts:
@@ -370,10 +417,13 @@ def n_runs(rows):
     return len({r.get("sid") or r.get("session") or i for i, r in enumerate(rows)})
 
 
-def verdict_of(d_ci, n_a, n_b, confounders, min_runs=MIN_RUNS):
-    """(verdict, direction): direction is what the interval alone says; verdict adds the run count and confounders."""
+def verdict_of(d_ci, n_a, n_b, confounders, min_runs=MIN_RUNS, scored=True):
+    """(verdict, direction): direction is what the interval alone says; verdict adds the run count and confounders.
+    "no clear change" says the interval holds 0, not that the sides are alike: with a handful of runs it is the usual outcome."""
     if n_a < min_runs or n_b < min_runs:
         return "not enough runs", None
+    if not scored:
+        return "not scored", None  # runs enough, but no measure with a weight above 0 could be compared
     if not d_ci:
         return "not enough runs", None
     direction = "better" if d_ci[0] > 0 else "worse" if d_ci[1] < 0 else "no clear change"
@@ -447,9 +497,14 @@ def _top_change(a, b):
     return f"{k} {a[k] / ta:.0%} → {b[k] / tb:.0%}"
 
 
-def family(model):
-    m = re.search(r"(opus|sonnet|haiku|fable|mythos)", model or "")
-    return m.group(1) if m else (model or "unknown")
+def _mode(c):
+    """The most common member of a mix; on a tie, the first by name."""
+    return max(sorted(c), key=lambda k: c[k])
+
+
+def model_id(model):
+    """The full model id: haiku-4-5 and haiku-5-5 are different models."""
+    return model or "unknown"
 
 
 def cc_level(version, level):
@@ -458,37 +513,37 @@ def cc_level(version, level):
     return version if level == "patch" else ".".join(version.split(".")[:2])
 
 
+def mix_threshold(n):
+    """Total variation distance two mixes must reach to count as shifted: it grows as there are fewer runs."""
+    return max(MIX_SHIFT, MIX_NOISE / math.sqrt(max(n, 1)))
+
+
 def confounders_of(side_a, side_b, own_skills, ctx):
     """What else differed between two sets of runs. `side_*` are run rows with their context."""
     out = []
-    sids_a = {r["sid"] for r in side_a}
-    sids_b = {r["sid"] for r in side_b}
+    sids_a = sorted({r["sid"] for r in side_a})
+    sids_b = sorted({r["sid"] for r in side_b})
+    limit = mix_threshold(min(len(sids_a), len(sids_b)))
     versions = ctx["session_versions"]
     others = set()
-    for sid in sids_a | sids_b:
+    for sid in sids_a + sids_b:
         others |= set(versions.get(sid, {}))
     for s in sorted(others - set(own_skills)):
-        ha = Counter(versions[sid][s] for sid in sids_a if s in versions.get(sid, {}))
-        hb = Counter(versions[sid][s] for sid in sids_b if s in versions.get(sid, {}))
-        if ha and hb:
-            top_a, top_b = ha.most_common(1)[0][0], hb.most_common(1)[0][0]
-            if top_a != top_b:
-                out.append(f"{s} also changed ({short(top_a)} → {short(top_b)})")
-    mix = lambda rows, field: sum((r[field] for r in rows), Counter())
-    for field, what in (("models", "model mix (share of cost)"), ("efforts", "effort mix (share of turns)")):
+        ha = Counter(short(versions[sid][s]) for sid in sids_a if s in versions.get(sid, {}))
+        hb = Counter(short(versions[sid][s]) for sid in sids_b if s in versions.get(sid, {}))
+        if ha and hb and shift(ha, hb) >= mix_threshold(min(sum(ha.values()), sum(hb.values()))):
+            out.append(f"{s} also changed ({_top_change(ha, hb)})")
+    mix = lambda rows, field: sum((r[field] for r in sorted(rows, key=lambda r: r["sid"])), Counter())
+    for field, what in (("models", "model mix (share of main-agent cost)"), ("efforts", "effort mix (share of turns)")):
         a, b = mix(side_a, field), mix(side_b, field)
-        if shift(a, b) >= MIX_SHIFT:
-            top_a, top_b = a.most_common(1)[0][0], b.most_common(1)[0][0]
-            if field == "cc" and top_a != top_b:
-                out.append(f"Claude Code {top_a} → {top_b}")
-            else:  # the most common value is the same on both sides: name the one whose share moved
-                out.append(f"{what}: {_top_change(a, b)}")
+        if shift(a, b) >= limit:
+            out.append(f"{what}: {_top_change(a, b)}")
     runs = ctx["sessions"]
     for field, what in (("cc", "Claude Code version"), ("repo", "project mix")):
         a = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_a)
         b = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_b)
-        if shift(a, b) >= MIX_SHIFT:
-            top_a, top_b = a.most_common(1)[0][0], b.most_common(1)[0][0]
+        if shift(a, b) >= limit:
+            top_a, top_b = _mode(a), _mode(b)
             if field == "cc" and top_a != top_b:
                 out.append(f"Claude Code {top_a} → {top_b}")
             else:  # the most common value is the same on both sides: name the one whose share moved
@@ -499,15 +554,17 @@ def confounders_of(side_a, side_b, own_skills, ctx):
 # ---- skill sets found in the history ----------------------------------------------------
 
 SET_OVERLAP = 0.8  # share of the rarer skill's runs that must also use the other skill
+SET_EDITS = 2      # runs in which both skills got a new version: one shared edit can be a coincidence
+SET_NEAR = 0.8     # an auto set this similar (Jaccard) to a configured group, or inside it, is left out
 
 
 def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
     """Sets of skills used and edited together, to score as one unit next to each skill on its own.
 
     Two skills are linked when at least `min_runs` runs use both, at least SET_OVERLAP of the rarer one's runs
-    also use the other, and a new version of each (not its first) appeared in the same run: they were edited together.
-    A set is a group of linked skills (single linkage) with two or more members; a set with the same skills as a
-    [[group]] in config.toml (`taken`) is left out. Returns [[group]]-shaped dicts marked auto."""
+    also use the other, and a new version of each (not its first) appeared in the same run, in at least SET_EDITS
+    runs: they were edited together. A set is a group of linked skills (single linkage) with two or more members; a
+    set inside a [[group]] in config.toml (`taken`), or nearly the same as one, is left out. Returns [[group]]-shaped dicts marked auto."""
     order = sorted(sessions, key=lambda sid: (sessions[sid].get("started") or NEVER, sid))
     runs, first = defaultdict(set), {}
     for sid in order:
@@ -526,10 +583,10 @@ def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
     for (skill, _h), sid in first.items():
         if sid != opening[skill]:
             born[sid].add(skill)
-    edited = defaultdict(set)
+    edited = defaultdict(Counter)
     for skills in born.values():
         for a in skills:
-            edited[a] |= skills - {a}
+            edited[a].update(skills - {a})
     parent = {}
 
     def root(x):
@@ -539,7 +596,7 @@ def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
 
     for a in sorted(runs):
         for b in sorted(edited[a]):
-            if b <= a or b not in runs:
+            if b <= a or b not in runs or edited[a][b] < SET_EDITS:
                 continue
             both = len(runs[a] & runs[b])
             if both >= min_runs and both >= SET_OVERLAP * min(len(runs[a]), len(runs[b])):
@@ -549,7 +606,7 @@ def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
         members[root(skill)].add(skill)
     out = []
     for skills in sorted(members.values(), key=lambda m: sorted(m)):
-        if len(skills) < 2 or frozenset(skills) in taken:
+        if len(skills) < 2 or any(skills <= g or len(skills & g) / len(skills | g) >= SET_NEAR for g in map(frozenset, taken)):
             continue
         names = sorted(skills)
         prefix = os.path.commonprefix(names)
@@ -645,9 +702,24 @@ def compute(data, groups=None, resamples=None, cfg=None):
         hit = same or other or lst[0]
         return (sid, skill, hit[3]), hit[2]
 
+    seen = defaultdict(list)  # skill -> (start, hash) of the runs that loaded it, in time order
+    for sid in sorted(session_versions, key=lambda x: (sessions[x].get("started") or NEVER, x)):
+        for s, h in session_versions[sid].items():
+            if h:
+                seen[s].append((sessions[sid].get("started") or NEVER, h))
+
+    def member_version(s, sid):
+        """A group member's version in a run. A member the run did not load keeps the version of its nearest use
+        before the run (else after), so a member that was not used never starts a new group version."""
+        h = session_versions[sid].get(s)
+        if h or s not in seen:
+            return h or version_before(s, sessions[sid].get("started"))
+        t = sessions[sid].get("started") or NEVER
+        before = [x for x in seen[s] if x[0] <= t]
+        return (before[-1] if before else seen[s][0])[1]
+
     def group_vmap(gid, sid):
-        g = group_of[gid]
-        return {s: session_versions[sid].get(s) or version_before(s, sessions[sid].get("started")) for s in sorted(g["skills"])}
+        return {s: member_version(s, sid) for s in sorted(group_of[gid]["skills"])}
 
     def place(sid, agent, ts, skill):
         """Every (unit, version key, invocation key) a piece of work belongs to; it is counted once per unit."""
@@ -691,21 +763,23 @@ def compute(data, groups=None, resamples=None, cfg=None):
         k = (uid, sid, vkey)
         if k not in acc:
             acc[k] = {"cost": 0.0, "seconds": 0.0, "turns": 0, "api_errors": 0, "calls": 0, "call_errors": 0, "idle": 0,
-                      "incidents": 0, "bad": 0, "prompts": 0, "lines": 0, "inv": defaultdict(lambda: [0.0, 0.0]),
+                      "incidents": 0, "bad": 0, "prompts": 0, "lines": 0, "inv": defaultdict(lambda: [0.0, 0.0, False]),
                       "loads": set(), "marks": [], "models": Counter(), "efforts": Counter()}
         return acc[k]
 
     for i, a in enumerate(api):
         for uid, vkey, inv in place(a["session_id"], a["agent_id"], a["ts"], a["skill"]):
             c = cell(uid, a["session_id"], vkey)
-            cost = a["cost_usd"] or 0.0
+            cost = a["cost_usd"]
             c["turns"] += 1
-            c["cost"] += cost
+            c["cost"] += cost or 0.0
             c["seconds"] += seconds[i]
             c["api_errors"] += bool(a["api_error"])
-            c["inv"][inv][0] += cost
+            c["inv"][inv][0] += cost or 0.0
+            c["inv"][inv][2] = c["inv"][inv][2] or cost is None  # no price: the invocation's cost is unknown, not zero
             c["inv"][inv][1] += seconds[i]
-            c["models"][family(a.get("model"))] += cost
+            if a["agent_id"] == "main":  # the skill's own subagents are part of its effect, not a confounder
+                c["models"][model_id(a.get("model"))] += cost or 0.0
             c["efforts"][a.get("effort") or "default"] += 1
     for t in kept(data["tools"]):
         for uid, vkey, _ in place(t["session_id"], t["agent_id"], t.get("ts"), t["skill"]):
@@ -820,10 +894,11 @@ def compute(data, groups=None, resamples=None, cfg=None):
             vmap = {uid.split(":", 1)[1]: (None if vkey.endswith("=unversioned") else vkey.split("=", 1)[1])}
         elif kind == "group":
             vmap = group_vmap(uid, sid)
+        priced = [x for x in inv if not x[2]] if not sessions[sid].get("cost_estimated") else []
         unit_rows[uid].append({
             "sid": sid, "vkey": vkey, "vmap": vmap, "started": sessions[sid].get("started"),
-            "inv": len(inv), "invocations": n_inv,
-            "lc": sum(math.log(x[0] + MEASURE["cost"]["offset"]) for x in inv),
+            "inv": len(inv), "inv_cost": len(priced), "invocations": n_inv,
+            "lc": sum(math.log(x[0] + MEASURE["cost"]["offset"]) for x in priced),
             "ls": sum(math.log(x[1] + MEASURE["seconds"]["offset"]) for x in inv),
             "cost": c["cost"], "seconds": c["seconds"], "turns": c["turns"], "api_errors": c["api_errors"],
             "calls": c["calls"], "call_errors": c["call_errors"], "idle": c["idle"], "incidents": c["incidents"],
@@ -871,9 +946,25 @@ def compute(data, groups=None, resamples=None, cfg=None):
         units_entry, vlist = describe_unit(uid, kind, name_of(uid), rows, base, pseudo, weights, o, group_of, st["min_runs"])
 
         if kind in VERSIONED:
-            by_version = defaultdict(list)
+            # A version is a hash over a contiguous stretch of runs: reverting A -> B -> A makes a new version
+            # (key "<hash>#2"), so the pre- and post-B runs are not pooled and the newest span is the current one.
+            # A version's span goes on while consecutive runs use it. A new span starts only when a version comes back
+            # in a run that carries on no version, so a run that used two versions (an edit mid-run, or a stale text
+            # loaded next to the new one) joins existing spans instead of looking like a revert.
+            by_version, spans, last = defaultdict(list), Counter(), {}
+            by_run = defaultdict(list)
             for r in rows:
-                by_version[r["vkey"]].append(r)
+                by_run[(r["started"] or FAR, r["sid"])].append(r)
+            for idx, run in enumerate(sorted(by_run)):
+                carries_on = any(last.get(r["vkey"]) == idx - 1 for r in by_run[run])
+                for r in by_run[run]:
+                    key = r["vkey"]
+                    if key not in last or (last[key] < idx - 1 and not carries_on):
+                        spans[key] += 1
+                    last[key] = idx
+                    if spans[key] > 1:
+                        r["vkey"] = f"{key}#{spans[key]}"
+                    by_version[r["vkey"]].append(r)
             ordered = sorted(by_version.items(), key=lambda kv: min((r["started"] or FAR) for r in kv[1]))
             prev_vmap = None
             for i, (vkey, xs) in enumerate(ordered):
@@ -892,7 +983,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
                 if p["vs_previous"]:
                     v = next(x for x in vlist if x["label"] == p["b"])
                     v.update(verdict=p["verdict"], direction=p["direction"], vs=p["a"], difference=p["difference"],
-                             confounders=p["confounders"])
+                             confounders=p["confounders"], notes=p["notes"], p=p["p"])
                     v["delta"] = (v["score"] - vlist[vlist.index(v) - 1]["score"]
                                   if v["score"] is not None and vlist[vlist.index(v) - 1]["score"] is not None else None)
             pairs_out[uid] = pairs
@@ -900,7 +991,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
             if last:
                 units_entry.update(current=last["label"], score=last["score"], ci=last["ci"], verdict=last["verdict"],
                                    vs=last["vs"], delta=last["delta"], difference=last["difference"],
-                                   confounders=last["confounders"], direction=last["direction"])
+                                   confounders=last["confounders"], direction=last["direction"], p=last.get("p"))
         units_entry["versions"] = len(vlist)
         units.append(units_entry)
         versions_out[uid] = vlist
@@ -908,6 +999,13 @@ def compute(data, groups=None, resamples=None, cfg=None):
         runs_out[uid] = sorted(
             (run_row(r, label_of.get(r["vkey"], "all"), task_of(uid, kind, r["sid"]), repo_of(r["sid"]), kind) for r in rows),
             key=lambda r: r["started"] or NEVER, reverse=True)
+
+    # Every listed unit is a test of its own: Benjamini-Hochberg q over the units that were compared, so a
+    # `better` or `worse` that q does not support can be marked as one that might be a fluke of listing many units.
+    qs = benjamini_hochberg([u.get("p") for u in units])
+    for u, q in zip(units, qs):
+        u["q"] = q
+        u["adjusted"] = None if q is None or u["direction"] not in ("better", "worse") else q <= 1 - st["confidence"]
 
     starts = [r["started"] for r in sessions.values() if r.get("started")]
     return {
@@ -971,7 +1069,7 @@ def describe_unit(uid, kind, name, rows, base, pseudo, weights, o, group_of, min
         "runs": len({r["sid"] for r in rows}), "invocations": sum(r["invocations"] for r in rows),
         "versions": 0, "current": None, "score": None, "ci": None, "verdict": None, "direction": None, "vs": None,
         "delta": None, "difference": None, "confounders": [], "low_sample": len({r["sid"] for r in rows}) < min_runs,
-        "kpi": {**kpi, **extras(rows)}, "outcome": outcome_summary(o, rows),
+        "kpi": {**kpi, **extras(rows)}, "outcome": outcome_summary(o, rows), "p": None, "q": None, "adjusted": None,
         "baseline": base, "pseudo": pseudo, "weights": weights,
         "first_seen": min(starts, default=None), "last_seen": max(starts, default=None),
     }
@@ -979,7 +1077,10 @@ def describe_unit(uid, kind, name, rows, base, pseudo, weights, o, group_of, min
 
 
 def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
-    """One version: its score against the skill's typical run and the interval of that score."""
+    """One version: its score against the skill's typical run and the interval of that score.
+
+    Descriptive only: the typical run pools this version's own runs and is treated as fixed, so the interval is
+    not a test. Verdicts come from `pair_entry`, which resamples both sides."""
     keys = list(weights)
     arm = Arm(xs, keys)
     sums = arm.sums()
@@ -991,7 +1092,7 @@ def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
     if d is not None and n >= st["min_runs"]:
         rng, draws = random.Random(f"{uid}|{vkey}"), []
         for _ in range(st["resamples"]):
-            dd, _ = composite(ref, arm.estimates(arm.draw(rng), base, pseudo), base, weights)
+            dd, _ = composite(ref, arm.estimates(arm.draw(rng), base, pseudo), base, weights, set(parts))
             if dd is not None:
                 draws.append(dd)
         draws.sort()
@@ -1006,38 +1107,46 @@ def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
     hashes = "+".join(short(h) for _, h in sorted(vmap.items())) or "-"
     starts = [r["started"] for r in xs if r["started"]]
     return {
-        "id": uid, "vid": f"{uid}@{hashes}", "label": f"v{i + 1}", "key": vkey,
+        "id": uid, "vid": f"{uid}@{hashes}" + (f"#{vkey.rsplit('#', 1)[1]}" if "#" in vkey else ""), "label": f"v{i + 1}", "key": vkey,
         "parts": [{"skill": s, "hash": short(h)} for s, h in sorted(vmap.items())],
         "recorded": bool(vmap) and all(h is not None for h in vmap.values()),
         "first_seen": min(starts, default=None), "last_seen": max(starts, default=None),
         "runs": n, "invocations": sum(r["invocations"] for r in xs), "low_sample": n < st["min_runs"],
         "score": 100 * math.exp(d) if d is not None else None, "ci": ci, "metrics": metrics,
         "outcome": outcome_summary(o, xs), "kpi": extras(xs),
-        "changes": diffs, "verdict": None, "direction": None, "vs": None, "difference": None, "confounders": [],
+        "changes": diffs, "verdict": None, "direction": None, "p": None, "vs": None, "difference": None, "confounders": [],
         "delta": None, "overlap": None,
     }
 
 
 def pair_entry(uid, va, vb, rows_a, rows_b, base, pseudo, weights, own_skills, ctx, st):
     """Version B against version A of the same unit: the bootstrap of the difference, confounders and the verdict."""
-    n_a, n_b = va["runs"], vb["runs"]
+    # A session that used both versions would sit in both arms, so the arms would not be independent: leave it out.
+    shared = {r["sid"] for r in rows_a} & {r["sid"] for r in rows_b}
+    if shared:
+        rows_a = [r for r in rows_a if r["sid"] not in shared]
+        rows_b = [r for r in rows_b if r["sid"] not in shared]
+    n_a, n_b = n_runs(rows_a) if shared else va["runs"], n_runs(rows_b) if shared else vb["runs"]
     enough = n_a >= st["min_runs"] and n_b >= st["min_runs"]
     res = compare(rows_a, rows_b, base, pseudo, weights, f"{uid}|{va['key']}|{vb['key']}", st["resamples"],
                   st["confidence"], interval=enough)
     conf = confounders_of(rows_a, rows_b, own_skills, ctx)
-    verdict, direction = verdict_of(res["ci"], n_a, n_b, conf, st["min_runs"])
+    notes = [f"cost leaves out {n} of {len(side)} runs of {label} (no cost-state: list price on a partial transcript)"
+             for label, side in ((va["label"], rows_a), (vb["label"], rows_b))
+             for n in [sum(1 for r in side if ctx["sessions"][r["sid"]].get("cost_estimated"))] if n]
+    verdict, direction = verdict_of(res["ci"], n_a, n_b, conf, st["min_runs"], scored=res["d"] is not None)
     diff = {"score": 100 * math.exp(res["d"]) if res["d"] is not None else None,
             "ci": [100 * math.exp(x) for x in res["ci"]] if res["ci"] else None,
             "measures": res["measures"], "outcome": res["outcome"]}
     return {"a": va["label"], "b": vb["label"], "vs_previous": int(vb["label"][1:]) - int(va["label"][1:]) == 1,
             "runs_a": n_a, "runs_b": n_b, "invocations_a": va["invocations"], "invocations_b": vb["invocations"],
-            "verdict": verdict, "direction": direction, "difference": diff, "confounders": conf}
+            "verdict": verdict, "direction": direction, "difference": diff, "confounders": conf, "notes": notes, "p": res["p"]}
 
 
 def run_row(r, version, task, repo, kind):
     """What the page needs to show a run and to recompute any score from it: each measure's num and den."""
     row = {"started": r["started"], "session": r["sid"][:8], "task": _clip(task), "version": version, "repo": repo,
-           "inv": r["inv"], "invocations": r["invocations"], "cost": r["cost"], "seconds": r["seconds"],
+           "inv": r["inv"], "inv_cost": r["inv_cost"], "invocations": r["invocations"], "cost": r["cost"], "seconds": r["seconds"],
            "lc": round(r["lc"], 4), "ls": round(r["ls"], 4), "calls": r["calls"], "call_errors": r["call_errors"],
            "idle": r["idle"], "turns": r["turns"], "api_errors": r["api_errors"], "incidents": r["incidents"],
            "interventions": r["interventions"], "bad": r["bad"], "lines": r["lines"]}
@@ -1056,6 +1165,7 @@ def unit_summary(model, u):
     return {"unit": u["id"], "name": u["name"], "kind": u["kind"], "runs": u["runs"], "invocations": u["invocations"],
             "versions": u["versions"], "current": u["current"], "verdict": u["verdict"], "direction": u["direction"],
             "vs": u["vs"], "confounders": u["confounders"], "outcome": u["outcome"], "difference": _diff_out(u["difference"]),
+            "p_adjusted": u.get("q"),
             "score": u["score"], "ci95": u["ci"],
             "typical": {k: v for k, v in u["kpi"].items() if k in MEASURE},
             "cost_per_success_usd": u["kpi"].get("cost_per_success"), "cost_per_kloc_usd": u["kpi"].get("cost_per_kloc"),
@@ -1093,12 +1203,12 @@ def versions_summary(model, uid):
             "recorded": v["recorded"], "first_seen": v["first_seen"], "last_seen": v["last_seen"],
             "runs": v["runs"], "invocations": v["invocations"], "score": v["score"], "ci95": v["ci"],
             "verdict": v["verdict"], "direction": v["direction"], "vs": v["vs"], "confounders": v["confounders"],
-            "difference": _diff_out(v["difference"]), "outcome": v["outcome"],
+            "notes": v.get("notes", []), "difference": _diff_out(v["difference"]), "outcome": v["outcome"],
             "measures": {k: d["value"] for k, d in v["metrics"].items()},
             "cost_per_success_usd": v["kpi"]["cost_per_success"], "cost_per_kloc_usd": v["kpi"]["cost_per_kloc"],
             "spend_usd": v["kpi"]["spend"], "diff": diff,
         })
-    pairs = [{k: p[k] for k in ("a", "b", "runs_a", "runs_b", "verdict", "direction", "confounders")}
+    pairs = [{k: p[k] for k in ("a", "b", "runs_a", "runs_b", "verdict", "direction", "confounders", "notes")}
              | {"difference": _diff_out(p["difference"])} for p in model["pairs"].get(uid, []) if not p["vs_previous"]]
     return {"skill": u["name"], "unit": uid, "unit_of_analysis": "invocation", "population": model["population"],
             "baseline": {k: display(MEASURE[k], v) for k, v in u["baseline"].items()}, "weights": u["weights"],
@@ -1121,16 +1231,16 @@ def load(con):
                  ORDER BY (l.source = 'human') DESC, l.labeled_at DESC LIMIT 1)""" if has("labels") else "NULL")
     return {
         "runs": rows("""SELECT session_id, started, title, cwd AS repo, cc_version, status, is_stub, pr_urls,
-                               lines_added, lines_removed FROM runs"""),
-        "agents": rows("SELECT session_id, agent_id, agent_type, role, description FROM agents"),
-        "api": rows("SELECT session_id, agent_id, ts, skill, cost_usd, api_error, model, effort FROM api_calls"),
+                               lines_added, lines_removed, cost_estimated FROM runs ORDER BY started, session_id"""),
+        "agents": rows("SELECT session_id, agent_id, agent_type, role, description FROM agents ORDER BY session_id, agent_id"),
+        "api": rows("SELECT session_id, agent_id, ts, skill, cost_usd, api_error, model, effort FROM api_calls ORDER BY session_id, agent_id, ts"),
         "tools": rows("""SELECT session_id, agent_id, ts, skill, is_error, denied, idle, patch_added, patch_removed
-                         FROM tool_calls"""),
-        "incidents": rows(f"SELECT session_id, agent_id, ts, skill, type, policy, {label} AS label FROM incidents i"),
-        "markers": rows("SELECT session_id, agent_id, ts, skill, marker, value, bad FROM markers"),
-        "prompts": rows("SELECT session_id, ts FROM events WHERE kind = 'human_prompt' AND agent_id = 'main'"),
-        "loads": rows("SELECT session_id, agent_id, ts, skill, content_hash, args FROM skill_loads"),
-        "texts": rows("SELECT skill, content_hash, text FROM skill_texts") if has("skill_texts") else [],
+                         FROM tool_calls ORDER BY session_id, agent_id, ts"""),
+        "incidents": rows(f"SELECT session_id, agent_id, ts, skill, type, policy, {label} AS label FROM incidents i ORDER BY session_id, agent_id, ts, type"),
+        "markers": rows("SELECT session_id, agent_id, ts, skill, marker, value, bad FROM markers ORDER BY session_id, agent_id, ts, marker"),
+        "prompts": rows("SELECT session_id, ts FROM events WHERE kind = 'human_prompt' AND agent_id = 'main' ORDER BY session_id, ts"),
+        "loads": rows("SELECT session_id, agent_id, ts, skill, content_hash, args FROM skill_loads ORDER BY session_id, ts, agent_id, skill"),
+        "texts": rows("SELECT skill, content_hash, text FROM skill_texts ORDER BY skill, content_hash") if has("skill_texts") else [],
     }
 
 

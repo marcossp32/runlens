@@ -1,6 +1,6 @@
 {
   "skill_name": "runlens-retro",
-  "_note": "skill-creator format (https://agentskills.io/skill-creation/evaluating-skills). Each scenario replays canned runlens output from evals/files/<scenario>/commands.md, so the branches of the retro can be tested without a database. The JSON shapes of score/versions/proposals/verify follow the CLI contract (runlens score|versions|verify --json) and must be kept in step with it; fields a scenario does not need are left out.",
+  "_note": "skill-creator format (https://agentskills.io/skill-creation/evaluating-skills). Each scenario replays canned runlens output from evals/files/<scenario>/commands.md, so the branches of the retro can be tested without a database. The JSON shapes of score/versions/proposals/verify follow the CLI contract (runlens score|versions|verify --json) and must be kept in step with it; fields a scenario does not need are left out. tests/test_retro_fixtures.py checks every commands.md against the output of the real CLI on the demo database.",
   "evals": [
     {
       "id": 1,
@@ -73,18 +73,18 @@
     },
     {
       "id": 4,
-      "name": "check-fail-stops-the-retro",
+      "name": "count-fail-stops-the-retro",
       "prompt": "/runlens-retro\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/check-fail/commands.md instead.",
-      "expected_output": "The retro stops after runlens check, reports the FAIL lines and says the numbers after them would be wrong; it reads no score, labels nothing and proposes nothing.",
+      "expected_output": "The retro stops after runlens check because of a FAIL about counts (raw vs db), reports the FAIL line and says the numbers after it would be wrong; it reads no score, labels nothing and proposes nothing.",
       "files": ["evals/files/check-fail/commands.md"],
       "assertions": [
-        "Reports the FAIL lines from runlens check (api_calls and tool_calls counts for run 27efa8c1)",
+        "Reports the FAIL line from runlens check (api_calls and tool_calls raw vs db counts for run 27efa8c1)",
         "Says the data cannot be trusted until the failure is fixed",
         "Does not report scores, versions, failure modes or proposals",
         "Does not run runlens classify"
       ],
       "expectations": [
-        "Reports the FAIL lines from runlens check (api_calls and tool_calls counts for run 27efa8c1)",
+        "Reports the FAIL line from runlens check (api_calls and tool_calls raw vs db counts for run 27efa8c1)",
         "Says the data cannot be trusted until the failure is fixed",
         "Does not report scores, versions, failure modes or proposals",
         "Does not run runlens classify"
@@ -92,21 +92,63 @@
     },
     {
       "id": 5,
-      "name": "subagent-only-skill-with-a-confounded-version",
+      "name": "subagent-skill-with-a-confounded-version",
       "prompt": "/runlens-retro m-scan\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/subagent-confounded/commands.md instead.",
-      "expected_output": "A report that notices m-scan has no score of its own because it only loads in subagents, continues from its incidents, and reports the v2 verdict as confounded by the Claude Code version and model mix instead of blaming the skill text.",
+      "expected_output": "A report that finds m-scan in runlens score as a unit of its own (it loads only in subagents), reports the v2 verdict as confounded by the Claude Code version and model mix instead of blaming the skill text, and continues from its incidents.",
       "files": ["evals/files/subagent-confounded/commands.md"],
       "assertions": [
-        "Notices m-scan is missing from runlens score and checks skill_loads to find it only runs in subagents",
+        "Finds m-scan in runlens score with its own verdict and treats it like any other skill, without saying it is missing or unscored",
         "Continues with m-scan's incidents rather than stopping",
         "Reports the m-scan v2 verdict as confounded and names the Claude Code version change and the model mix",
         "Does not attribute the change between versions to the skill text"
       ],
       "expectations": [
-        "Notices m-scan is missing from runlens score and checks skill_loads to find it only runs in subagents",
+        "Finds m-scan in runlens score with its own verdict and treats it like any other skill, without saying it is missing or unscored",
         "Continues with m-scan's incidents rather than stopping",
         "Reports the m-scan v2 verdict as confounded and names the Claude Code version change and the model mix",
         "Does not attribute the change between versions to the skill text"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "unpriced-model-does-not-stop-the-retro",
+      "prompt": "/runlens-retro m-build\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/unpriced-model/commands.md instead.",
+      "expected_output": "The retro does not stop at the FAIL for the unpriced model: it reports the line as a warning, says cost-based numbers for that model are understated, suggests adding the price under [prices] and running runlens refresh, and carries on with the version verdict (no clear change).",
+      "files": ["evals/files/unpriced-model/commands.md"],
+      "assertions": [
+        "Does not stop after runlens check",
+        "Reports the unpriced-model FAIL (claude-nova-9, run d81f02bb) as a warning in the report",
+        "Says costs for that model are missing or understated",
+        "Suggests adding a price under [prices] and running runlens refresh",
+        "Continues to the score and versions and reports m-build v3 as no clear change",
+        "Does not run runlens classify without asking (there are no incidents to classify here)"
+      ],
+      "expectations": [
+        "Does not stop after runlens check",
+        "Reports the unpriced-model FAIL (claude-nova-9, run d81f02bb) as a warning in the report",
+        "Says costs for that model are missing or understated",
+        "Suggests adding a price under [prices] and running runlens refresh",
+        "Continues to the score and versions and reports m-build v3 as no clear change",
+        "Does not run runlens classify without asking (there are no incidents to classify here)"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "verify-confirmed-and-refuted",
+      "prompt": "/runlens-retro m-review\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/verify-results/commands.md instead.",
+      "expected_output": "A report that gives p-0004 as confirmed and p-0005 as refuted, each as runlens verify gave it, and does not call either edit helpful on impressions.",
+      "files": ["evals/files/verify-results/commands.md"],
+      "assertions": [
+        "Reports proposal p-0004 as confirmed, using the runlens verify verdict",
+        "Reports proposal p-0005 as refuted, using the runlens verify verdict",
+        "Does not say p-0005's edit helped, and notes that cost went up instead of down",
+        "Does not judge either proposal by anything other than the verify result"
+      ],
+      "expectations": [
+        "Reports proposal p-0004 as confirmed, using the runlens verify verdict",
+        "Reports proposal p-0005 as refuted, using the runlens verify verdict",
+        "Does not say p-0005's edit helped, and notes that cost went up instead of down",
+        "Does not judge either proposal by anything other than the verify result"
       ]
     }
   ]

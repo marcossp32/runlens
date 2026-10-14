@@ -7,7 +7,10 @@ first method gave against a cross-skill average.
 Run: python -m unittest tests.test_bench -v
 """
 import math
+import os
 import random
+import subprocess
+import sys
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -323,6 +326,17 @@ class Verdicts(unittest.TestCase):
         self.assertLess(v2["difference"]["ci"][1], 100)
         self.assertEqual(model["pairs"]["skill:flow"][0]["verdict"], "worse")
 
+    def test_a_session_that_used_both_versions_is_in_neither_arm_of_the_comparison(self):
+        d = history([("aaa", 4), ("bbb", 4)])
+        for i in range(2):
+            sid = f"mixed-{i}"
+            d["runs"].append(run(sid, 50_000 + i * 1000))
+            d["loads"] += [load(sid, 50_001 + i * 1000, "flow", "aaa"), load(sid, 50_050 + i * 1000, "flow", "bbb")]
+            d["api"] += [turn(sid, "main", 50_002 + i * 1000, "flow"), turn(sid, "main", 50_060 + i * 1000, "flow")]
+        model = bench.compute(d, resamples=200)
+        pair = model["pairs"]["skill:flow"][0]
+        self.assertEqual((pair["runs_a"], pair["runs_b"]), (4, 4))
+
     def test_another_skill_changing_at_the_same_time_confounds(self):
         rng = random.Random(4)
         cost = lambda v, i: (1.0 if v == 0 else 3.0) * math.exp(rng.gauss(0, 0.2))
@@ -337,16 +351,62 @@ class Verdicts(unittest.TestCase):
                                       cc=lambda v, i: "2.1.290" if v == 0 else "2.2.1"), resamples=200)
         conf = model["versions"]["skill:flow"][1]["confounders"]
         self.assertTrue(any(c.startswith("model mix") for c in conf), conf)
-        self.assertIn("Claude Code 2.1 → 2.2", conf)
-        # Patch releases alone are not a confounder unless asked for.
+        self.assertIn("Claude Code 2.1.290 → 2.2.1", conf)
+        # Patch releases confound by default; with "minor" they do not.
         model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"), resamples=200)
-        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], [])
-        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"),
-                              cfg={"method": {"cc_version": "patch"}}, resamples=200)
         self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code 2.1.290 → 2.1.291"])
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"),
+                              cfg={"method": {"cc_version": "minor"}}, resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], [])
         # A shift that leaves the most common version in place names the version whose share moved.
-        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: "2.2.1" if v == 1 and i < 2 else "2.1.290"), resamples=200)
-        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code version: 2.2 0% → 33%"])
+        model = bench.compute(history([("aaa", 20), ("bbb", 20)], cc=lambda v, i: "2.2.1" if v == 1 and i < 8 else "2.1.290"),
+                              cfg={"method": {"cc_version": "minor"}}, resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code version: 2.2 0% → 40%"])
+
+    def test_model_change_within_a_family_confounds(self):
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1.0 if v == 0 else 0.4,
+                                      model=lambda v, i: "claude-haiku-4-5" if v == 0 else "claude-haiku-5-5"), resamples=500)
+        v2 = model["versions"]["skill:flow"][1]
+        self.assertEqual(v2["verdict"], "confounded")
+        self.assertTrue(any(c.startswith("model mix") and "haiku-5-5" in c for c in v2["confounders"]), v2["confounders"])
+
+    def test_subagent_models_are_not_a_confounder(self):
+        d = history([("aaa", 6), ("bbb", 6)])
+        for r in list(d["api"]):
+            if r["session_id"].startswith("flow-1-"):
+                d["api"].append(turn(r["session_id"], "sub1", 5000, "flow", model="claude-haiku-5-5"))
+        model = bench.compute(d, resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], [])
+
+    def test_chance_does_not_trip_the_mix_threshold(self):
+        # Two projects, 3 of 5 runs against 2 of 5: a distance of 0.2 to 0.4 is chance at this size.
+        repos = lambda v, i: "C:\\work\\a" if (i < 3 if v == 0 else i < 1) else "C:\\work\\b"
+        d = history([("aaa", 5), ("bbb", 5)])
+        for r in d["runs"]:
+            v, i = int(r["session_id"].split("-")[1]), int(r["session_id"].split("-")[2])
+            r["repo"] = repos(v, i)
+        self.assertEqual(bench.compute(d, resamples=200)["versions"]["skill:flow"][1]["confounders"], [])
+        self.assertGreater(bench.mix_threshold(5), bench.mix_threshold(20))
+        self.assertEqual(bench.mix_threshold(10000), bench.MIX_SHIFT)
+
+    def test_confounders_do_not_depend_on_the_hash_seed(self):
+        code = '''
+import json, random
+from tests.test_bench import history
+from runlens import bench
+rng = random.Random(3)
+d = history([('aaa', 8), ('bbb', 8)], other=lambda v, i: f'h{(i * 7 + v) % 4}',
+            cc=lambda v, i: f'2.1.{280 + (i * 5 + v) % 6}', cost=lambda v, i: 1 + rng.random())
+m = bench.compute(d, resamples=200)
+print(json.dumps(m['pairs'], sort_keys=True, default=str))
+'''
+        outs = []
+        for seed in ("1", "2"):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            outs.append(subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True,
+                                       cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).stdout)
+        self.assertTrue(outs[0].strip())
+        self.assertEqual(outs[0], outs[1])
 
     def test_cli_summaries_follow_the_contract(self):
         model = bench.compute(history([("aaa", 5), ("bbb", 5)], cost=lambda v, i: 1 + i), resamples=200)
@@ -369,11 +429,103 @@ def synthetic_runs(rng, n, scale=1.0):
         costs = [scale * math.exp(rng.gauss(0, 1.2)) for _ in range(inv)]
         secs = [60 * math.exp(rng.gauss(0, 1.0)) for _ in range(inv)]
         calls = rng.randint(20, 400)
-        rows.append({"inv": inv, "invocations": inv, "lc": sum(math.log(c + 0.01) for c in costs), "ls": sum(math.log(s + 1) for s in secs),
+        rows.append({"inv": inv, "inv_cost": inv, "invocations": inv, "lc": sum(math.log(c + 0.01) for c in costs), "ls": sum(math.log(s + 1) for s in secs),
                      "calls": calls, "call_errors": sum(rng.random() < 0.06 for _ in range(calls)), "idle": sum(rng.random() < 0.02 for _ in range(calls)),
                      "incidents": sum(rng.random() < 0.01 for _ in range(calls)), "turns": calls, "api_errors": int(rng.random() < 0.1),
                      "interventions": int(rng.random() < 0.2), "bad": int(rng.random() < 0.1)})
     return rows
+
+
+class MethodFixes(unittest.TestCase):
+    def test_nan_is_no_information_not_two_times_better(self):
+        m = bench.MEASURE["cost"]
+        self.assertIsNone(bench.ell(m, float("nan"), 1.0, 1.0))
+        self.assertIsNone(bench.ell(m, 1.0, float("nan"), 1.0))
+
+    def test_a_missing_measure_in_a_draw_counts_as_no_change(self):
+        w = {"cost": 1.0, "seconds": 1.0}
+        base = {"cost": 0.0, "seconds": 0.0}
+        ref, val = {"cost": 1.0, "seconds": 1.0}, {"cost": 0.0}  # seconds has no data in this draw
+        d, _ = bench.composite(ref, val, base, w)
+        d_fixed, _ = bench.composite(ref, val, base, w, expect={"cost", "seconds"})
+        self.assertAlmostEqual(d, bench.CLIP)                  # renormalised: cost alone
+        self.assertAlmostEqual(d_fixed, bench.CLIP / 2)        # weights kept: the missing half counts as 0
+
+    def test_p_value_and_benjamini_hochberg(self):
+        rng = random.Random(1)
+        clear = sorted(rng.gauss(1.0, 0.1) for _ in range(2000))
+        null = sorted(rng.gauss(0.0, 0.1) for _ in range(2000))
+        self.assertLess(bench.p_value(clear, 5), 0.05)
+        self.assertGreater(bench.p_value(null, 5), 0.5)
+        self.assertIsNone(bench.p_value([0.1] * 10, 5))
+        # The interval at 1 - p touches 0, so p agrees with the interval the verdict uses.
+        p = bench.p_value(clear[:0] + sorted(rng.gauss(0.2, 0.1) for _ in range(4000)), 8)
+        self.assertTrue(0 < p < 1)
+        q = bench.benjamini_hochberg([0.01, None, 0.04, 0.03, 0.5])
+        self.assertIsNone(q[1])
+        self.assertAlmostEqual(q[0], 0.04)
+        self.assertAlmostEqual(q[2], 0.0533333, places=5)
+        self.assertAlmostEqual(q[3], 0.0533333, places=5)
+        self.assertAlmostEqual(q[4], 0.5)
+
+    def test_all_weights_at_zero_is_not_scored_not_not_enough_runs(self):
+        cfg = {"weights": {k: 0 for k in bench.MEASURE}}
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1 + v), resamples=200, cfg=cfg)
+        u = next(x for x in model["units"] if x["id"] == "skill:flow")
+        self.assertEqual(u["verdict"], "not scored")
+        self.assertEqual(bench.verdict_of(None, 6, 6, [], scored=False), ("not scored", None))
+        self.assertEqual(bench.verdict_of(None, 2, 6, [], scored=False), ("not enough runs", None))
+
+    def test_reverting_a_skill_makes_a_new_version(self):
+        model = bench.compute(history([("aaa", 5), ("bbb", 5), ("aaa", 5)], cost=lambda v, i: 1 + (v == 1)), resamples=200)
+        vs = model["versions"]["skill:flow"]
+        self.assertEqual([v["label"] for v in vs], ["v1", "v2", "v3"])
+        self.assertEqual([v["runs"] for v in vs], [5, 5, 5])
+        self.assertEqual(vs[2]["vid"], "skill:flow@aaa#2")
+        u = next(x for x in model["units"] if x["id"] == "skill:flow")
+        self.assertEqual((u["current"], u["vs"]), ("v3", "v2"))
+        self.assertEqual(sum(1 for r in model["runs"]["skill:flow"] if r["version"] == "v1"), 5)
+
+    def test_a_run_that_used_two_versions_is_not_a_revert(self):
+        for first in ("aaa", "bbb"):  # whichever version the shared run did first
+            d = history([("aaa", 5), ("bbb", 5)])
+            sid, t = "flow-1-0", 6000  # the run where the skill was edited: it loaded both texts
+            d["loads"] = [x for x in d["loads"] if x["session_id"] != sid]
+            second = "bbb" if first == "aaa" else "aaa"
+            d["loads"] += [load(sid, t + 1, "flow", first), load(sid, t + 20, "flow", second)]
+            d["api"].append(turn(sid, "main", t + 21, "flow"))
+            vs = bench.compute(d, resamples=200)["versions"]["skill:flow"]
+            self.assertEqual([v["vid"] for v in vs], ["skill:flow@aaa", "skill:flow@bbb"], first)
+
+    def test_units_get_a_bh_q_and_listing_has_an_order(self):
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1 + 3 * v), resamples=2000)
+        u = next(x for x in model["units"] if x["id"] == "skill:flow")
+        self.assertIsNotNone(u["p"])
+        self.assertAlmostEqual(u["q"], u["p"])               # one unit tested: q = p
+        self.assertTrue(u["adjusted"] is True and u["direction"] == "worse")
+        con = duckdb.connect()
+        try:
+            seen = []
+            con = mock_execute(con, seen)
+            bench.load(con)
+        finally:
+            con.close()
+        self.assertTrue(seen and all("ORDER BY" in q for q in seen if q.lstrip().upper().startswith("SELECT") and "information_schema" not in q))
+
+
+class mock_execute:
+    """A connection that records the SQL it is given and answers every query with no rows."""
+    def __init__(self, con, seen):
+        self.con, self.seen = con, seen
+
+    def execute(self, sql, params=None):
+        self.seen.append(sql)
+        if "information_schema" in sql:
+            return self.con.execute("SELECT 0")
+        return self.con.execute("SELECT 1 AS session_id WHERE false")
+
+    def close(self):
+        self.con.close()
 
 
 class NullSimulation(unittest.TestCase):
@@ -433,30 +585,53 @@ class SkillSets(unittest.TestCase):
         return [u for u in model["units"] if u["kind"] == "group"]
 
     def test_skills_edited_together_are_also_scored_as_one_set(self):
-        model = bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: f"h{v}"), resamples=200)
+        model = bench.compute(history([("aaa", 6), ("bbb", 6), ("ccc", 6)], other=lambda v, i: f"h{v}"), resamples=200)
         (g,) = self.groups(model)
         self.assertTrue(g["auto"])
         self.assertEqual(g["members"], ["skill:flow", "skill:helper"])
         self.assertEqual(g["name"], "flow + 1 more")
-        self.assertEqual([v["runs"] for v in model["versions"][g["id"]]], [6, 6])
+        self.assertEqual([v["runs"] for v in model["versions"][g["id"]]], [6, 6, 6])
         self.assertEqual(model["versions"][g["id"]][1]["confounders"], [])  # its own members do not confound it
         self.assertIn("skill:flow", {u["id"] for u in model["units"]})      # each skill keeps its own score
 
     def test_a_skill_edited_alone_or_switched_off_makes_no_set(self):
         self.assertEqual(self.groups(bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: "h0"), resamples=200)), [])
-        off = bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: f"h{v}"), cfg={"method": {"auto_groups": False}}, resamples=200)
+        off = bench.compute(history([("aaa", 6), ("bbb", 6), ("ccc", 6)], other=lambda v, i: f"h{v}"), cfg={"method": {"auto_groups": False}}, resamples=200)
         self.assertEqual(self.groups(off), [])
 
     def test_a_group_in_config_replaces_the_set_found(self):
         cfg = {"group": [{"name": "pair", "members": ["skill:flow", "skill:helper"]}]}
-        model = bench.compute(history([("aaa", 6), ("bbb", 6)], other=lambda v, i: f"h{v}"), cfg=cfg, resamples=200)
+        model = bench.compute(history([("aaa", 6), ("bbb", 6), ("ccc", 6)], other=lambda v, i: f"h{v}"), cfg=cfg, resamples=200)
         self.assertEqual([(g["name"], g["auto"]) for g in self.groups(model)], [("pair", False)])
 
     def test_a_set_is_named_after_the_common_prefix(self):
-        sv = {f"s{i}": {"m-plan": f"p{i // 5}", "m-build": f"b{i // 5}"} for i in range(10)}
+        sv = {f"s{i}": {"m-plan": f"p{i // 5}", "m-build": f"b{i // 5}"} for i in range(15)}
         runs = {sid: {"started": datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)} for i, sid in enumerate(sv)}
         (g,) = bench.skill_sets(sv, runs)
         self.assertEqual((g["name"], g["members"]), ("m-* set", ["skill:m-build", "skill:m-plan"]))
+
+    def stamps(self, sv):
+        return {sid: {"started": datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)} for i, sid in enumerate(sv)}
+
+    def test_a_single_co_edit_makes_no_set(self):
+        sv = {f"s{i}": {"a": f"a{i // 5}", "b": f"b{i // 5}"} for i in range(10)}  # one shared edit, at run 5
+        self.assertEqual(bench.skill_sets(sv, self.stamps(sv)), [])
+
+    def test_a_set_inside_or_near_a_configured_group_is_left_out(self):
+        sv = {f"s{i}": {k: f"{k}{i // 5}" for k in "abc"} for i in range(15)}
+        runs = self.stamps(sv)
+        self.assertEqual(len(bench.skill_sets(sv, runs)), 1)
+        self.assertEqual(bench.skill_sets(sv, runs, [frozenset("abc")]), [])
+        self.assertEqual(bench.skill_sets(sv, runs, [frozenset("abcd")]), [])  # subset of the configured group
+        self.assertEqual(len(bench.skill_sets(sv, runs, [frozenset("abx")])), 1)  # 2 of 4 shared: not near
+
+    def test_a_member_not_used_in_a_run_does_not_start_a_new_group_version(self):
+        cfg = {"group": [{"name": "pair", "members": ["skill:flow", "skill:helper"]}]}
+        d = history([("aaa", 6)], other=lambda v, i: "h0")
+        d["loads"] = [x for x in d["loads"] if not (x["skill"] == "helper" and x["session_id"] == "flow-0-0")]
+        model = bench.compute(d, cfg=cfg, resamples=200)
+        (g,) = [u for u in model["units"] if u["kind"] == "group"]
+        self.assertEqual([v["runs"] for v in model["versions"][g["id"]]], [6])
 
 
 class Explorer(unittest.TestCase):
@@ -468,8 +643,9 @@ class Explorer(unittest.TestCase):
 
     def test_token_cost_adds_up_to_what_claude_code_recorded(self):
         con = duckdb.connect()
-        con.execute("CREATE TABLE api_calls (session_id VARCHAR, model VARCHAR, cache_write_5m BIGINT, cache_write_1h BIGINT)")
-        con.execute("INSERT INTO api_calls VALUES ('s', 'claude-opus-5-5', 100, 300)")
+        con.execute("CREATE TABLE api_calls (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
+                    " cache_read_tokens BIGINT, cache_write_5m BIGINT, cache_write_1h BIGINT, cost_usd DOUBLE)")
+        con.execute("INSERT INTO api_calls VALUES ('s', 'claude-opus-5-5', 0, 0, 0, 100, 300, 0)")
         con.execute("CREATE TABLE model_usage (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
                     " cache_read_tokens BIGINT, cache_write_tokens BIGINT, cost_usd DOUBLE)")
         con.execute("INSERT INTO model_usage VALUES ('s', 'claude-opus-5-5[1m]', 1000, 2000, 50000, 4000, 2.5)")
@@ -484,6 +660,22 @@ class Explorer(unittest.TestCase):
         parts = {types[r[2]]: r for r in t["r"]}
         self.assertAlmostEqual(sum(r[4] for r in t["r"]), 2.5, places=4)  # scaled to what Claude Code recorded
         self.assertEqual(parts["cache_write_1h"][3], 3000)                # cache writes split 1:3 as in the transcript
+
+    def test_token_cost_covers_runs_without_model_usage(self):
+        con = duckdb.connect()
+        con.execute("CREATE TABLE api_calls (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
+                    " cache_read_tokens BIGINT, cache_write_5m BIGINT, cache_write_1h BIGINT, cost_usd DOUBLE)")
+        con.execute("INSERT INTO api_calls VALUES ('old', 'claude-opus-5-5', 100, 200, 3000, 400, 0, 1.5)")
+        con.execute("CREATE TABLE model_usage (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
+                    " cache_read_tokens BIGINT, cache_write_tokens BIGINT, cost_usd DOUBLE)")
+
+        def rows(sql):
+            cur = con.execute(sql)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        t = explorer.token_cost(rows, {"old": "old"})
+        self.assertAlmostEqual(sum(r[4] for r in t["r"]), 1.5, places=4)  # the run is not left out of the total
 
 
 if __name__ == "__main__":

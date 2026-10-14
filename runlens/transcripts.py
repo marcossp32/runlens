@@ -11,11 +11,17 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from .fs import fs_path
+from .privacy import redactor
 
 # Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
 # 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
 #    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
-PARSER_VERSION = 3
+# 4: subagent skill loads win over the inherited attributionSkill, fallback ends at the next human prompt,
+#    skill_inferred; new-style forks, harness output and housekeeping commands are not prompts, stale archives;
+#    active time is the union of turns; idle detection splits on pipes, "FAIL" matches upper case only, roles
+#    ignore punctuation, denials are not tool errors; cost allocated per token category, one cost-state per
+#    process, web searches, geo scope, Bedrock/Vertex ids; text redacted before it is truncated.
+PARSER_VERSION = 4
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
 # https://platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Cache writes are 1.25x (5m) and 2x (1h)
@@ -34,7 +40,10 @@ PRICES = {
 }
 HAIKU_LONG = {"claude-haiku-5-5": ((0.50, 2.50, 0.05), 100_000)}
 FAST = {"claude-opus-5-5": 2.0, "claude-opus-5": 2.0, "claude-opus-4-8": 2.0}  # speed=fast: $8/$40 and $10/$50
-US_GEO = 1.1  # inference_geo "us" on Claude 4.6 and later
+US_GEO = 1.1  # inference_geo "us"; Claude 4.6 and later only (NO_GEO)
+NO_GEO = {"claude-opus-4-5", "claude-opus-4-1", "claude-opus-4", "claude-sonnet-4-5", "claude-sonnet-4", "claude-haiku-4-5",
+          "claude-3-5-haiku"}  # older models the 1.1x does not apply to; any other model is charged it
+WEB_SEARCH_USD = 10.0  # per 1,000 searches
 FREE_MODELS = {"<synthetic>"}  # Claude Code's own messages (API errors, limits): no tokens, no cost
 
 SUMMARY_KEYS = ("command", "file_path", "notebook_path", "path", "pattern", "url", "query", "skill",
@@ -46,6 +55,17 @@ EXIT_CODE = re.compile(r"^(?:Error: )?Exit code (-?\d+)", re.M)
 SHELL_TOOLS = {"Bash", "PowerShell"}
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 HUMAN_SOURCES = {"typed", "suggestion_accepted", "queued"}
+# What Claude Code writes into user turns for local commands and shell output: the harness's, not a person's.
+HARNESS_OUTPUT = ("<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>", "<bash-stdout>",
+                  "<bash-stderr>", "<bash-input>")
+# A typed slash command is a person asking for something (/m-feature, /review-pr); these built-ins only change the
+# session (clear, compact, switch model...) and send no request.
+COMMAND_NAME = re.compile(r"<command-name>/?([\w:-]+)</command-name>")
+HOUSEKEEPING = frozenset({
+    "clear", "compact", "model", "effort", "fast", "config", "cost", "usage", "status", "context", "help", "login",
+    "logout", "memory", "permissions", "resume", "rewind", "exit", "export", "hooks", "mcp", "agents", "add-dir",
+    "doctor", "ide", "vim", "theme", "statusline", "terminal-setup", "output-style", "todos", "bashes", "plan",
+    "privacy-settings", "release-notes", "upgrade", "feedback", "bug", "plugin", "plugins", "skills", "keybindings"})
 
 # Checked in order against the head of the tool output; the first match wins.
 ERROR_CLASSES = [
@@ -63,7 +83,7 @@ ERROR_CLASSES = [
     ("network", r"ECONNREFUSED|ECONNRESET|getaddrinfo|Could not resolve host"),
     ("rate_limit", r"rate.?limit|\bHTTP[ /]\S* ?429\b|status(code)?\W{0,3}429\b|overloaded_error"),
     ("git", r"^fatal: |^error: (failed to push|Your local changes)|merge conflict|non-fast-forward"),
-    ("test_failure", r"\b\d+ (failed|failing)\b|AssertionError|^\s*FAIL(ED)?[:\s]"),
+    ("test_failure", r"\b\d+ (failed|failing)\b|AssertionError|^\s*(?-i:FAIL(ED)?)[:\s]"),
     ("nonzero_exit", r"^(Error: )?Exit code \d+"),
 ]
 ERROR_RX = [(name, re.compile(rx, re.I | re.M)) for name, rx in ERROR_CLASSES]
@@ -101,6 +121,22 @@ def ts(value):
     except ValueError:
         return None
     return t.replace(tzinfo=timezone.utc) if t.tzinfo is None else t
+
+
+def union_ms(spans):
+    """Milliseconds covered by the turn spans with overlaps counted once; a turn without a timestamp counts in full."""
+    total = sum(w for s, w in spans if s is None)
+    cur_s = cur_e = None
+    for s, e in sorted((x for x in spans if x[0] is not None), key=lambda x: x[0]):
+        if cur_e is not None and s <= cur_e:
+            cur_e = max(cur_e, e)
+            continue
+        if cur_e is not None:
+            total += (cur_e - cur_s).total_seconds() * 1000
+        cur_s, cur_e = s, e
+    if cur_e is not None:
+        total += (cur_e - cur_s).total_seconds() * 1000
+    return int(round(total))
 
 
 def as_dict(v):
@@ -142,7 +178,8 @@ def role_of(description):
     if not description or not isinstance(description, str):
         return None
     d = re.sub(r"#?\d+", "#", description.strip())
-    d = re.sub(r"\(#\)|\s+", " ", d).strip()
+    d = re.sub(r"\(#\)|[:;,.]+(?=\s|$)", " ", d)
+    d = re.sub(r"\s+", " ", d).strip()
     return d[:60]
 
 
@@ -177,21 +214,29 @@ def api_error_kind(r, msg):
 
 POLL_LOOP = re.compile(r"""^(\s*(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S+)|cd\s+\S+)\s*(?:;|&&)\s*)*"""
                        r"(until|while)\b.*?;\s*do\s+sleep\s+[\d.]+\s*;?\s*done\b", re.S)
+# What may follow a poll loop without making it work: reading back what it waited for.
+POLL_TAIL = re.compile(r"\s*(?:(?:;|&&)\s*(?:tail|head|cat|grep|echo|ls|wc)\b[^;&|\n]*)*;?\s*")
 
 
 def is_idle(command, parts):
     """A shell command whose every part only waits or prints, or a loop that only sleeps until a condition holds."""
-    if command and POLL_LOOP.match(command):
+    m = POLL_LOOP.match(command) if command else None
+    if m and POLL_TAIL.fullmatch(command, m.end()):
         return True
     if not command or "$(" in command or "`" in command or ">" in command:
         return False
-    pieces = [p.strip() for p in re.split(r"&&|\|\||;|\n", command) if p.strip()]
+    pieces = [p.strip() for p in re.split(r"&&|\|\||\||;|\n", command) if p.strip()]
     return bool(pieces) and all(any(re.fullmatch(rx, p, re.I) for rx in parts) for p in pieces)
 
 
 def model_key(model):
+    """The price-table name of a model id: no context suffix, date or cloud wrapper (Bedrock `anthropic.claude-...-v1:0`,
+    Vertex `claude-...@20250929`)."""
     name = re.sub(r"\[.*\]$", "", model or "")
-    return re.sub(r"-\d{8}$", "", name)
+    if "claude" in name:
+        name = name[name.index("claude"):]
+    name = re.sub(r"-v\d+(:\d+)?$", "", name)
+    return re.sub(r"[-@]\d{8}$", "", name)
 
 
 def price_table(overrides=None):
@@ -210,7 +255,7 @@ def price_of(model, overrides=None, prompt_tokens=0, speed=None, geo=None):
     inp, out, read = table[name]
     if name in HAIKU_LONG and name not in (overrides or {}) and prompt_tokens > HAIKU_LONG[name][1]:
         inp, out, read = HAIKU_LONG[name][0]
-    k = (FAST.get(name, 1.0) if speed == "fast" else 1.0) * (US_GEO if geo == "us" else 1.0)
+    k = (FAST.get(name, 1.0) if speed == "fast" else 1.0) * (US_GEO if geo == "us" and name not in NO_GEO else 1.0)
     return inp * k, out * k, read * k, inp * 1.25 * k, inp * 2.0 * k
 
 
@@ -225,26 +270,38 @@ def list_cost(a, overrides=None):
         return None
     inp, out, read, w5, w1 = p
     return ((a["input_tokens"] or 0) * inp + (a["output_tokens"] or 0) * out + (a["cache_read_tokens"] or 0) * read
-            + (a["cache_write_5m"] or 0) * w5 + (a["cache_write_1h"] or 0) * w1) / 1e6
+            + (a["cache_write_5m"] or 0) * w5 + (a["cache_write_1h"] or 0) * w1) / 1e6 + (a.get("web_searches") or 0) * WEB_SEARCH_USD / 1000
 
 
 class SkillStack:
     """Which skill an agent is working under.
 
-    Inside subagents Claude Code records no `attributionSkill`, so a skill load
-    pushes and the outermost skill an agent loaded is never popped.
+    A subagent's records carry the `attributionSkill` it inherited from its parent
+    (the skill that was active when it was spawned). That value is only the spawn
+    default: once the subagent loads a skill itself, the load wins and the inherited
+    value, or its absence, no longer moves the stack. Without an inherited value a
+    skill load pushes and the outermost skill an agent loaded is never popped.
 
-    In the main session it records the skill on each turn and None after every
-    skill the session invokes ends, so skills invoked there run one after
-    another under the outermost one rather than nested in each other: a new
-    skill replaces the one on top (never the outermost), and a change from a
-    skill to None goes back to the outermost skill.
+    In the main session Claude Code records the skill on each turn and None after
+    every turn that skill did not run in, so skills invoked there run one after
+    another under the outermost one rather than nested in each other: a new skill
+    replaces the one on top (never the outermost), and a change from a skill to None
+    goes back to the outermost skill. That fallback is an inference (`inferred`),
+    and it ends at the next human prompt (`new_prompt`), unless the person started
+    the outermost skill with a slash command: then it lasts until another one.
     """
 
     def __init__(self, main=False):
         self.stack, self.prev, self.main = [], None, main
+        self.inherited, self.loaded, self.inferred, self.typed = None, False, False, None
 
     def push(self, skill):
+        """A skill the agent loaded."""
+        if skill and skill not in self.stack[-1:]:
+            self.loaded = True
+        self._push(skill)
+
+    def _push(self, skill):
         if not skill or skill in self.stack[-1:]:
             return
         if self.main and skill in self.stack:
@@ -254,19 +311,37 @@ class SkillStack:
         else:
             self.stack.append(skill)
 
+    def new_prompt(self, command=None):
+        """A person typed a prompt in the main session. A skill they started with a slash command (`command`) spans
+        the session: their later prompts answer it, so it stays as the outermost skill and only the skills under it
+        end. Anything else from the earlier prompts has ended."""
+        if not self.main:
+            return
+        if command:
+            self.typed = command
+        keep = self.typed if not command and self.stack[:1] == [self.typed] else None
+        self.stack, self.prev = ([keep] if keep else []), None
+
     def on_attribution(self, attr):
         if attr and not isinstance(attr, str):
             attr = None
+        if not self.main:
+            if self.inherited is None and not self.loaded and attr:
+                self.inherited = attr
+            elif self.loaded and self.inherited and attr in (None, self.inherited):
+                return self.stack[-1] if self.stack else None
         if attr:
             if attr in self.stack:
                 del self.stack[self.stack.index(attr) + 1:]
             else:
-                self.push(attr)
+                self._push(attr)
         elif self.prev and len(self.stack) > 1:
             # the outermost skill stays: Claude Code also drops it to None mid-run
             del self.stack[1 if self.main else -1:]
         self.prev = attr
-        return self.stack[-1] if self.stack else None
+        top = self.stack[-1] if self.stack else None
+        self.inferred = bool(self.main and top and attr != top)
+        return top
 
 
 class Markers:
@@ -295,6 +370,7 @@ def parse_run(main, info, cfg, now=None):
     main = fs_path(main)
     an = cfg["analysis"]
     markers = Markers(cfg)
+    red = redactor(cfg) or (lambda s: s)  # applied before any cut to a stored length
     test_rx = re.compile(an["test_path"], re.I)
     rows = {t: [] for t in TABLES}
     sid = main.stem
@@ -309,7 +385,8 @@ def parse_run(main, info, cfg, now=None):
     run = {"session_id": sid, "project": info["project"], "archived_at": ts(info.get("archived_at")),
            "active_ms": 0, "human_prompts": 0, "parser_version": PARSER_VERSION}
     stats = {"bad_lines": 0}
-    cost_state, cost_state_ts, last_msg_ts = None, None, None
+    turn_spans = []  # (start, end) of each main-agent turn; active_ms is their union, so nested turns count once
+    cost_states, cost_state_ts, last_msg_ts = {}, None, None  # cost-state by startTime: one per Claude Code process
     tool_owner, statuses, spawn_prompts, pr_urls = {}, {}, {}, {}
 
     for f in run_files(main):
@@ -319,6 +396,7 @@ def parse_run(main, info, cfg, now=None):
         stamps, agent_skills = [], set()
         seq = 0
         skills = SkillStack(main=is_main)
+        skill_calls, loaded_calls = {}, set()
         inherited = inherited_uuids(main, f, meta_by_agent.get(agent_id, {}))
         for r in iter_records(f, stats):
             msg = as_dict(r.get("message"))
@@ -336,8 +414,9 @@ def parse_run(main, info, cfg, now=None):
                     run["title"] = r.get("aiTitle")
                 if kind == "cost-state":
                     cost_state_ts = t or cost_state_ts
-                    if cost_state is None or (r.get("totalCostUSD") or 0) >= (cost_state.get("totalCostUSD") or 0):
-                        cost_state = r
+                    key = r.get("startTime")
+                    if key not in cost_states or (r.get("totalCostUSD") or 0) >= (cost_states[key].get("totalCostUSD") or 0):
+                        cost_states[key] = r
                 if kind in ("user", "assistant") and t:
                     last_msg_ts = max(last_msg_ts or t, t)
             if kind == "pr-link" and r.get("prUrl"):
@@ -348,6 +427,7 @@ def parse_run(main, info, cfg, now=None):
 
             if kind == "assistant":
                 skill = skills.on_attribution(r.get("attributionSkill"))
+                inferred = skills.inferred
                 if skill:
                     agent_skills.add(skill)
                 mid = msg.get("id") or r.get("uuid")
@@ -357,7 +437,8 @@ def parse_run(main, info, cfg, now=None):
                 w5m = cc.get("ephemeral_5m_input_tokens", (u.get("cache_creation_input_tokens") or 0) - w1h) or 0
                 tokens = {"input_tokens": u.get("input_tokens") or 0, "cache_read_tokens": u.get("cache_read_input_tokens") or 0,
                           "cache_write_5m": w5m, "cache_write_1h": w1h, "output_tokens": u.get("output_tokens") or 0,
-                          "thinking_tokens": as_dict(u.get("output_tokens_details")).get("thinking_tokens") or 0}
+                          "thinking_tokens": as_dict(u.get("output_tokens_details")).get("thinking_tokens") or 0,
+                          "web_searches": as_dict(u.get("server_tool_use")).get("web_search_requests") or 0}
                 a = msg_rows.get(mid)
                 if a is None:
                     is_err = bool(r.get("isApiErrorMessage"))
@@ -366,7 +447,7 @@ def parse_run(main, info, cfg, now=None):
                     a = msg_rows[mid] = {
                         "session_id": sid, "agent_id": agent_id, "msg_id": mid, "request_id": r.get("requestId"),
                         "ts": t, "model": msg.get("model"), "requested_model": r.get("requestedModel"),
-                        "effort": r.get("effort"), "skill": skill, **tokens,
+                        "effort": r.get("effort"), "skill": skill, "skill_inferred": inferred, **tokens,
                         "thinking_ms": r.get("thinkingDurationMs"), "stop_reason": msg.get("stop_reason"),
                         "api_error": is_err and not limit, "api_limit": limit, "api_error_kind": err_kind,
                         "api_error_status": r.get("apiErrorStatus") if isinstance(r.get("apiErrorStatus"), int) else None,
@@ -389,6 +470,7 @@ def parse_run(main, info, cfg, now=None):
                     if (r.get("thinkingDurationMs") or 0) > (a["thinking_ms"] or 0):
                         a["thinking_ms"] = r.get("thinkingDurationMs")
                 content = msg.get("content")
+                a["_len"] = a.get("_len", 0) + content_len(content)  # weighs the output tokens a message is missing
                 for b in content if isinstance(content, list) else []:
                     if not isinstance(b, dict):
                         continue
@@ -401,39 +483,49 @@ def parse_run(main, info, cfg, now=None):
                         path = (inp.get("file_path") or inp.get("notebook_path") or "") if isinstance(inp, dict) else ""
                         calls[b.get("id")] = {
                             "session_id": sid, "agent_id": agent_id, "tool_use_id": b.get("id"), "msg_id": mid, "seq": seq,
-                            "ts": t, "tool": name, "skill": skill, "input_hash": hashlib.sha1(raw.encode()).hexdigest()[:16],
-                            "input_summary": summarize(inp), "input_json": raw[:4000], "is_error": False,
+                            "ts": t, "tool": name, "skill": skill, "skill_inferred": inferred, "input_hash": hashlib.sha1(raw.encode()).hexdigest()[:16],
+                            "input_summary": summarize(inp), "input_json": red(raw)[:4000], "is_error": False,
                             "idle": is_idle(command if isinstance(command, str) else None, an["idle_parts"]),
                             "touches_test": name in EDIT_TOOLS and isinstance(path, str) and bool(test_rx.search(path)),
                         }
-                        tool_owner[b.get("id")] = agent_id
+                        tool_owner.setdefault(b.get("id"), agent_id)  # the first agent to issue a call owns it
                         if name in ("Agent", "Task") and isinstance(inp, dict):
-                            spawn_prompts[b.get("id")] = str(inp.get("prompt") or "")[:8000]
+                            spawn_prompts[b.get("id")] = red(str(inp.get("prompt") or ""))[:8000]
                         if name == "Skill" and isinstance(inp, dict) and inp.get("skill"):
-                            mentions.append(("invoke", t, str(inp["skill"])))
+                            skill_calls[b.get("id")] = skill_name(inp["skill"])
+                            mentions.append(("invoke", t, skill_name(inp["skill"])))
                         markers.scan(rows, raw, "tool_input", session_id=sid, agent_id=agent_id, ts=t,
                                      tool_use_id=b.get("id"), skill=skill)
                     elif b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip():
                         seq += 1
                         rows["texts"].append({"session_id": sid, "agent_id": agent_id, "seq": seq, "ts": t,
-                                              "skill": skill, "text": b["text"][:4000]})
+                                              "skill": skill, "text": red(b["text"])[:4000]})
                         markers.scan(rows, b["text"], "assistant_text", session_id=sid, agent_id=agent_id, ts=t,
                                      tool_use_id=None, skill=skill)
 
             elif kind == "user":
                 content = msg.get("content")
                 flat = text_of(content)
-                if is_main and isinstance(content, str) and not r.get("isMeta") and is_human_prompt(r, content):
+                prompt = typed_text(content)
+                if is_main and not r.get("isMeta") and not has_tool_result(content) and is_human_prompt(r, prompt):
                     run["human_prompts"] += 1
-                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, content[:500],
+                    command = COMMAND_NAME.search(prompt[:500])
+                    skills.new_prompt(skill_name(command.group(1)) if command else None)
+                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, red(prompt)[:500],
                                              r.get("promptSource") or as_dict(r.get("origin")).get("kind")))
-                if "[Request interrupted" in typed_text(content):  # not inside a tool result that happens to quote it
+                # not inside a tool result that happens to quote it, nor a compaction summary that does
+                if "[Request interrupted" in typed_text(content) and not r.get("isCompactSummary"):
                     rows["events"].append(ev(sid, agent_id, t, "interrupt", None, None, None))
                 for task, status in TASK_NOTE.findall(flat):
                     statuses[task] = status
                 if r.get("isMeta"):
                     load = skill_load(flat)
+                    call_id = r.get("sourceToolUseID")
+                    if not load and call_id in skill_calls and call_id not in loaded_calls and flat.strip():
+                        # some skills have no base directory: their text follows the Skill call without the header
+                        load = (skill_calls[call_id], None, flat.strip(), None)
                     if load:
+                        loaded_calls.add(call_id)
                         loaded, skill_dir, body, args = load
                         skills.push(loaded)
                         digest = hashlib.sha1(body.encode()).hexdigest()[:12]
@@ -458,7 +550,7 @@ def parse_run(main, info, cfg, now=None):
                     c.update({
                         "ts_result": t, "duration_ms": int((t - c["ts"]).total_seconds() * 1000) if t and c["ts"] else None,
                         "is_error": bool(x.get("is_error")), "denied": r.get("toolDenialKind"), "interrupted": interrupted,
-                        "result_len": len(body), "result_head": body[:2000],
+                        "result_len": len(body), "result_head": red(body)[:2000],
                     })
                     c.update(tool_result_fields(body, tur if single else {}, as_dict(r.get("permissionDecision"))))
                     if c["is_error"]:
@@ -469,7 +561,7 @@ def parse_run(main, info, cfg, now=None):
             elif kind == "attachment":
                 att = as_dict(r.get("attachment"))
                 if att.get("type") == "skill_mention" and att.get("skillName"):
-                    mentions.append(("mention", t, str(att["skillName"])))
+                    mentions.append(("mention", t, skill_name(att["skillName"])))
                 elif att.get("type") == "invoked_skills":
                     names = [s.get("name") for s in att.get("skills") or [] if isinstance(s, dict) and s.get("name")]
                     rows["events"].append(ev(sid, agent_id, t, "skills_reinjected", len(names), ", ".join(names)[:500], None))
@@ -479,8 +571,8 @@ def parse_run(main, info, cfg, now=None):
                 if sub == "turn_duration":
                     ms = r.get("durationMs") if isinstance(r.get("durationMs"), (int, float)) else None
                     rows["events"].append(ev(sid, agent_id, t, "turn", int(ms) if ms is not None else None, None, None))
-                    if is_main:
-                        run["active_ms"] += int(ms or 0)
+                    if is_main and ms:
+                        turn_spans.append((t - timedelta(milliseconds=ms), t) if t else (None, int(ms)))
                 elif sub == "compact_boundary":
                     # Claude Code also writes an isCompactSummary user record for the same compaction: counting
                     # only the boundary gives one event per real compaction.
@@ -513,8 +605,9 @@ def parse_run(main, info, cfg, now=None):
         a["prompt"] = spawn_prompts.get(a["parent_tool_use_id"])
     run["pr_urls"] = sorted(pr_urls, key=lambda u: pr_urls[u] or datetime.min.replace(tzinfo=timezone.utc))
     run["bad_lines"] = stats["bad_lines"]
-    finish(rows, run, cost_state, tool_owner, statuses, cfg.get("prices"))
-    run_status(run, cost_state_ts, last_msg_ts, cfg.get("runs") or {}, now)
+    run["active_ms"] = union_ms(turn_spans)
+    finish(rows, run, merge_cost_states(cost_states), tool_owner, statuses, cfg.get("prices"))
+    run_status(run, cost_state_ts, last_msg_ts, cfg.get("runs") or {}, now, stale=bool(info.get("stale")))
     return rows
 
 
@@ -524,6 +617,11 @@ def is_human_prompt(r, content):
     Newer versions mark it with origin.kind = human or promptSource typed/suggestion_accepted/queued; some older
     ones wrote typed slash commands with neither field. Task notifications and SDK prompts are not human.
     """
+    if r.get("isCompactSummary") or content.lstrip().startswith(HARNESS_OUTPUT):
+        return False
+    command = COMMAND_NAME.search(content[:500])
+    if command and command.group(1).lower() in HOUSEKEEPING:
+        return False
     origin = as_dict(r.get("origin")).get("kind")
     source = r.get("promptSource")
     if origin == "human" or source in HUMAN_SOURCES:
@@ -531,6 +629,10 @@ def is_human_prompt(r, content):
     if origin or source:
         return False
     return not content.lstrip().startswith("<task-notification>")
+
+
+def has_tool_result(content):
+    return isinstance(content, list) and any(isinstance(x, dict) and x.get("type") == "tool_result" for x in content)
 
 
 def skill_load(flat):
@@ -541,6 +643,11 @@ def skill_load(flat):
     body, _, args = flat[m.end():].partition("\nARGUMENTS: ")  # invocation args are not the skill
     skill_dir = m.group(1)
     return re.split(r"[\\/]", skill_dir.rstrip("\\/"))[-1], skill_dir, body.strip(), args.strip()[:2000] or None
+
+
+def skill_name(name):
+    """A skill's name without its plugin prefix: the Skill tool says `plugin:skill`, the load says `skill`."""
+    return str(name).rsplit(":", 1)[-1]
 
 
 def tool_result_fields(body, tur, decision):
@@ -585,16 +692,12 @@ def inherited_uuids(main, f, meta):
     """Record uuids and API message ids a fork copied from its parent's transcript."""
     if not (meta.get("isFork") or meta.get("agentType") == "fork"):
         return set()
-    for r in iter_records(f):  # newer forks start with a fork-context-ref and copy no history
-        if r.get("type") == "fork-context-ref":
-            return set()
-        break
     parent = meta.get("parentAgentId")
     pf = main.with_suffix("") / "subagents" / f"agent-{parent}.jsonl" if parent else main
     if not pf.exists():
         pf = main
     out = set()
-    for r in iter_records(pf):
+    for r in iter_records(pf):  # a new-style fork's second record repeats the spawning message, usage included
         out.add(r.get("uuid"))
         if r.get("type") == "assistant":
             out.add(as_dict(r.get("message")).get("id"))
@@ -608,6 +711,9 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
         a["status"] = statuses.get(a["agent_id"]) if a["agent_id"] != "main" else None
     inherit_skills(rows)
     unpriced = allocate_cost(rows, cost_state, prices)
+    uncovered = sum(c["cost_usd"] or 0 for c in rows["api_calls"] if not covered(cost_state, c))
+    for c in rows["api_calls"]:
+        c.pop("_len", None)
     by_agent = {}
     for c in rows["api_calls"]:
         s = by_agent.setdefault(c["agent_id"], {"api_calls": 0, "input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0,
@@ -624,7 +730,7 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
     tools = defaultdict(lambda: [0, 0])
     for c in rows["tool_calls"]:
         tools[c["agent_id"]][0] += 1
-        tools[c["agent_id"]][1] += bool(c["is_error"])
+        tools[c["agent_id"]][1] += (bool(c["is_error"]) and not c.get("denied"))
     compactions = defaultdict(int)
     for c in rows["compactions"]:
         compactions[c["agent_id"]] += 1
@@ -649,11 +755,15 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
             "web_search_requests": u.get("webSearchRequests"), "cost_usd": u.get("costUSD"),
         })
     real_calls = [c for c in rows["api_calls"] if model_key(c["model"]) not in FREE_MODELS]
+    if not cost_state:
+        total_cost = sum(c["cost_usd"] or 0 for c in rows["api_calls"])
+    else:
+        total_cost = None if cs.get("totalCostUSD") is None else cs["totalCostUSD"] + uncovered
     run.update({
         "started": min(stamps) if stamps else None, "ended": max(stamps) if stamps else None,
         "n_agents": len(rows["agents"]) - 1, "skills": sorted({s for a in rows["agents"] for s in a["skills"]}),
-        "cost_usd": cs.get("totalCostUSD") if cost_state else sum(c["cost_usd"] or 0 for c in rows["api_calls"]),
-        "cost_estimated": cost_state is None,
+        "cost_usd": total_cost,
+        "cost_estimated": cost_state is None or uncovered > 0, "cost_uncovered_usd": uncovered if cost_state else None,
         "api_ms": cs.get("totalAPIDuration"), "api_ms_no_retries": cs.get("totalAPIDurationWithoutRetries"),
         "tool_ms": cs.get("totalToolDuration"), "total_ms": cs.get("totalDuration"),
         "lines_added": cs.get("totalLinesAdded"), "lines_removed": cs.get("totalLinesRemoved"),
@@ -664,13 +774,14 @@ def finish(rows, run, cost_state, tool_owner, statuses, prices=None):
     rows["runs"].append(run)
 
 
-def run_status(run, cost_state_ts, last_msg_ts, opts, now=None):
+def run_status(run, cost_state_ts, last_msg_ts, opts, now=None, stale=False):
     """complete: Claude Code wrote its closing cost-state after the last turn, or nothing was added for idle_hours.
+    An archive older than its source (stale) is never complete through idleness: its numbers are partial.
     open: the session may still be going, so its numbers are partial. stub: too small to say anything."""
     now = now or datetime.now(timezone.utc)
     if cost_state_ts and (not last_msg_ts or cost_state_ts >= last_msg_ts):
         run["status"], run["ended_by"] = "complete", "session_end"
-    elif run["ended"] and now - run["ended"] > timedelta(hours=opts.get("idle_hours", 12)):
+    elif run["ended"] and not stale and now - run["ended"] > timedelta(hours=opts.get("idle_hours", 12)):
         run["status"], run["ended_by"] = "complete", "idle"
     else:
         run["status"], run["ended_by"] = "open", None
@@ -704,32 +815,117 @@ def inherit_skills(rows):
             ag["skills"] = [inherited]
 
 
+def merge_cost_states(states):
+    """One cost-state for the run. A resumed session writes one per Claude Code process, each covering only its own
+    process (`startTime` onward), so the totals and token counts of all of them are added up."""
+    states = [s for s in states.values() if isinstance(s, dict)]
+    if len(states) < 2:
+        return states[0] if states else None
+    out = dict(max(states, key=lambda s: s.get("totalCostUSD") or 0))
+    for key in {k for s in states for k, v in s.items() if k.startswith("total") and isinstance(v, (int, float))}:
+        out[key] = sum(s.get(key) or 0 for s in states)
+    usage = {}
+    for s in states:
+        for model, u in as_dict(s.get("modelUsage")).items():
+            acc = usage.setdefault(model, {})
+            for k, v in as_dict(u).items():
+                if isinstance(v, (int, float)):
+                    acc[k] = acc.get(k, 0) + v
+    out["modelUsage"] = usage
+    out["hasUnknownModelCost"] = any(s.get("hasUnknownModelCost") for s in states)
+    starts = [s["startTime"] for s in states if isinstance(s.get("startTime"), (int, float))]
+    out["startTime"] = min(starts) if starts else None
+    return out
+
+
+def covered(cost_state, a):
+    """Whether cost-state accounts for this call: it only counts from the start of the process that wrote it."""
+    start = (cost_state or {}).get("startTime")
+    if not cost_state or not isinstance(start, (int, float)) or not a["ts"]:
+        return True
+    return a["ts"] >= datetime.fromtimestamp(start / 1000, timezone.utc)
+
+
+def content_len(content):
+    """Characters of text, thinking and tool input in a message: what its output tokens were spent on."""
+    if isinstance(content, str):
+        return len(content)
+    n = 0
+    for b in content if isinstance(content, list) else []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "tool_use":
+            n += len(json.dumps(b.get("input"), ensure_ascii=False))
+        else:
+            n += len(b.get("text") or b.get("thinking") or "")
+    return n
+
+
+# cost-state field behind each token count of a call. The cache writes are one count there.
+USAGE_FIELDS = {"input_tokens": "inputTokens", "cache_read_tokens": "cacheReadInputTokens"}
+
+
 def allocate_cost(rows, cost_state, prices=None):
     """Each call gets its list-price cost; when cost-state exists, each model's calls are scaled to its real cost.
+
+    The transcript holds fewer tokens than cost-state: most messages never get their final `output_tokens` (only the
+    value from the start of the stream), and calls that never appear in it (titles, classifiers, advisors) add input.
+    Before scaling, each category's gap is handed to the calls: input, cache reads and cache writes in proportion
+    to the call's own tokens, output only to the calls with no `stop_reason` (their count is the stale one), in
+    proportion to the text, thinking and tool input they carry. The rest is one factor per model. Calls before the
+    process cost-state starts at keep their list price.
 
     Returns the models that have no list price. Their calls keep a NULL cost unless cost-state gives the model's
     real cost, in which case it is split across them by tokens.
     """
     usage = as_dict((cost_state or {}).get("modelUsage"))
-    real = defaultdict(float)
+    real, tokens = defaultdict(float), defaultdict(lambda: defaultdict(float))
     for k, v in usage.items():
-        real[model_key(k)] += as_dict(v).get("costUSD") or 0
-    listed, weight, unpriced = defaultdict(float), defaultdict(float), set()
+        v = as_dict(v)
+        real[model_key(k)] += v.get("costUSD") or 0
+        for field in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"):
+            if isinstance(v.get(field), (int, float)):
+                tokens[model_key(k)][field] += v[field]
     for a in rows["api_calls"]:
         a["cost_usd"] = list_cost(a, prices)
-        if a["cost_usd"] is None:
-            unpriced.add(model_key(a["model"]) or "(unknown)")
-            weight[model_key(a["model"])] += prompt_tokens(a) + 5 * (a["output_tokens"] or 0)
-        else:
-            listed[model_key(a["model"])] += a["cost_usd"]
     if not cost_state:
-        return unpriced
+        return {model_key(a["model"]) or "(unknown)" for a in rows["api_calls"] if a["cost_usd"] is None}
+    by_model = defaultdict(list)
     for a in rows["api_calls"]:
-        key = model_key(a["model"])
-        if key not in real:
-            continue
-        if a["cost_usd"] is not None and listed.get(key):
-            a["cost_usd"] *= real[key] / listed[key]
-        elif a["cost_usd"] is None and weight.get(key):
-            a["cost_usd"] = real[key] * (prompt_tokens(a) + 5 * (a["output_tokens"] or 0)) / weight[key]
+        if covered(cost_state, a) and model_key(a["model"]) in real:
+            by_model[model_key(a["model"])].append(a)
+    unpriced = {model_key(a["model"]) or "(unknown)" for a in rows["api_calls"] if a["cost_usd"] is None}
+    for key, calls in by_model.items():
+        est = [dict(a) for a in calls]  # the call with the tokens it should have had
+        for field, name in USAGE_FIELDS.items():
+            scale_category(est, [field], tokens[key].get(name))
+        scale_category(est, ["cache_write_5m", "cache_write_1h"], tokens[key].get("cacheCreationInputTokens"))
+        gap = tokens[key].get("outputTokens", 0) - sum(a["output_tokens"] or 0 for a in calls) if "outputTokens" in tokens[key] else 0
+        if gap > 0:
+            stale = [(a, e) for a, e in zip(calls, est) if not a["stop_reason"] and not a["api_error"]]
+            weights = [(e, a.get("_len", 0)) for a, e in stale or zip(calls, est)]
+            if not sum(w for _, w in weights):
+                weights = [(e, 1) for e, _ in weights]
+            total = sum(w for _, w in weights)
+            for e, w in weights:
+                e["output_tokens"] = (e["output_tokens"] or 0) + gap * w / total
+        listed = {id(a): list_cost(e, prices) for a, e in zip(calls, est)}
+        total = sum(c for c in listed.values() if c is not None)
+        weight = {id(a): prompt_tokens(e) + 5 * (e["output_tokens"] or 0) for a, e in zip(calls, est)}
+        wtotal = sum(weight[id(a)] for a in calls if listed[id(a)] is None)
+        for a in calls:
+            c = listed[id(a)]
+            if c is not None and total:
+                a["cost_usd"] = c * real[key] / total
+            elif c is None and wtotal:
+                a["cost_usd"] = real[key] * weight[id(a)] / wtotal
     return unpriced
+
+
+def scale_category(calls, fields, real):
+    """Raise the `fields` of each call by the factor that brings their sum up to cost-state's count, if it is higher."""
+    seen = sum(a[f] or 0 for a in calls for f in fields)
+    if real and seen and real > seen:
+        for a in calls:
+            for f in fields:
+                a[f] = (a[f] or 0) * real / seen

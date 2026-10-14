@@ -36,7 +36,7 @@ KEYS = {
 }
 DEFAULTS = {
     "runs": config.RUNS, "analysis": config.ANALYSIS, "classify": classify.DEFAULTS, "evidence": config.EVIDENCE,
-    "method": {"min_runs": bench.MIN_RUNS, "resamples": bench.RESAMPLES, "confidence": bench.CONFIDENCE, "cc_version": "minor", "auto_groups": True},
+    "method": {"min_runs": bench.MIN_RUNS, "resamples": bench.RESAMPLES, "confidence": bench.CONFIDENCE, "cc_version": "patch", "auto_groups": True},
 }
 ASSIGNMENT = re.compile(r"^# ((?:\[\[?[\w.\-]+\]\]?(?:\s+#.*)?|[\w\"\-]+ = \S.*))$")
 
@@ -92,7 +92,7 @@ class ShippedConfigs(unittest.TestCase):
                 if key in defaults and isinstance(defaults[key], (int, float)) and not isinstance(defaults[key], bool):
                     self.assertEqual(value, defaults[key], f"[{section}] {key}: the example says {value}, the code uses {defaults[key]}")
         self.assertEqual(cfg["evidence"][0]["scope"], config.EVIDENCE["scope"])
-        self.assertEqual(cfg["method"]["cc_version"], "minor")
+        self.assertEqual(cfg["method"]["cc_version"], "patch")
         self.assertEqual(cfg["classify"]["model"], classify.DEFAULTS["model"])
         self.assertEqual([o["kind"] for o in s["outcomes"]], ["marker", "pr"])
         self.assertEqual(s["weights"]["units"]["my-interview"], {"interventions": 0.0})
@@ -119,6 +119,43 @@ class ShippedConfigs(unittest.TestCase):
         self.assertTrue(all(m.startswith("skill:m-") for m in group["members"]))
         self.assertEqual(bench.unit_weights(s["weights"], "skill:m-grilling", "m-grilling", ["interventions", "cost"]),
                          {"interventions": 0.0, "cost": 2.0})
+
+
+class Rejected(unittest.TestCase):
+    """A typo or a wrong type stops the command with an error that names the key."""
+
+    def fails(self, text, *needles):
+        with self.assertRaises(config.ConfigError) as ctx:
+            load(text)
+        for needle in needles:
+            self.assertIn(needle, str(ctx.exception))
+        self.assertNotIn("\n", str(ctx.exception))
+
+    def test_every_default_key_is_in_the_schema(self):
+        # A new option added to a defaults table but not to SCHEMA would reject every config, the shipped ones too.
+        for section, defaults in (("analysis", config.ANALYSIS), ("runs", config.RUNS), ("privacy", config.PRIVACY)):
+            self.assertLessEqual(set(defaults), set(config.SCHEMA[section]), section)
+
+    def test_unknown_key(self):
+        self.fails("[runs]\nidle_hourz = 3\n", "[runs] idle_hourz", "unknown key")
+        self.fails('[[marker]]\nname = "a"\npattern = "x"\nbadd = ["y"]\n', "[[marker]] #1 badd")
+        self.fails("[weights]\ncost = 1\n[method]\nmin_run = 5\n", "[method] min_run")
+
+    def test_unknown_section(self):
+        self.fails("[selectt]\nsince = ''\n", "[selectt]", "unknown section")
+
+    def test_wrong_type_names_the_key(self):
+        self.fails('[method]\nmin_runs = "x"\n', "[method] min_runs", "whole number", "'x'")
+        self.fails("[method]\nresamples = 4000.5\n", "[method] resamples", "whole number")
+        self.fails("[method]\nauto_groups = 1\n", "[method] auto_groups", "true or false")
+        self.fails("[runs]\nidle_hours = true\n", "[runs] idle_hours", "a number")
+        self.fails('[select]\nskills = "m-feature"\n', "[select] skills", "list")
+        self.fails("[privacy]\nredact = 'yes'\n", "[privacy] redact")
+        self.fails("[dashboard]\nauto = 'no'\n", "[dashboard] auto")
+
+    def test_valid_values_still_load(self):
+        cfg = load('[method]\nmin_runs = 5\nconfidence = 0.9\n[select]\nsince = 2026-09-28\nskills = ["a"]\n[runs]\nstub_cost_usd = 1\n')
+        self.assertEqual(cfg["method"]["min_runs"], 5)
 
 
 if __name__ == "__main__":

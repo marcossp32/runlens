@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from runlens import classify, cli, config, evals, store
+from runlens import classify, cli, config, evals, privacy, store
 
 S = "aaaaaaaa-1111-2222-3333-444444444444"
 T0 = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
@@ -399,6 +399,12 @@ class ClassifyTest(unittest.TestCase):
         self.assertIn("Edit", fields["allowed_tools"])
         self.assertIn("not reconstructed", (tamper / "context.md").read_text(encoding="utf-8"))
 
+    def test_export_eval_redacts_what_it_copies(self):
+        fn = privacy.redactor({"privacy": {"redact": True}})
+        rec = {"message": {"content": [{"type": "text", "text": "key sk-ant-FAKEFAKEFAKEFAKE1234"}]}, "n": 1}
+        self.assertNotIn("FAKEFAKE", json.dumps(evals.redacted(rec, fn)))
+        self.assertEqual(evals.redacted(rec, fn)["n"], 1)
+
     def test_export_eval_graders_match_the_failure(self):
         out = self.tmp / "evals-graders"
         with redirect_stdout(io.StringIO()):
@@ -418,6 +424,13 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual([r["uuid"] for r in hist], ["1", "2", "3"])
         self.assertIn('history_file: "history.jsonl"', (case / "case.yaml").read_text(encoding="utf-8"))
         self.assertIn('schema_version: "1.1"', (case / "case.yaml").read_text(encoding="utf-8"))
+
+    def test_export_eval_skips_cases_without_a_checking_grader(self):
+        for typ in ("repeated_call", "permission_denied"):
+            g, a = evals.checks(self.cfg, {"type": typ, "skill": "flow", "key": "x"}, None)  # failing call missing
+            self.assertEqual((g, a), ([], []))  # no bare skill-fired, no tool_used without input_match
+        g, _ = evals.checks(self.cfg, {"type": "idle_loop", "skill": "flow"}, None)
+        self.assertTrue(all(x.get("input_match") for x in g if x["type"] == "tool_used" and "max" in x))
 
     def test_export_eval_prompt_from_skill_args_without_history(self):
         out = self.tmp / "evals-args"
@@ -443,6 +456,7 @@ class ClassifyTest(unittest.TestCase):
                 self.assertEqual(e["files"], [])
                 self.assertTrue(e["assertions"])
                 self.assertEqual(e["assertions"], e["expectations"])
+                self.assertNotIn("name", e)
         flow = json.loads((out / "skill-creator" / "flow" / "evals" / "evals.json").read_text(encoding="utf-8"))
         self.assertEqual(flow["evals"][0]["prompt"], "issue 7")
         build = json.loads((out / "skill-creator" / "build" / "evals" / "evals.json").read_text(encoding="utf-8"))
@@ -485,7 +499,8 @@ class RetroSkillTest(unittest.TestCase):
                 fields[key] = value
         self.assertEqual(fields["name"], "runlens-retro")
         self.assertLessEqual(len(fields["description"]), 1024)
-        self.assertIn("Use after", fields["description"])
+        self.assertIn("Run it yourself", fields["description"])  # it is user-invoked only, so the text must not promise automatic use
+        self.assertNotIn("Use after", fields["description"])
         self.assertTrue(fields.get("argument-hint"))
         self.assertIs(fields["disable-model-invocation"], True)
         self.assertLess(len(body.splitlines()), 500)

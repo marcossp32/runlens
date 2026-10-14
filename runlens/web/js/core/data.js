@@ -14,9 +14,9 @@ const DAY = 864e5;
 const PLAIN = {
   outcome: ["Outcome", "The result your config counts as success, such as a check that passes first time or a PR opened.", "Outcome"],
   cost: ["Cost per invocation", "Model spend each time it was used (a typical value: the geometric mean).", "Cost"],
-  seconds: ["Time per invocation", "Working time each time it was used (a typical value).", "Time"],
+  seconds: ["Agent time per invocation", "Agent time each time it was used (a typical value); parallel agents add up, and waits for subagents or the user are included.", "Time"],
   error_rate: ["Tool errors", "Share of its tool calls that failed. Calls your permission rules denied do not count.", "Tool errors"],
-  incidents: ["Problems per 100 tool calls", "Repeated calls, interrupts, failed subagents and similar.", "Problems"],
+  incidents: ["Scored problems per 100 tool calls", "Repeated calls, interrupts, failed subagents and similar.", "Problems"],
   interventions: ["Your messages per invocation", "Messages you sent while it was the active skill.", "Your messages"],
   idle_rate: ["Waiting calls", "Share of its tool calls that only wait or print.", "Waiting"],
   api_error_rate: ["API errors", "Share of its model turns that hit an API error (limits are not errors).", "API errors"],

@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from . import config, incidents
 from .fs import fs_path, makedirs, plain, read_json, signature
 from .privacy import redact_rows
-from .transcripts import PARSER_VERSION, parse_run, run_files
+from .transcripts import FAST, HAIKU_LONG, NO_GEO, PARSER_VERSION, PRICES, US_GEO, WEB_SEARCH_USD, parse_run, run_files
 
 SCHEMA = {
     "runs": [
@@ -31,7 +31,7 @@ SCHEMA = {
         ("status", "VARCHAR"), ("ended_by", "VARCHAR"), ("is_stub", "BOOLEAN"), ("entrypoint", "VARCHAR"),
         ("pr_urls", "VARCHAR[]"), ("api_ms_no_retries", "BIGINT"), ("total_ms", "BIGINT"),
         ("unknown_model_cost", "BOOLEAN"), ("unpriced_models", "VARCHAR[]"), ("n_api_calls", "INTEGER"),
-        ("bad_lines", "INTEGER"), ("parser_version", "INTEGER"),
+        ("bad_lines", "INTEGER"), ("parser_version", "INTEGER"), ("cost_uncovered_usd", "DOUBLE"),
     ],
     "agents": [
         ("session_id", "VARCHAR"), ("agent_id", "VARCHAR"), ("parent_agent_id", "VARCHAR"),
@@ -45,18 +45,18 @@ SCHEMA = {
     ],
     "api_calls": [
         ("session_id", "VARCHAR"), ("agent_id", "VARCHAR"), ("msg_id", "VARCHAR"), ("request_id", "VARCHAR"),
-        ("ts", "TIMESTAMPTZ"), ("model", "VARCHAR"), ("effort", "VARCHAR"), ("skill", "VARCHAR"),
+        ("ts", "TIMESTAMPTZ"), ("model", "VARCHAR"), ("effort", "VARCHAR"), ("skill", "VARCHAR"), ("skill_inferred", "BOOLEAN"),
         ("input_tokens", "BIGINT"), ("cache_read_tokens", "BIGINT"), ("cache_write_5m", "BIGINT"),
         ("cache_write_1h", "BIGINT"), ("output_tokens", "BIGINT"), ("thinking_tokens", "BIGINT"),
         ("thinking_ms", "BIGINT"), ("stop_reason", "VARCHAR"), ("api_error", "BOOLEAN"), ("cost_usd", "DOUBLE"),
         ("api_limit", "BOOLEAN"), ("api_error_kind", "VARCHAR"), ("api_error_status", "INTEGER"),
         ("requested_model", "VARCHAR"), ("speed", "VARCHAR"), ("inference_geo", "VARCHAR"),
-        ("attribution_agent", "VARCHAR"), ("mcp_server", "VARCHAR"), ("mcp_tool", "VARCHAR"),
+        ("attribution_agent", "VARCHAR"), ("mcp_server", "VARCHAR"), ("mcp_tool", "VARCHAR"), ("web_searches", "INTEGER"),
     ],
     "tool_calls": [
         ("session_id", "VARCHAR"), ("agent_id", "VARCHAR"), ("tool_use_id", "VARCHAR"), ("msg_id", "VARCHAR"),
         ("seq", "INTEGER"), ("ts", "TIMESTAMPTZ"), ("ts_result", "TIMESTAMPTZ"), ("duration_ms", "BIGINT"),
-        ("tool", "VARCHAR"), ("skill", "VARCHAR"), ("input_hash", "VARCHAR"), ("input_summary", "VARCHAR"),
+        ("tool", "VARCHAR"), ("skill", "VARCHAR"), ("skill_inferred", "BOOLEAN"), ("input_hash", "VARCHAR"), ("input_summary", "VARCHAR"),
         ("input_json", "VARCHAR"), ("is_error", "BOOLEAN"), ("error_class", "VARCHAR"), ("denied", "VARCHAR"),
         ("interrupted", "BOOLEAN"), ("idle", "BOOLEAN"), ("touches_test", "BOOLEAN"),
         ("result_len", "INTEGER"), ("result_head", "VARCHAR"),
@@ -300,9 +300,11 @@ def record_errors(errors):
 # --- ingest ------------------------------------------------------------------------------------------------
 
 def config_hash(cfg):
-    """The parts of config.toml that change the rows a run produces. Editing them re-ingests every run."""
+    """The parts of config.toml, and the built-in price table, that change the rows a run produces. Editing them re-ingests every run."""
     keys = ("marker", "analysis", "prices", "runs", "privacy")
-    return hashlib.sha1(json.dumps({k: cfg.get(k) for k in keys}, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    built_in = [PRICES, HAIKU_LONG, FAST, US_GEO, sorted(NO_GEO), WEB_SEARCH_USD]
+    return hashlib.sha1(json.dumps({**{k: cfg.get(k) for k in keys}, "built_in_prices": built_in},
+                                   sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 def fingerprint(main):
@@ -369,6 +371,8 @@ def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
                       f"tools={len(r['tool_calls'])}  markers={len(r['markers'])}  incidents={len(r['incidents'])}")
         batch, batch_rows = [], 0
 
+    from .archive import stale_runs  # a stale archive holds only part of its source: never complete through idleness
+    stale = {sid for sid, _, _ in stale_runs()}
     for mf, info in manifests(sessions):
         sid = mf.name.removesuffix(".runlens.json")
         if isinstance(info, Exception):
@@ -381,11 +385,11 @@ def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
             errors.append(err(sid, main, "read", FileNotFoundError("the archived transcript is missing")))
             continue
         try:
-            fp = fingerprint(main)
+            fp = fingerprint(main) + ("-stale" if sid in stale else "")
             if not force and state.get(sid) == (fp, PARSER_VERSION, cfg_hash):
                 skipped += 1
                 continue
-            rows = parse_run(main, info, cfg)
+            rows = parse_run(main, {**info, "stale": sid in stale}, cfg)
             redact_rows(rows, cfg)
             rows["incidents"] = incidents.build(rows, cfg)
         except Exception as e:
@@ -405,6 +409,24 @@ def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
     return done
 
 
+def outdated_sessions():
+    """Runs last ingested by an older parser, which a drain re-ingests so the database never mixes versions."""
+    con = connect(wait=300)
+    try:
+        return sorted(r[0] for r in con.execute("SELECT session_id FROM ingest_state WHERE parser_version IS DISTINCT FROM ?", [PARSER_VERSION]).fetchall())
+    finally:
+        con.close()
+
+
+def failed_sessions(sessions):
+    """Which of these sessions have a recorded ingest error."""
+    con = connect(wait=300)
+    try:
+        return {r[0] for r in con.execute("SELECT session_id FROM ingest_errors WHERE session_id IN (SELECT unnest(?::VARCHAR[]))", [list(sessions)]).fetchall()}
+    finally:
+        con.close()
+
+
 def err(sid, path, stage, e):
     return {"session_id": sid, "path": str(plain(path)), "stage": stage, "error": f"{type(e).__name__}: {e}"[:1000],
             "detail": "".join(traceback.format_exception(e))[-4000:]}
@@ -412,11 +434,14 @@ def err(sid, path, stage, e):
 
 def close_idle_runs(cfg):
     """A run that had no cost-state when it was parsed becomes complete once nothing was added for idle_hours."""
+    from .archive import stale_runs  # a stale archive holds only part of its source: it stays open until archived again
     hours = (cfg.get("runs") or {}).get("idle_hours", config.RUNS["idle_hours"])
+    stale = [sid for sid, _, _ in stale_runs()]
     con = connect(wait=300)
     try:
         con.execute("""UPDATE runs SET status = 'complete', ended_by = 'idle'
-                       WHERE status = 'open' AND ended < ?""", [datetime.now(timezone.utc) - timedelta(hours=hours)])
+                       WHERE status = 'open' AND ended < ? AND session_id NOT IN (SELECT unnest(?::VARCHAR[]))""",
+                    [datetime.now(timezone.utc) - timedelta(hours=hours), stale])
         set_meta(con, parser_version=PARSER_VERSION, last_ingest=datetime.now(timezone.utc).isoformat())
     finally:
         con.close()
