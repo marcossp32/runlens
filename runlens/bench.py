@@ -1020,7 +1020,12 @@ def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
 
 def pair_entry(uid, va, vb, rows_a, rows_b, base, pseudo, weights, own_skills, ctx, st):
     """Version B against version A of the same unit: the bootstrap of the difference, confounders and the verdict."""
-    n_a, n_b = va["runs"], vb["runs"]
+    # A session that used both versions would sit in both arms, so the arms would not be independent: leave it out.
+    shared = {r["sid"] for r in rows_a} & {r["sid"] for r in rows_b}
+    if shared:
+        rows_a = [r for r in rows_a if r["sid"] not in shared]
+        rows_b = [r for r in rows_b if r["sid"] not in shared]
+    n_a, n_b = n_runs(rows_a) if shared else va["runs"], n_runs(rows_b) if shared else vb["runs"]
     enough = n_a >= st["min_runs"] and n_b >= st["min_runs"]
     res = compare(rows_a, rows_b, base, pseudo, weights, f"{uid}|{va['key']}|{vb['key']}", st["resamples"],
                   st["confidence"], interval=enough)

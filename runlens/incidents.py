@@ -132,7 +132,7 @@ def build(rows, cfg):
             parent = seq_of.get(a["parent_tool_use_id"], (a.get("parent_agent_id"), None))
             last = tl.get(a["agent_id"], [])
             add(a["agent_id"], a["ended"], "agent_failed", f"{a['role']}: {a['status']}", 1,
-                (a["skills"] or [None])[0], last[-1][1] if last else None, a["parent_tool_use_id"],
+                (last[-1][2].get("skill") if last else None) or (a["skills"] or [None])[0], last[-1][1] if last else None, a["parent_tool_use_id"],
                 extra=f"spawned by {parent[0]} at step {parent[1]}" + ("; stopped by the user" if a.get("stopped_by_user") else ""),
                 detail="stopped_by_user" if a.get("stopped_by_user") else None)
 

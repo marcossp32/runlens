@@ -392,6 +392,28 @@ class RunlensTest(unittest.TestCase):
         self.assertEqual(st.stack, ["flow", "plan"])
         self.assertEqual(st.on_attribution("flow"), "flow")
 
+    def test_subagent_load_wins_over_the_inherited_attribution(self):
+        st = transcripts.SkillStack()
+        self.assertEqual(st.on_attribution("parent"), "parent")  # the spawn default
+        st.push("scan")
+        self.assertEqual(st.on_attribution("parent"), "scan")    # inherited again: the load stays
+        self.assertEqual(st.on_attribution(None), "scan")
+        st.push("build")
+        self.assertEqual(st.on_attribution("parent"), "build")
+
+    def test_main_fallback_is_flagged_and_ends_at_a_human_prompt(self):
+        st = transcripts.SkillStack(main=True)
+        st.push("flow")
+        self.assertEqual(st.on_attribution("flow"), "flow")
+        self.assertFalse(st.inferred)
+        st.push("grill")
+        st.on_attribution("grill")
+        self.assertEqual(st.on_attribution(None), "flow")
+        self.assertTrue(st.inferred)
+        st.new_prompt()
+        self.assertIsNone(st.on_attribution(None))
+        self.assertFalse(st.inferred)
+
     def test_idle_detection(self):
         parts = config.ANALYSIS["idle_parts"]
         self.assertTrue(transcripts.is_idle("sleep 60; echo tick", parts))

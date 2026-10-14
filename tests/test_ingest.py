@@ -63,6 +63,11 @@ class Run:
         return self
 
 
+def skill_text(name, body):
+    """The text Claude Code injects when a skill with a base directory loads."""
+    return f"Base directory for this skill: C:/skills/{name}\n\n# {body}"
+
+
 def simple_run(projects, sid, n=3, cost=0.5, **kw):
     r = Run(projects, sid, **kw)
     r.rec(type="user", message={"role": "user", "content": "do it"}, promptSource="typed")
@@ -193,6 +198,86 @@ class Ingest(Sandbox):
         self.assertEqual(self.refresh(), 1, self.out)
         got = [s for s, in self.q("SELECT skill FROM tool_calls WHERE session_id = ? ORDER BY seq", r.sid)]
         self.assertEqual(got, ["flow", "flow", "grill", "research", "flow", "plan", "flow", "review", "flow"])
+
+    def test_main_session_fallback_ends_at_the_next_human_prompt(self):
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000002")
+        r.rec(type="user", message={"role": "user", "content": "/flow"}, promptSource="typed")
+        r.turn("m1", "t1", attr="flow")
+        r.turn("m2", "t2", attr=None)
+        r.rec(type="user", message={"role": "user", "content": "something else entirely"}, promptSource="typed")
+        r.turn("m3", "t3", attr=None)
+        r.end()
+        r.write()
+        self.assertEqual(self.refresh(), 1, self.out)
+        got = self.q("SELECT skill, skill_inferred FROM tool_calls WHERE session_id = ? ORDER BY seq", r.sid)
+        self.assertEqual(got, [("flow", False), ("flow", True), (None, False)])
+        self.assertEqual(self.q("SELECT skill, skill_inferred FROM api_calls WHERE msg_id = 'm2'"), [("flow", True)])
+
+    def test_skill_loaded_in_a_subagent_wins_over_the_inherited_attribution(self):
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000003")
+        r.rec(type="user", message={"role": "user", "content": "/flow"}, promptSource="typed")
+        r.turn("m1", "t1", attr="flow")
+        r.end()
+        r.write()
+        sub = Run(self.projects, "agent-s1", project=f"C--work-repo/{r.sid}/subagents")
+        sub.turn("s1", "st1", attr="flow")  # inherited from the parent when it was spawned
+        sub.rec(type="user", isMeta=True, message={"role": "user", "content": skill_text("scan", "scan")})
+        sub.turn("s2", "st2", attr="flow")
+        sub.turn("s3", "st3", attr=None)
+        sub.write()
+        (sub.path.parent / "agent-s1.meta.json").write_text(json.dumps({"agentType": "Explore", "toolUseId": "t1"}))
+        self.assertEqual(self.refresh(), 1, self.out)
+        got = self.q("SELECT skill FROM tool_calls WHERE agent_id = 's1' ORDER BY seq")
+        self.assertEqual(got, [("flow",), ("scan",), ("scan",)])
+        self.assertEqual(self.q("SELECT skill FROM api_calls WHERE msg_id = 's3'"), [("scan",)])
+
+    def test_plugin_prefix_and_skills_without_a_base_directory(self):
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000004")
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        r.rec(type="assistant", attributionSkill=None, message={
+            "id": "m1", "model": "claude-sonnet-5-5", "role": "assistant", "stop_reason": "tool_use",
+            "content": [{"type": "tool_use", "id": "sk1", "name": "Skill", "input": {"skill": "pack:design"}}],
+            "usage": {"input_tokens": 10, "output_tokens": 5}})
+        r.rec(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "sk1", "content": "Launching skill: design"}]},
+              toolUseResult={"success": True, "commandName": "design"})
+        r.rec(type="user", isMeta=True, sourceToolUseID="sk1", message={"role": "user", "content": [{"type": "text", "text": "## Page contract\n\nRules."}]})
+        r.rec(type="attachment", attachment={"type": "skill_mention", "skillName": "pack:other"})
+        r.turn("m2", "t2", attr="design")
+        r.end()
+        r.write()
+        self.assertEqual(self.refresh(), 1, self.out)
+        self.assertEqual(self.q("SELECT skill, skill_dir FROM skill_loads"), [("design", None)])
+        self.assertEqual(self.q("SELECT skill FROM skill_mentions"), [("other",)])
+
+    def test_agent_failed_is_credited_to_the_skill_it_was_running(self):
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000005")
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        r.turn("m1", "t1", attr="flow")
+        r.end()
+        r.write()
+        sub = Run(self.projects, "agent-f1", project=f"C--work-repo/{r.sid}/subagents")
+        sub.turn("f1", "ft1", attr="zeta")
+        sub.turn("f2", "ft2", attr="alpha")
+        sub.write()
+        (sub.path.parent / "agent-f1.meta.json").write_text(json.dumps({"agentType": "Explore", "toolUseId": "t1"}))
+        rows = transcripts.parse_run(r.path, {"project": "p"}, self.cfg)
+        rows["agents"][-1]["status"] = "failed"
+        rows["agents"][-1]["skills"] = ["alpha", "zeta"]
+        self.assertEqual([i["skill"] for i in incidents.build(rows, self.cfg) if i["type"] == "agent_failed"], ["alpha"])
+
+    def test_version_stats_split_a_run_between_the_versions_it_used(self):
+        r = Run(self.projects, "abababab-0000-0000-0000-000000000006")
+        r.rec(type="user", message={"role": "user", "content": "/flow"}, promptSource="typed")
+        r.rec(type="user", isMeta=True, message={"role": "user", "content": skill_text("flow", "one")})
+        r.turn("m1", "t1", attr="flow")
+        r.rec(type="user", isMeta=True, message={"role": "user", "content": skill_text("flow", "two")})
+        r.turn("m2", "t2", attr="flow")
+        r.turn("m3", "t3", attr="flow")
+        r.end()
+        r.write()
+        self.assertEqual(self.refresh(), 1, self.out)
+        got = sorted(self.q("SELECT api_calls, tool_calls FROM v_skill_version_stats WHERE skill = 'flow'"))
+        self.assertEqual(got, [(1, 1), (2, 2)])
 
     def test_a_run_that_fails_to_parse_is_recorded_and_the_rest_ingest(self):
         simple_run(self.projects, "cccccccc-0000-0000-0000-000000000001")
