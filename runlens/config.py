@@ -76,10 +76,80 @@ class ConfigError(Exception):
     """A config.toml that cannot work. Raised before any run is touched, with the key at fault."""
 
 
+# The sections and keys config.toml may hold, with the kind of value each takes. Anything else is a typo and is refused.
+# Kinds: str, int (whole number), num, bool, strs (list of strings), since (date text), any (checked where it is used).
+SCHEMA = {
+    "select": {"since": "since", "skills": "strs", "projects": "strs"},
+    "runs": {"idle_hours": "num", "stub_api_calls": "int", "stub_cost_usd": "num"},
+    "privacy": {"redact": "bool", "patterns": "strs"},
+    "analysis": {"idle_parts": "strs", "test_path": "str", "repeat_min": "int", "idle_min": "int", "error_streak_min": "int",
+                 "context_steps": "int"},
+    "classify": {"model": "str", "before": "int", "after": "int", "skill_chars": "int", "timeline_chars": "int"},
+    "evidence": {"name": "str", "glob": "str", "scope": "str", "slack_minutes": "num", "max_mb": "num", "exclude": "strs"},
+    "marker": {"name": "str", "source": "str", "pattern": "str", "bad": "any"},
+    "outcome": {"name": "str", "marker": "str", "success": "strs", "failure": "strs", "skills": "strs", "pr": "str"},
+    "method": {"min_runs": "int", "resamples": "int", "confidence": "num", "cc_version": "str", "auto_groups": "bool"},
+    "group": {"name": "str", "members": "strs"},
+    "dashboard": {"auto": "bool", "view": "any"},
+    "weights": None,    # measure names and per-unit tables: checked against the measures in bench.parse_weights
+    "prices": None,     # model names: checked in validate
+}
+TABLE_LISTS = ("marker", "evidence", "outcome", "group")   # written as [[name]]; [outcome] may also be a single table
+KIND_TEXT = {"str": "text", "int": "a whole number", "num": "a number", "bool": "true or false", "strs": "a list of text values",
+             "since": "an ISO date like 2026-09-28"}
+
+
+def _kind_ok(kind, v):
+    if kind == "any":
+        return True
+    if kind == "str":
+        return isinstance(v, str)
+    if kind == "since":
+        return isinstance(v, (str, date))
+    if kind == "bool":
+        return isinstance(v, bool)
+    if kind == "int":
+        return isinstance(v, int) and not isinstance(v, bool)
+    if kind == "num":
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def check_schema(cfg, bad):
+    """Unknown sections and keys, and values of the wrong type, each named in a one-line error."""
+    for section in cfg:
+        if section not in SCHEMA:
+            bad(f"[{section}]: unknown section (known: {', '.join(SCHEMA)})")
+    for section, keys in SCHEMA.items():
+        value = cfg.get(section)
+        if keys is None or value is None:
+            continue
+        ref = f"[[{section}]]" if section in TABLE_LISTS else f"[{section}]"
+        tables = value if isinstance(value, list) else [value]
+        if not all(isinstance(t, dict) for t in tables):
+            bad(f"{ref}: must be a table")
+        if isinstance(value, list) and section not in TABLE_LISTS:
+            bad(f"[{section}]: must be a single table, not [[{section}]]")
+        for i, t in enumerate(tables):
+            where = f"{ref} #{i + 1}" if isinstance(value, list) else ref
+            for key, v in t.items():
+                if key not in keys:
+                    bad(f"{where} {key}: unknown key (known: {', '.join(keys)})")
+                if not _kind_ok(keys[key], v):
+                    bad(f"{where} {key}: must be {KIND_TEXT[keys[key]]}, got {v!r}")
+    views = (cfg.get("dashboard") or {}).get("view") or []
+    if not isinstance(views, list):
+        bad("[dashboard] view: must be a list of [[dashboard.view]] tables")
+    for i, v in enumerate(views):
+        if not isinstance(v, dict) or not set(v) <= {"name", "hash"} or not all(isinstance(x, str) for x in v.values()):
+            bad(f"[[dashboard.view]] #{i + 1}: a table with text values name and hash")
+
+
 def validate(cfg, path="config.toml"):
     def bad(msg):
         raise ConfigError(f"{path}: {msg}")
 
+    check_schema(cfg, bad)
     for i, m in enumerate(cfg.get("marker", [])):
         if not m.get("name") or not m.get("pattern"):
             bad(f"[[marker]] #{i + 1} needs a name and a pattern")

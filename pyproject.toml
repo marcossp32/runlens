@@ -11,13 +11,21 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "marcossp32" }]
 requires-python = ">=3.11"
+# pytz is never imported by runlens: DuckDB imports it itself to return TIMESTAMPTZ values. Do not remove it.
 dependencies = ["duckdb>=1.1", "pytz"]
 keywords = ["claude-code", "observability", "agents", "duckdb", "skills"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Quality Assurance",
 ]
+
+[dependency-groups]
+dev = ["pytest"]
 
 [project.urls]
 Repository = "https://github.com/marcossp32/runlens"
@@ -40,3 +48,7 @@ target-version = "py311"
 # small lambdas next to where they are used) and B905 (zip over lists built to the same length).
 select = ["E4", "E7", "E9", "F", "W", "I", "B"]
 ignore = ["E731", "B905"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]   # tests import each other as `tests.test_bench`
+testpaths = ["tests"]

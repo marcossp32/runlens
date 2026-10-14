@@ -59,8 +59,9 @@ jobs:
       - run: uv sync --locked
       - name: Tests
         run: uv run python -m unittest discover -s tests -v 2>&1 | tee test.log
-      - name: The node and browser tests ran (Linux)
-        if: runner.os == 'Linux'
+      # GitHub's Windows and macOS images ship Chrome too (tests/test_web.py looks in its install paths), so a
+      # skipped dashboard test is a failure on every OS, not only on Linux.
+      - name: The node and browser tests ran
         run: |
           if grep -E '\(tests\.test_web\.[^)]*\) \.\.\. skipped' test.log; then
             echo "::error::dashboard tests were skipped: node or the browser is missing"
@@ -95,3 +96,26 @@ jobs:
           grep -q '<script id="data" type="application/json">' dashboard.html
           if grep -q '{{' dashboard.html; then echo "::error::unfilled template placeholder"; exit 1; fi
           rl score
+
+      # install / uninstall end to end, against throwaway settings and home so nothing real is touched.
+      - name: Smoke-test install and uninstall
+        env:
+          RUNLENS_HOME: ${{ runner.temp }}/runlens-install-home
+          CLAUDE_SETTINGS: ${{ runner.temp }}/claude-install/settings.json
+        run: |
+          wheel="$(pwd -W 2>/dev/null || pwd)/$(ls dist/runlens-*.whl)"
+          mkdir -p "$RUNNER_TEMP/claude-install"
+          echo '{"theme": "dark"}' > "$CLAUDE_SETTINGS"
+          cd "$RUNNER_TEMP"
+          export HOME="$RUNNER_TEMP/fake-home" USERPROFILE="$RUNNER_TEMP/fake-home"   # the skill is copied under ~/.claude/skills
+          rl() { uv run --isolated --no-project --python "${{ matrix.python }}" --with "$wheel" runlens "$@"; }
+          rl install
+          grep -q runlens "$CLAUDE_SETTINGS"
+          grep -q '"theme"' "$CLAUDE_SETTINGS"
+          test -f "$RUNLENS_HOME/config.toml"
+          test -f "$HOME/.claude/skills/runlens-retro/SKILL.md"
+          rl install   # a second install must not add a second hook
+          test "$(grep -c SessionEnd "$CLAUDE_SETTINGS")" = 1
+          rl uninstall
+          if grep -q runlens "$CLAUDE_SETTINGS"; then echo "::error::uninstall left the hook"; exit 1; fi
+          grep -q '"theme"' "$CLAUDE_SETTINGS"
