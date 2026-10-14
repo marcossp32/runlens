@@ -948,20 +948,22 @@ def compute(data, groups=None, resamples=None, cfg=None):
         if kind in VERSIONED:
             # A version is a hash over a contiguous stretch of runs: reverting A -> B -> A makes a new version
             # (key "<hash>#2"), so the pre- and post-B runs are not pooled and the newest span is the current one.
-            by_version, spans, prev = defaultdict(list), Counter(), None
+            # A version's span goes on while consecutive runs use it. A new span starts only when a version comes back
+            # in a run that carries on no version, so a run that used two versions (an edit mid-run, or a stale text
+            # loaded next to the new one) joins existing spans instead of looking like a revert.
+            by_version, spans, last = defaultdict(list), Counter(), {}
             by_run = defaultdict(list)
             for r in rows:
                 by_run[(r["started"] or FAR, r["sid"])].append(r)
-            for run in sorted(by_run):
-                # A run that used two versions is one moment: the version already in progress goes first, so the
-                # run's other row does not look like a revert and split the span.
-                for r in sorted(by_run[run], key=lambda r: (r["vkey"] != prev, r["vkey"])):
+            for idx, run in enumerate(sorted(by_run)):
+                carries_on = any(last.get(r["vkey"]) == idx - 1 for r in by_run[run])
+                for r in by_run[run]:
                     key = r["vkey"]
-                    if key != prev:
-                        prev = key
-                        spans[prev] += 1
-                    if spans[prev] > 1:
-                        r["vkey"] = f"{prev}#{spans[prev]}"
+                    if key not in last or (last[key] < idx - 1 and not carries_on):
+                        spans[key] += 1
+                    last[key] = idx
+                    if spans[key] > 1:
+                        r["vkey"] = f"{key}#{spans[key]}"
                     by_version[r["vkey"]].append(r)
             ordered = sorted(by_version.items(), key=lambda kv: min((r["started"] or FAR) for r in kv[1]))
             prev_vmap = None
