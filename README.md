@@ -249,7 +249,7 @@ Every section is optional. [`config.example.toml`](runlens/config.example.toml) 
 | `[select]` | `since` (""), `skills` ([]), `projects` ([]) | Which sessions are runs. CLI filters override it |
 | `[runs]` | `idle_hours` (12), `stub_api_calls` (3), `stub_cost_usd` (0.02) | When a run without a closing record counts as finished, and when a run is too small to benchmark |
 | `[privacy]` | `redact` (false), `patterns` ([]) | Mask secrets, tokens and e-mails before text reaches DuckDB; extra regexes |
-| `[analysis]` | `repeat_min` (3), `idle_min` (3), `error_streak_min` (2), `context_steps` (8), `test_path`, `idle_parts` | Thresholds and patterns of the generic incident detectors |
+| `[analysis]` | `repeat_min` (3), `repeat_window_s` (600), `idle_min` (3), `error_streak_min` (2), `context_steps` (8), `test_path`, `idle_parts` | Thresholds and patterns of the generic incident detectors |
 | `[classify]` | `model` ("sonnet"), `before` (12), `after` (4), `skill_chars` (14000), `timeline_chars` (9000) | The judge's model and how much timeline and skill text it sees |
 | `[[evidence]]` | `name`, `glob`, `scope` ("run"), `slack_minutes` (10), `max_mb` (200), `exclude` ([]) | Extra files to keep with each run. Placeholders `{cwd}`, `{git_dir}`, `{session_id}` |
 | `[[marker]]` | `name`, `pattern`, `source` ("any"), `bad` ([]) | Output lines that are signals; a bad value becomes an incident |

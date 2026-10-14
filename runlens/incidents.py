@@ -11,6 +11,7 @@ Two kinds of moment are deliberately not held against the work:
 """
 import hashlib
 from collections import defaultdict
+from datetime import timedelta
 
 TYPES = {
     "error_streak": "consecutive failing tool calls in one agent",
@@ -22,7 +23,7 @@ TYPES = {
     "interrupt": "a run or tool interrupted",
     "compaction": "context compacted",
     "api_error": "an API error that is not a quota, session or rate limit",
-    "test_edit_after_failure": "an edit to a test file right after a failing call in the same agent (possible test tampering)",
+    "test_edit_after_failure": "an edit to an existing test file right after a failing test run in the same agent (possible test tampering)",
 }
 HUMAN_DENIALS = {"user-rejected"}  # a person said no: an intervention, not a permission rule
 
@@ -68,11 +69,14 @@ def build(rows, cfg):
         """`ident` overrides what the id is made of, for incidents that grow as a run goes on (a streak, a loop):
         they are identified by their first call, so the id and its labels survive re-ingesting a resumed run."""
         a = agents.get(agent_id, {})
-        incident_id = iid(sid, agent_id, kind, *(ident if ident else (key, seq)))
+        # Anchored incidents are identified by their tool call, never by `key` (built from input text, which
+        # redaction rewrites) or `seq`, so labels survive redaction and re-ingest.
+        parts = ident if ident else (("anchor", anchor) if anchor else (key, seq))
+        incident_id = iid(sid, agent_id, kind, *parts)
         n = 1
         while incident_id in seen:  # two identical moments at the same step
             n += 1
-            incident_id = iid(sid, agent_id, kind, *(ident if ident else (key, seq)), n)
+            incident_id = iid(sid, agent_id, kind, *parts, n)
         seen.add(incident_id)
         out.append({
             "incident_id": incident_id, "session_id": sid, "agent_id": agent_id,
@@ -86,7 +90,7 @@ def build(rows, cfg):
         # error streaks
         streak = []
         for c in calls + [None]:
-            if c is not None and c["is_error"]:
+            if c is not None and c["is_error"] and not c.get("denied"):  # a denial is a permission_denied, not a failure
                 streak.append(c)
                 continue
             if len(streak) >= an["error_streak_min"]:
@@ -96,27 +100,44 @@ def build(rows, cfg):
                     last["skill"], last["seq"], last["tool_use_id"], ident=("first", streak[0]["tool_use_id"]))
             streak = []
         # repeated identical calls and idle loops
+        # Identical input AND identical output: re-reading a log that keeps changing is progress, not a repeat.
         by_hash = defaultdict(list)
         for c in calls:
-            by_hash[c["input_hash"]].append(c)
+            by_hash[(c["input_hash"], c.get("result_head"))].append(c)
+        window = timedelta(seconds=an.get("repeat_window_s", 600))
         for group in by_hash.values():
-            if group[0]["idle"] or len(group) < an["repeat_min"]:
+            if group[0]["idle"]:
                 continue
-            last = group[-1]
-            add(agent_id, last["ts"], "repeated_call", f"{last['tool']}: {(last['input_summary'] or '')[:200]}", len(group),
-                last["skill"], last["seq"], last["tool_use_id"], ident=("first", group[0]["tool_use_id"]))
-        idle = [c for c in calls if c["idle"]]
-        if len(idle) >= an["idle_min"]:
-            last = idle[-1]
-            add(agent_id, last["ts"], "idle_loop", f"{len(idle)} idle calls, e.g. {(last['input_summary'] or '')[:120]}",
-                len(idle), last["skill"], last["seq"], last["tool_use_id"], ident=("first", idle[0]["tool_use_id"]))
+            chunk = []
+            for c in group + [None]:
+                if c is not None and (not chunk or c["ts"] is None or chunk[0]["ts"] is None or c["ts"] - chunk[0]["ts"] <= window):
+                    chunk.append(c)
+                    continue
+                if len(chunk) >= an["repeat_min"]:
+                    last = chunk[-1]
+                    add(agent_id, last["ts"], "repeated_call", f"{last['tool']}: {(last['input_summary'] or '')[:200]}", len(chunk),
+                        last["skill"], last["seq"], last["tool_use_id"], ident=("first", chunk[0]["tool_use_id"]))
+                chunk = [c] if c is not None else []
+        # Idle loops are runs of consecutive idle calls: any other call in between ends the run.
+        run = []
+        for c in calls + [None]:
+            if c is not None and c["idle"]:
+                run.append(c)
+                continue
+            if len(run) >= an["idle_min"]:
+                last = run[-1]
+                add(agent_id, last["ts"], "idle_loop", f"{len(run)} idle calls, e.g. {(last['input_summary'] or '')[:120]}",
+                    len(run), last["skill"], last["seq"], last["tool_use_id"], ident=("first", run[0]["tool_use_id"]))
+            run = []
         for i, c in enumerate(calls):
             if c.get("denied"):
                 add(agent_id, c["ts"], "permission_denied", f"{c['tool']}: {(c['input_summary'] or '')[:200]}", 1,
                     c["skill"], c["seq"], c["tool_use_id"], extra=f"denial kind: {c['denied']}",
                     policy=c["denied"] not in HUMAN_DENIALS, detail=c["denied"])
             failed = [p for p in calls[max(0, i - 5):i] if p["is_error"]]
-            if c["touches_test"] and failed:
+            # Creating a new test file after a probe that found nothing is what a repro step is for.
+            creates = c["tool"] == "Write" and (c.get("result_head") or "").startswith("File created")
+            if c["touches_test"] and failed and not creates and failed[-1].get("error_class") == "test_failure":
                 add(agent_id, c["ts"], "test_edit_after_failure", f"{c['tool']}: {(c['input_summary'] or '')[:200]}", 1,
                     c["skill"], c["seq"], c["tool_use_id"],
                     extra=f"after failing call: [{failed[-1]['tool']}] {(failed[-1]['input_summary'] or '')[:200]}")

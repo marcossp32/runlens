@@ -112,6 +112,11 @@ def gaps(con, cfg, sessions=None, sources=True):
     if missing:
         n += 1
         print(f"FAIL  evidence  {missing} evidence file(s) listed in a manifest have no blob in {config.BLOBS}")
+    orphans = orphan_labels(con)
+    if orphans:
+        n += 1
+        print(f"WARN  labels  {orphans} label(s) match no incident (incident ids changed, or their run was deleted): "
+              "they are ignored until the incident is labelled again")
     if not sources or not fs_path(config.PROJECTS).is_dir():
         return n
     for sid, _project, reason in stale_runs():
@@ -125,6 +130,13 @@ def gaps(con, cfg, sessions=None, sources=True):
             n += 1
             print(f"WARN  {main.stem[:8]}  selected by [select] but never archived ({(info['started'] or '')[:10]}): run `runlens refresh`")
     return n
+
+
+def orphan_labels(con):
+    """Labels whose incident no longer exists. Returns how many distinct incident ids they name."""
+    if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'labels'").fetchone()[0]:
+        return 0
+    return con.execute("SELECT count(DISTINCT incident_id) FROM labels WHERE incident_id NOT IN (SELECT incident_id FROM incidents)").fetchone()[0]
 
 
 def evidence_check():

@@ -798,6 +798,45 @@ class Units(unittest.TestCase):
         first = incidents.build(rows(2), cfg)[0]["incident_id"]
         self.assertEqual(incidents.build(rows(4), cfg)[0]["incident_id"], first)
 
+    def _calls(self, spec):
+        return [{"agent_id": "main", "seq": i, "tool_use_id": f"t{i}", "ts": None, "tool": tool, "skill": None,
+                 "is_error": err, "error_class": cls, "input_hash": h, "input_summary": "x", "idle": idle,
+                 "touches_test": test, "denied": denied, "result_head": head}
+                for i, (tool, err, cls, h, idle, test, denied, head) in enumerate(spec)]
+
+    def _build(self, calls):
+        rows = {"runs": [{"session_id": "s"}], "agents": [], "tool_calls": calls, "texts": [], "markers": [], "events": []}
+        return incidents.build(rows, {"analysis": config.ANALYSIS})
+
+    def test_test_edit_needs_a_test_failure_and_an_existing_file(self):
+        def types(write_head, cls):
+            return [i["type"] for i in self._build(self._calls([("Bash", True, cls, "a", False, False, None, ""),
+                                                                ("Write", False, None, "b", False, True, None, write_head)]))]
+        self.assertIn("test_edit_after_failure", types("The file t.py has been updated", "test_failure"))
+        self.assertNotIn("test_edit_after_failure", types("File created successfully at: t.py", "test_failure"))
+        self.assertNotIn("test_edit_after_failure", types("The file t.py has been updated", "not_found"))
+
+    def test_repeated_call_needs_identical_output(self):
+        same = [("Read", False, None, "h", False, False, None, "log")] * 3
+        changing = [("Read", False, None, "h", False, False, None, f"log {i}") for i in range(3)]
+        self.assertEqual([i["type"] for i in self._build(self._calls(same))], ["repeated_call"])
+        self.assertEqual(self._build(self._calls(changing)), [])
+
+    def test_idle_loop_needs_consecutive_calls_and_streak_skips_denials(self):
+        idle = ("Bash", False, None, "i", True, False, None, "")
+        other = ("Bash", False, None, "o", False, False, None, "")
+        self.assertEqual(self._build(self._calls([idle, other, idle, other, idle])), [])
+        self.assertEqual([i["type"] for i in self._build(self._calls([idle, idle, idle]))], ["idle_loop"])
+        denied = ("Bash", True, "permission_denied", "d", False, False, "rule", "")
+        fail = ("Bash", True, "other", "f", False, False, None, "")
+        self.assertEqual([i["type"] for i in self._build(self._calls([denied, fail]))], ["permission_denied"])
+
+    def test_incident_ids_do_not_depend_on_redacted_text(self):
+        a = self._calls([("Bash", True, "x", "a", False, False, "rule", "")])
+        b = self._calls([("Bash", True, "x", "a", False, False, "rule", "")])
+        b[0]["input_summary"] = "[redacted]"
+        self.assertEqual(self._build(a)[0]["incident_id"], self._build(b)[0]["incident_id"])
+
     def test_shipped_configs_are_valid(self):
         for p in (config.PACKAGE / "config.example.toml", ROOT / "examples" / "m-feature.toml"):
             cfg = config.load(p)
