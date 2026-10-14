@@ -121,5 +121,37 @@ class ShippedConfigs(unittest.TestCase):
                          {"interventions": 0.0, "cost": 2.0})
 
 
+class Rejected(unittest.TestCase):
+    """A typo or a wrong type stops the command with an error that names the key."""
+
+    def fails(self, text, *needles):
+        with self.assertRaises(config.ConfigError) as ctx:
+            load(text)
+        for needle in needles:
+            self.assertIn(needle, str(ctx.exception))
+        self.assertNotIn("\n", str(ctx.exception))
+
+    def test_unknown_key(self):
+        self.fails("[runs]\nidle_hourz = 3\n", "[runs] idle_hourz", "unknown key")
+        self.fails('[[marker]]\nname = "a"\npattern = "x"\nbadd = ["y"]\n', "[[marker]] #1 badd")
+        self.fails("[weights]\ncost = 1\n[method]\nmin_run = 5\n", "[method] min_run")
+
+    def test_unknown_section(self):
+        self.fails("[selectt]\nsince = ''\n", "[selectt]", "unknown section")
+
+    def test_wrong_type_names_the_key(self):
+        self.fails('[method]\nmin_runs = "x"\n', "[method] min_runs", "whole number", "'x'")
+        self.fails("[method]\nresamples = 4000.5\n", "[method] resamples", "whole number")
+        self.fails("[method]\nauto_groups = 1\n", "[method] auto_groups", "true or false")
+        self.fails("[runs]\nidle_hours = true\n", "[runs] idle_hours", "a number")
+        self.fails('[select]\nskills = "m-feature"\n', "[select] skills", "list")
+        self.fails("[privacy]\nredact = 'yes'\n", "[privacy] redact")
+        self.fails("[dashboard]\nauto = 'no'\n", "[dashboard] auto")
+
+    def test_valid_values_still_load(self):
+        cfg = load('[method]\nmin_runs = 5\nconfidence = 0.9\n[select]\nsince = 2026-09-28\nskills = ["a"]\n[runs]\nstub_cost_usd = 1\n')
+        self.assertEqual(cfg["method"]["min_runs"], 5)
+
+
 if __name__ == "__main__":
     unittest.main()

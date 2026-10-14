@@ -4,6 +4,10 @@
 
 ### export-eval
 - A case with no grader that checks the failure is skipped and listed as skipped, instead of exported with only `skill-fired` (repeated calls and permission denials whose failing call is missing from the store). `tool_used` with `max` is never written without `input_match`, which would have meant "never use this tool". The skill-creator `evals.json` no longer carries the undocumented `name` field. The export README now says the one-arm default needs a path target and that `context.scaffold_script` runs only with `--scaffold` (#15).
+### Config, packaging and CI
+- `config.toml` is checked for typos and wrong types: an unknown section or key (`[runs] idle_hourz`, `[selectt]`) and a value of the wrong type (`[method] min_runs = "x"`, `resamples = 4000.5`) stop the command with a one-line error that names the key (#17).
+- `uv run pytest` works: pytest is a dev dependency group. pyproject lists the supported Python versions (3.11 to 3.14) and explains why `pytz` is a dependency although it is never imported (DuckDB needs it for TIMESTAMPTZ).
+- CI runs `install` and `uninstall` end to end from the built wheel, against a temporary `RUNLENS_HOME`, `CLAUDE_SETTINGS` and home directory, and fails when the dashboard tests are skipped on any OS, not only Linux.
 
 ### Data
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/m-feature` run, plan, build, review and prove orchestration were credited to `m-grilling` (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged. The parser version is bumped, so `runlens refresh` parses every run again, once.
