@@ -135,7 +135,8 @@ function renderFilterBar() {
         h("strong", {}, `${fmt.int(kept)} of ${fmt.runs(total)}`),
         filtered() ? [h("span", { class: "fchips" }, chips), reset]
           : h("span", { class: "muted fextra" }, F.popAll ? "every run, open and stub included" : `finished runs (${fmt.int(EX.runs.length - total)} open or stub left out)`),
-        slicing() ? h("span", { class: "muted fextra" }, "scores, ranges and verdicts are worked out again from these runs") : null)),
+        slicing() ? h("span", { class: "muted fextra" }, "scores, ranges and verdicts are worked out again from these runs") : null,
+        F.sets.model || F.sets.effort ? h("span", { class: "muted fextra" }, "a model or effort filter keeps the runs that used it: scores and per-skill spend count those runs whole, the charts built from calls only that model's or effort's calls") : null)),
     panel);
   // A change redraws the bar: reopen the menu the reader was using and put the focus back where it was.
   if (barOpen) {

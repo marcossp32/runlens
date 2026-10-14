@@ -252,18 +252,19 @@ function verdictOf(ci, nA, nB, confounders) {
 }
 
 // One version's score against a reference (the baseline, or another version's own values), with its range.
-function versionScore(rows, ref, base, pseudo, weights, seed, conf) {
+// Against the baseline the version's values are shrunk toward it; against another version both sides are unshrunk.
+function versionScore(rows, ref, base, pseudo, weights, seed, conf, shrink) {
   const keys = Object.keys(weights).filter((k) => k in base);
   const a = arm(rows, keys);
   const sums = a.sums();
-  const est = estimates(sums, base, pseudo, true), raw = estimates(sums, base, pseudo, false);
+  const raw = estimates(sums, base, pseudo, false), est = shrink ? estimates(sums, base, pseudo, true) : raw;
   const { d, parts } = composite(ref, est, base, weights);
   let ci = null;
   if (d !== null && rows.length >= MIN_RUNS) {
     const next = rng(seedOf(seed));
     const draws = [];
     for (let i = 0; i < RESAMPLES(); i += 1) {
-      const c = composite(ref, estimates(a.draw(next), base, pseudo, true), base, weights);
+      const c = composite(ref, estimates(a.draw(next), base, pseudo, shrink), base, weights);
       if (c.d !== null) draws.push(c.d);
     }
     draws.sort((p, q) => p - q);
@@ -338,7 +339,7 @@ function recompute(u) {
   const versions = order.map((v, i) => {
     const vr = rowsOf(v);
     const ref = refFor(u, scored, i);
-    const s = ref ? versionScore(vr, ref, baseline, pseudo, weights, `${u.id}|${v.key}`, S.ci) : { score: null, ci: null, metrics: {} };
+    const s = ref ? versionScore(vr, ref, baseline, pseudo, weights, `${u.id}|${v.key}`, S.ci, ref === scored.baseline) : { score: null, ci: null, metrics: {} };
     const kp = kpiOf(vr, u.kind);
     return { ...v, runs: vr.length, low_sample: vr.length < MIN_RUNS, score: s.score, ci: s.ci, metrics: s.metrics,
       first_seen: vr.map((r) => r.started).filter(Boolean).sort()[0] || v.first_seen,

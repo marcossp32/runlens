@@ -13,6 +13,7 @@
 - Glossary words (usual level, confounded, range, Pareto frontier, Wilson interval) explain themselves on hover, tap or keyboard focus. Versions made of several skill texts show each skill's name next to its hash.
 - One skill's page shows all versions and the current one side by side in one profile table instead of ten cards; long lists of confounders fold away. Wide tables keep their rarer columns behind "More columns" (`cols=1` in the link).
 - A clearer type scale (page 26, section 18, card 15, body 14, caption 12.5 px), an 8-point spacing scale, lighter card borders, and nested tabs drawn as pills so the two levels read apart.
+- Data fixes (#11): a score against another version (`prev`, `first`, `ver:vN`) now counts both versions the same way, so a version against itself scores 100. The "Pull requests" count is the real number (a run lists at most five links). The Runs page cost, the calendar's spend and the spend-per-day charts follow the model, effort and date filters (a date range now cuts spend by the day of each call). "Cost by token type" includes runs with no `model_usage` and follows the effort filter. The two "problems per 100 tool calls" are named "Scored problems" and "All problems". The cost-of-each-run chart says "log scale" only when it is one, the heatmap's weight heads show the default weights, and a role's "few runs" mark counts sessions. Problem rates on the Diagnostics page are indexed once instead of re-filtered per cell.
 
 ## 0.2.0 - 2026-10-13
 

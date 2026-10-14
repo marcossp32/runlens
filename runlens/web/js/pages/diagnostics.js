@@ -47,13 +47,18 @@ function diagProblems() {
   const tools = slice(EX.tools);
   const callsBySkill = new Map(rollup(tools, (t) => t.skill, ["calls"]).map((x) => [x.label, x.calls]));
   const callsByTool = new Map(rollup(tools, (t) => t.tool, ["calls"]).map((x) => [x.label, x.calls]));
-  const types = rollup(inc, (i) => i.type, ["one"]).map((x) => ({ ...x, n: inc.filter((i) => i.type === x.label).length })).sort((a, b) => b.n - a.n);
-  const skills = [...new Set(inc.map((i) => i.skill))].map((s) => ({ s, n: inc.filter((i) => i.skill === s).length })).sort((a, b) => b.n - a.n).slice(0, 10).map((x) => x.s);
+  // Counts are indexed once: the loops below ask for them per kind and skill.
+  const count = (xs, key) => xs.reduce((m, x) => m.set(key(x), (m.get(key(x)) || 0) + 1), new Map());
+  const incByType = count(inc, (i) => i.type), incBySkill = count(inc, (i) => i.skill), incByBoth = count(inc, (i) => `${i.type}\u0000${i.skill}`);
+  const errByBoth = new Map();
+  for (const e of errs) errByBoth.set(`${e.class}\u0000${e.tool}`, (errByBoth.get(`${e.class}\u0000${e.tool}`) || 0) + e.n);
+  const types = rollup(inc, (i) => i.type, ["one"]).map((x) => ({ ...x, n: incByType.get(x.label) || 0 })).sort((a, b) => b.n - a.n);
+  const skills = [...incBySkill].sort((a, b) => b[1] - a[1]).slice(0, 10).map((x) => x[0]);
   const classes = rollup(errs, (e) => e.class, ["n"]).sort((a, b) => b.n - a.n);
   const errTools = rollup(errs, (e) => e.tool, ["n"]).filter((t) => (callsByTool.get(t.label) || 0) >= 20).sort((a, b) => b.n - a.n).slice(0, 10);
-  const incAt = (type, skill) => inc.filter((i) => i.type === type && i.skill === skill).length;
-  const errAt = (cls, tool) => sumOf(errs.filter((e) => e.class === cls && e.tool === tool), (e) => e.n);
-  const rate100 = (skill) => (callsBySkill.get(skill) ? (100 * inc.filter((i) => i.skill === skill).length) / callsBySkill.get(skill) : null);
+  const incAt = (type, skill) => incByBoth.get(`${type}\u0000${skill}`) || 0;
+  const errAt = (cls, tool) => errByBoth.get(`${cls}\u0000${tool}`) || 0;
+  const rate100 = (skill) => (callsBySkill.get(skill) ? (100 * (incBySkill.get(skill) || 0)) / callsBySkill.get(skill) : null);
   const maxRate = Math.max(1e-9, ...types.flatMap((t) => skills.map((s) => (callsBySkill.get(s) ? (100 * incAt(t.label, s)) / callsBySkill.get(s) : 0))));
   const maxErr = Math.max(1e-9, ...classes.flatMap((c) => errTools.map((t) => (callsByTool.get(t.label) ? (100 * errAt(c.label, t.label)) / callsByTool.get(t.label) : 0))));
   const typeList = types.map((t) => t.label);
@@ -90,15 +95,15 @@ function diagProblems() {
         notes: "Click a dot to open its run. Problems caused by your permission rules are left out.",
       }),
       h("div", { class: "grid" },
-        barChart({ title: "Problems per 100 tool calls, by skill", question: "Which skill hits the most problems for the work it does?", sub: "a rate, so a busy skill does not look worse for being busy",
+        barChart({ title: "All problems per 100 tool calls, by skill", question: "Which skill hits the most problems for the work it does?", sub: "a rate, so a busy skill does not look worse for being busy",
           takeaway: () => { const t = [...skillRates].sort((a, b) => b.value - a.value)[0]; return t ? `${t.label} hits the most for its work: ${fmt.num(t.value, 2)} per 100 tool calls.` : null; },
           items: [...callsBySkill.keys()].filter((s) => callsBySkill.get(s) >= 20 && skillShown(s)).map((s) => ({ label: human(s), name: s, value: rate100(s),
             rows: [["Problems", fmt.int(inc.filter((i) => i.skill === s).length)], ["Tool calls", fmt.int(callsBySkill.get(s))]] })).filter((x) => x.value > 0),
-          ns: "skill", fmt: (v) => fmt.num(v, 2), valueTitle: "Problems per 100 tool calls", labelTitle: "Skill", notes: "Skills with at least 20 tool calls." }),
+          ns: "skill", fmt: (v) => fmt.num(v, 2), valueTitle: "All problems per 100 tool calls", labelTitle: "Skill", notes: "Skills with at least 20 tool calls." }),
         barChart({ title: "Problems by kind", question: "What goes wrong most often?", items: types.map((t) => ({ label: human(t.label), value: t.n })), fmt: countFmt, valueTitle: "Problems", share: true, labelTitle: "Kind",
           takeaway: () => shareTakeaway(types.map((t) => ({ label: human(t.label), value: t.n })), "of the problems") })),
       heatmap({
-        title: "Problems per 100 tool calls, by kind and skill", question: "Which kind of problem does each skill hit?", sub: "the ten skills with most problems · darker = more per 100 tool calls",
+        title: "All problems per 100 tool calls, by kind and skill", question: "Which kind of problem does each skill hit?", sub: "the ten skills with most problems · darker = more per 100 tool calls",
         rows: typeList.map((t) => ({ key: t, label: human(t) })), cols: skills.map((s) => ({ key: s, label: human(s), sub: `${fmt.compact(callsBySkill.get(s) || 0)} calls` })),
         rowTitle: "Kind", scale: "seq", corner: "kind ↓ · skill →",
         cell: (r, c) => {

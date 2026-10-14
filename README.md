@@ -178,7 +178,7 @@ The question runlens answers is *did a change to this skill make its runs better
   | `cost` | 2 | Model spend per invocation |
   | `seconds` | 1 | Working time per invocation (each model turn to the same agent's next, capped at 10 minutes) |
   | `error_rate` | 2 | Failing tool calls over tool calls. Calls a permission rule denied are not errors |
-  | `incidents` | 2 | Problems per 100 tool calls. Not counted: policy denials, failed checks, idle loops and error streaks (other measures count them) and incidents labelled expected behaviour |
+  | `incidents` | 2 | Scored problems per 100 tool calls. Not counted: policy denials, failed checks, idle loops and error streaks (other measures count them) and incidents labelled expected behaviour |
   | `interventions` | 1 | Human prompts per invocation (skills and groups only). Set it to 0 for skills meant to ask |
   | `idle_rate` | 1 | Tool calls that only wait or print |
   | `api_error_rate` | 1 | Model turns with an API error. Quota and rate limits are not errors |

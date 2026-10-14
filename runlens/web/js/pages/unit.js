@@ -28,7 +28,7 @@ function profileTable(periods) {
     ["Cost per invocation", "typical model spend", (p) => fmt.usd(p.k.cost)],
     ["Time per invocation", "typical working time", (p) => fmt.secs(p.k.seconds)],
     ["Tool errors", "of its tool calls", (p) => fmt.pct(p.k.error_rate)],
-    ["Problems", "per 100 tool calls", (p) => fmt.num(p.k.incidents, 2)],
+    ["Scored problems", "per 100 tool calls", (p) => fmt.num(p.k.incidents, 2)],
   ];
   return h("section", { class: "profile", "aria-label": "Profile" },
     h("div", { class: "tw", tabindex: "0", role: "region", "aria-label": "Profile: the unit's numbers by period" },

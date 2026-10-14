@@ -468,8 +468,9 @@ class Explorer(unittest.TestCase):
 
     def test_token_cost_adds_up_to_what_claude_code_recorded(self):
         con = duckdb.connect()
-        con.execute("CREATE TABLE api_calls (session_id VARCHAR, model VARCHAR, cache_write_5m BIGINT, cache_write_1h BIGINT)")
-        con.execute("INSERT INTO api_calls VALUES ('s', 'claude-opus-5-5', 100, 300)")
+        con.execute("CREATE TABLE api_calls (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
+                    " cache_read_tokens BIGINT, cache_write_5m BIGINT, cache_write_1h BIGINT, cost_usd DOUBLE)")
+        con.execute("INSERT INTO api_calls VALUES ('s', 'claude-opus-5-5', 0, 0, 0, 100, 300, 0)")
         con.execute("CREATE TABLE model_usage (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
                     " cache_read_tokens BIGINT, cache_write_tokens BIGINT, cost_usd DOUBLE)")
         con.execute("INSERT INTO model_usage VALUES ('s', 'claude-opus-5-5[1m]', 1000, 2000, 50000, 4000, 2.5)")
@@ -484,6 +485,22 @@ class Explorer(unittest.TestCase):
         parts = {types[r[2]]: r for r in t["r"]}
         self.assertAlmostEqual(sum(r[4] for r in t["r"]), 2.5, places=4)  # scaled to what Claude Code recorded
         self.assertEqual(parts["cache_write_1h"][3], 3000)                # cache writes split 1:3 as in the transcript
+
+    def test_token_cost_covers_runs_without_model_usage(self):
+        con = duckdb.connect()
+        con.execute("CREATE TABLE api_calls (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
+                    " cache_read_tokens BIGINT, cache_write_5m BIGINT, cache_write_1h BIGINT, cost_usd DOUBLE)")
+        con.execute("INSERT INTO api_calls VALUES ('old', 'claude-opus-5-5', 100, 200, 3000, 400, 0, 1.5)")
+        con.execute("CREATE TABLE model_usage (session_id VARCHAR, model VARCHAR, input_tokens BIGINT, output_tokens BIGINT,"
+                    " cache_read_tokens BIGINT, cache_write_tokens BIGINT, cost_usd DOUBLE)")
+
+        def rows(sql):
+            cur = con.execute(sql)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        t = explorer.token_cost(rows, {"old": "old"})
+        self.assertAlmostEqual(sum(r[4] for r in t["r"]), 1.5, places=4)  # the run is not left out of the total
 
 
 if __name__ == "__main__":
