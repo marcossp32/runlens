@@ -11,13 +11,15 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from .fs import fs_path
+from .privacy import redactor
 
 # Bump whenever a change here alters the rows a transcript produces: every run is re-ingested on the next refresh.
 # 2: usage from the last record of each message, one compaction per compact_boundary, api limits apart from errors,
 #    structured tool results, permission decisions, run status, pr links, cost-state tokens, skill mentions.
 #    4: idle detection splits on pipes and needs a poll loop to be the whole command, "FAIL" matches upper case
 #    only, roles ignore punctuation; cost allocated per token category, resumed sessions (one cost-state per
-#    process), web searches, geo scope, Bedrock/Vertex ids.
+#    process), web searches, geo scope, Bedrock/Vertex ids; text redacted
+#    before it is truncated.
 PARSER_VERSION = 4
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
@@ -360,6 +362,7 @@ def parse_run(main, info, cfg, now=None):
     main = fs_path(main)
     an = cfg["analysis"]
     markers = Markers(cfg)
+    red = redactor(cfg) or (lambda s: s)  # applied before any cut to a stored length
     test_rx = re.compile(an["test_path"], re.I)
     rows = {t: [] for t in TABLES}
     sid = main.stem
@@ -473,13 +476,13 @@ def parse_run(main, info, cfg, now=None):
                         calls[b.get("id")] = {
                             "session_id": sid, "agent_id": agent_id, "tool_use_id": b.get("id"), "msg_id": mid, "seq": seq,
                             "ts": t, "tool": name, "skill": skill, "skill_inferred": inferred, "input_hash": hashlib.sha1(raw.encode()).hexdigest()[:16],
-                            "input_summary": summarize(inp), "input_json": raw[:4000], "is_error": False,
+                            "input_summary": summarize(inp), "input_json": red(raw)[:4000], "is_error": False,
                             "idle": is_idle(command if isinstance(command, str) else None, an["idle_parts"]),
                             "touches_test": name in EDIT_TOOLS and isinstance(path, str) and bool(test_rx.search(path)),
                         }
                         tool_owner.setdefault(b.get("id"), agent_id)  # the first agent to issue a call owns it
                         if name in ("Agent", "Task") and isinstance(inp, dict):
-                            spawn_prompts[b.get("id")] = str(inp.get("prompt") or "")[:8000]
+                            spawn_prompts[b.get("id")] = red(str(inp.get("prompt") or ""))[:8000]
                         if name == "Skill" and isinstance(inp, dict) and inp.get("skill"):
                             skill_calls[b.get("id")] = skill_name(inp["skill"])
                             mentions.append(("invoke", t, skill_name(inp["skill"])))
@@ -488,7 +491,7 @@ def parse_run(main, info, cfg, now=None):
                     elif b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip():
                         seq += 1
                         rows["texts"].append({"session_id": sid, "agent_id": agent_id, "seq": seq, "ts": t,
-                                              "skill": skill, "text": b["text"][:4000]})
+                                              "skill": skill, "text": red(b["text"])[:4000]})
                         markers.scan(rows, b["text"], "assistant_text", session_id=sid, agent_id=agent_id, ts=t,
                                      tool_use_id=None, skill=skill)
 
@@ -499,7 +502,7 @@ def parse_run(main, info, cfg, now=None):
                 if is_main and not r.get("isMeta") and not has_tool_result(content) and is_human_prompt(r, prompt):
                     run["human_prompts"] += 1
                     skills.new_prompt()
-                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, prompt[:500],
+                    rows["events"].append(ev(sid, agent_id, t, "human_prompt", None, red(prompt)[:500],
                                              r.get("promptSource") or as_dict(r.get("origin")).get("kind")))
                 # not inside a tool result that happens to quote it, nor a compaction summary that does
                 if "[Request interrupted" in typed_text(content) and not r.get("isCompactSummary"):
@@ -538,7 +541,7 @@ def parse_run(main, info, cfg, now=None):
                     c.update({
                         "ts_result": t, "duration_ms": int((t - c["ts"]).total_seconds() * 1000) if t and c["ts"] else None,
                         "is_error": bool(x.get("is_error")), "denied": r.get("toolDenialKind"), "interrupted": interrupted,
-                        "result_len": len(body), "result_head": body[:2000],
+                        "result_len": len(body), "result_head": red(body)[:2000],
                     })
                     c.update(tool_result_fields(body, tur if single else {}, as_dict(r.get("permissionDecision"))))
                     if c["is_error"]:

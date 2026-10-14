@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from runlens import classify, cli, config, evals, store
+from runlens import classify, cli, config, evals, privacy, store
 
 S = "aaaaaaaa-1111-2222-3333-444444444444"
 T0 = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
@@ -398,6 +398,12 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(body.strip(), "Build step 3: make the failing tests in tests/ pass.")  # the spawn prompt, verbatim
         self.assertIn("Edit", fields["allowed_tools"])
         self.assertIn("not reconstructed", (tamper / "context.md").read_text(encoding="utf-8"))
+
+    def test_export_eval_redacts_what_it_copies(self):
+        fn = privacy.redactor({"privacy": {"redact": True}})
+        rec = {"message": {"content": [{"type": "text", "text": "key sk-ant-FAKEFAKEFAKEFAKE1234"}]}, "n": 1}
+        self.assertNotIn("FAKEFAKE", json.dumps(evals.redacted(rec, fn)))
+        self.assertEqual(evals.redacted(rec, fn)["n"], 1)
 
     def test_export_eval_graders_match_the_failure(self):
         out = self.tmp / "evals-graders"

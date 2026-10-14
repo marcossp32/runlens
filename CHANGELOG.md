@@ -27,6 +27,11 @@
 - Each unit gets a Benjamini-Hochberg q over the units compared (`p_adjusted` in `score --json`); the dashboard flags a `better` or `worse` it does not support. Per-measure intervals are marked exploratory. "Above/below its typical run" is shown as a description, not a verdict (#9).
 - README "The method" now states the limits: low power, peeking and multiplicity (#9).
 - The database queries behind the model have an explicit `ORDER BY` (#9).
+### Privacy
+- Redaction now runs before text is cut to its stored length, so a private key cut by the 2000- or 4000-character limit is no longer stored in clear; a private-key block with no `END` line is masked to the end of the text. `aws_secret_access_key = ...` is masked (keywords after `_` now match). Skill texts are redacted too. The parser version is bumped, so `runlens refresh` parses every run again, once.
+- `export-eval` masks the task prompt and `--history` transcript when `redact = true`.
+- The README lists which columns redaction covers (not the working directory, branch or PR links).
+- The run page links a PR only when its URL starts with `https://`.
 
 ### Data
 - A run's active time (`active_ms`) is now the union of the main session's turn intervals, so a turn that contains others is no longer counted twice (it exceeded wall clock in many runs). The parser version is bumped.

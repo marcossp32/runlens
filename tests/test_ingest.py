@@ -501,6 +501,25 @@ class Ingest(Sandbox):
         raw = json.dumps({"command": "curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456' https://x"}, sort_keys=True)
         self.assertEqual(digest, transcripts.hashlib.sha1(raw.encode()).hexdigest()[:16])  # hashes come from the original
 
+    def test_redaction_happens_before_truncation(self):
+        self.cfg["privacy"]["redact"] = True
+        key = "-----BEGIN RSA PRIVATE KEY-----\n" + "FAKEKEYBODY0123456789abcdef\n" * 300 + "-----END RSA PRIVATE KEY-----"
+        r = Run(self.projects, "aeaeaeae-0000-0000-0000-000000000002")
+        r.turn("m1", "t1", cmd=key, result=key)  # long enough that the stored cut loses the END line
+        r.end()
+        r.write()
+        self.refresh()
+        inp, head = self.q("SELECT input_json, result_head FROM tool_calls")[0]
+        self.assertNotIn("FAKEKEYBODY", inp)
+        self.assertNotIn("FAKEKEYBODY", head)
+
+    def test_redaction_patterns(self):
+        from runlens import privacy
+        fn = privacy.redactor({"privacy": {"redact": True}})
+        self.assertNotIn("FAKESECRETVALUE", fn("aws_secret_access_key = FAKESECRETVALUE1234"))
+        self.assertNotIn("FAKEKEYBODY", fn("-----BEGIN PRIVATE KEY-----\nFAKEKEYBODY"))  # cut short, no END line
+        self.assertEqual(fn("see https://example.com/page"), "see https://example.com/page")
+
     def test_prune(self):
         old = simple_run(self.projects, "afafafaf-0000-0000-0000-000000000001", start=datetime(2026, 1, 1, tzinfo=timezone.utc))
         simple_run(self.projects, "afafafaf-0000-0000-0000-000000000002")
