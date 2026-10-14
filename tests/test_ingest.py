@@ -459,6 +459,61 @@ class HookQueue(Sandbox):
         self.assertEqual(hooks.drain(self.cfg), 1)
         self.assertEqual(hooks.pending(), [])
 
+    def test_drain_reingests_runs_from_an_older_parser(self):
+        r = simple_run(self.projects, "dddddddd-0000-0000-0000-000000000001")
+        self.refresh()
+        con = store.connect()
+        con.execute("UPDATE ingest_state SET parser_version = parser_version - 1")
+        con.execute("UPDATE runs SET parser_version = parser_version - 1")
+        con.close()
+        self.assertEqual(store.outdated_sessions(), [r.sid])
+        self.assertEqual(hooks.drain(self.cfg), 1)  # nothing queued, yet the old run is parsed again
+        self.assertEqual(store.outdated_sessions(), [])
+        self.assertEqual(self.q("SELECT parser_version FROM runs")[0][0], store.PARSER_VERSION)
+        self.assertEqual(hooks.drain(self.cfg), 0)
+
+    def test_drain_finds_a_transcript_outside_the_projects_folder(self):
+        other = self.tmp / "other-config" / "projects"
+        other.mkdir(parents=True)
+        r = simple_run(other, "dededede-0000-0000-0000-000000000001")
+        hooks.enqueue(r.sid, {"session_id": r.sid, "transcript_path": str(next(other.glob("*/*.jsonl")))})
+        self.assertEqual(hooks.drain(self.cfg), 1)
+        self.assertEqual(hooks.pending(), [])
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 1)
+
+    def test_log_does_not_claim_ingest_when_the_parse_failed(self):
+        r = simple_run(self.projects, "dfdfdfdf-0000-0000-0000-000000000001")
+        hooks.enqueue(r.sid)
+        with mock.patch.object(store, "parse_run", side_effect=ValueError("boom")):
+            hooks.drain(self.cfg)
+        log = (self.home / "hooks.log").read_text(encoding="utf-8")
+        self.assertIn("ingest failed", log)
+        self.assertNotIn(f"archived and ingested {r.sid}", log)
+
+    def test_a_session_queued_during_the_last_check_is_picked_up(self):
+        r = simple_run(self.projects, "d1d1d1d1-0000-0000-0000-000000000001")
+        real, calls = hooks.pending, []
+
+        def late():
+            out = real()
+            calls.append(1)
+            if len(calls) == 1:  # the first read sees an empty queue; the session arrives right after
+                hooks.enqueue(r.sid)
+            return out
+
+        with mock.patch.object(hooks, "pending", late):
+            self.assertEqual(hooks.drain(self.cfg), 1)
+        self.assertEqual(real(), [])
+
+    def test_claude_config_dir_moves_projects_settings_and_skills(self):
+        code = ("from runlens import config, hooks; from pathlib import Path\n"
+                "d = Path(r'%s')\n"
+                "assert config.PROJECTS == d / 'projects' and hooks.SETTINGS == d / 'settings.json' and hooks.SKILLS == d / 'skills'\n")
+        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(self.tmp / "cc")}
+        for k in ("CLAUDE_PROJECTS", "CLAUDE_SETTINGS"):
+            env.pop(k, None)
+        subprocess.run([sys.executable, "-c", code % (self.tmp / "cc")], env=env, check=True, cwd=Path(config.PACKAGE).parent)
+
     def test_unselected_session_is_dropped_from_the_queue(self):
         r = simple_run(self.projects, "dcdcdcdc-0000-0000-0000-000000000001")
         self.cfg["select"] = {"skills": ["something-else"]}

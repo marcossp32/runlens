@@ -26,6 +26,7 @@
 """
 import argparse
 import sys
+import time
 
 from . import config
 
@@ -146,13 +147,23 @@ def main(argv=None):
         from .hooks import drain, pending
         if pending():  # sessions the hook queued: archive and ingest them first, then the rest
             drain(cfg, wait_lock=True)
-    if a.command in ("archive", "refresh"):
-        from .archive import archive
-        archive(cfg, quiet=a.quiet, **flt())
-    if a.command in ("ingest", "refresh"):
-        from .store import ingest
-        ingest(cfg, since=a.since, sessions=a.session, quiet=a.quiet, force=a.force)
-    elif a.command == "check":
+    lock = None
+    if a.command == "refresh":  # the drain lock keeps a parallel drain from copying the same files at once
+        from .hooks import DrainLock
+        lock = DrainLock()
+        while not lock.acquire():
+            time.sleep(1)
+    try:
+        if a.command in ("archive", "refresh"):
+            from .archive import archive
+            archive(cfg, quiet=a.quiet, **flt())
+        if a.command in ("ingest", "refresh"):
+            from .store import ingest
+            ingest(cfg, since=a.since, sessions=a.session, quiet=a.quiet, force=a.force)
+    finally:
+        if lock:
+            lock.release()
+    if a.command == "check":
         from .check import check
         return 1 if check(a.session, cfg, sources=not a.no_sources) else 0
     elif a.command == "prune":

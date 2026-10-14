@@ -238,7 +238,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 
 **Setup:** `install [--no-skill]`, `uninstall` (removes only the runlens hook), `hook` (the hook's entry point, reads the hook JSON on stdin).
 
-**Environment:** `RUNLENS_HOME` (default `~/.runlens`), `CLAUDE_PROJECTS` (default `~/.claude/projects`), `CLAUDE_SETTINGS` (default `~/.claude/settings.json`).
+**Environment:** `RUNLENS_HOME` (default `~/.runlens`), `CLAUDE_CONFIG_DIR` (default `~/.claude`; Claude Code's own setting, which moves the paths below and the installed skill), `CLAUDE_PROJECTS` (default `$CLAUDE_CONFIG_DIR/projects`), `CLAUDE_SETTINGS` (default `$CLAUDE_CONFIG_DIR/settings.json`).
 
 ## Config reference
 
