@@ -501,15 +501,17 @@ def confounders_of(side_a, side_b, own_skills, ctx):
 # ---- skill sets found in the history ----------------------------------------------------
 
 SET_OVERLAP = 0.8  # share of the rarer skill's runs that must also use the other skill
+SET_EDITS = 2      # runs in which both skills got a new version: one shared edit can be a coincidence
+SET_NEAR = 0.8     # an auto set this similar (Jaccard) to a configured group, or inside it, is left out
 
 
 def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
     """Sets of skills used and edited together, to score as one unit next to each skill on its own.
 
     Two skills are linked when at least `min_runs` runs use both, at least SET_OVERLAP of the rarer one's runs
-    also use the other, and a new version of each (not its first) appeared in the same run: they were edited together.
-    A set is a group of linked skills (single linkage) with two or more members; a set with the same skills as a
-    [[group]] in config.toml (`taken`) is left out. Returns [[group]]-shaped dicts marked auto."""
+    also use the other, and a new version of each (not its first) appeared in the same run, in at least SET_EDITS
+    runs: they were edited together. A set is a group of linked skills (single linkage) with two or more members; a
+    set inside a [[group]] in config.toml (`taken`), or nearly the same as one, is left out. Returns [[group]]-shaped dicts marked auto."""
     order = sorted(sessions, key=lambda sid: (sessions[sid].get("started") or NEVER, sid))
     runs, first = defaultdict(set), {}
     for sid in order:
@@ -528,10 +530,10 @@ def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
     for (skill, _h), sid in first.items():
         if sid != opening[skill]:
             born[sid].add(skill)
-    edited = defaultdict(set)
+    edited = defaultdict(Counter)
     for skills in born.values():
         for a in skills:
-            edited[a] |= skills - {a}
+            edited[a].update(skills - {a})
     parent = {}
 
     def root(x):
@@ -541,7 +543,7 @@ def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
 
     for a in sorted(runs):
         for b in sorted(edited[a]):
-            if b <= a or b not in runs:
+            if b <= a or b not in runs or edited[a][b] < SET_EDITS:
                 continue
             both = len(runs[a] & runs[b])
             if both >= min_runs and both >= SET_OVERLAP * min(len(runs[a]), len(runs[b])):
@@ -551,7 +553,7 @@ def skill_sets(session_versions, sessions, taken=(), min_runs=MIN_RUNS):
         members[root(skill)].add(skill)
     out = []
     for skills in sorted(members.values(), key=lambda m: sorted(m)):
-        if len(skills) < 2 or frozenset(skills) in taken:
+        if len(skills) < 2 or any(skills <= g or len(skills & g) / len(skills | g) >= SET_NEAR for g in map(frozenset, taken)):
             continue
         names = sorted(skills)
         prefix = os.path.commonprefix(names)
@@ -647,9 +649,24 @@ def compute(data, groups=None, resamples=None, cfg=None):
         hit = same or other or lst[0]
         return (sid, skill, hit[3]), hit[2]
 
+    seen = defaultdict(list)  # skill -> (start, hash) of the runs that loaded it, in time order
+    for sid in sorted(session_versions, key=lambda x: (sessions[x].get("started") or NEVER, x)):
+        for s, h in session_versions[sid].items():
+            if h:
+                seen[s].append((sessions[sid].get("started") or NEVER, h))
+
+    def member_version(s, sid):
+        """A group member's version in a run. A member the run did not load keeps the version of its nearest use
+        before the run (else after), so a member that was not used never starts a new group version."""
+        h = session_versions[sid].get(s)
+        if h or s not in seen:
+            return h or version_before(s, sessions[sid].get("started"))
+        t = sessions[sid].get("started") or NEVER
+        before = [x for x in seen[s] if x[0] <= t]
+        return (before[-1] if before else seen[s][0])[1]
+
     def group_vmap(gid, sid):
-        g = group_of[gid]
-        return {s: session_versions[sid].get(s) or version_before(s, sessions[sid].get("started")) for s in sorted(g["skills"])}
+        return {s: member_version(s, sid) for s in sorted(group_of[gid]["skills"])}
 
     def place(sid, agent, ts, skill):
         """Every (unit, version key, invocation key) a piece of work belongs to; it is counted once per unit."""
