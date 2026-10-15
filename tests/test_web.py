@@ -184,17 +184,29 @@ def find_browser():
     return None
 
 
-def dump(path, route, budget=5000):
-    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile."""
-    for attempt in range(2):  # headless Chrome now and then hangs on a CI runner (seen on macOS): one retry
+def dump(path, route, budget=5000, until=None, tries=4):
+    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile.
+
+    The virtual-time budget runs timers, not frames: on a loaded machine Chrome can spend it and dump before it
+    paints once, so nothing that waits on a frame (ResizeObserver, IntersectionObserver, requestAnimationFrame)
+    has run, and no budget is long enough to prevent it. A test that needs a frame passes `until`, a regex the
+    DOM must match, and the page is dumped again in a fresh browser, up to `tries` times, until it does."""
+    dom = ""
+    hung = False
+    for _ in range(tries):
         prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
         cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
                f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
         try:
-            return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+            dom = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
         except subprocess.TimeoutExpired:
-            if attempt:
+            if hung:  # headless Chrome now and then hangs on a CI runner (seen on macOS): one retry
                 raise
+            hung = True
+            continue
+        if until is None or re.search(until, dom):
+            break
+    return dom
 
 
 class Assembly(unittest.TestCase):
@@ -316,8 +328,9 @@ class Renders(unittest.TestCase):
     def test_charts_are_drawn_at_their_real_width(self):
         path = TMP / "width.html"
         path.write_text(dashboard.render(copy.deepcopy(model())), encoding="utf-8")
-        dom = dump(path, "#/?tab=cost")
-        self.assertTrue(re.findall(r'<svg[^>]*class="[^"]*\bchart\b[^"]*"[^>]*>', dom), "no chart was drawn")
+        drawn = r'<svg[^>]*class="[^"]*\bchart\b[^"]*"[^>]*>'
+        dom = dump(path, "#/?tab=cost", until=drawn)
+        self.assertTrue(re.findall(drawn, dom), "no chart was drawn")
         self.assertIsNone(re.search(r'<svg[^>]*viewBox="0 0 640 ', dom), "a chart still uses the old fixed 640-wide viewBox")
 
     def test_text_does_not_rank_skills_or_mislabel_outcomes(self):
