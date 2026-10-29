@@ -18,7 +18,6 @@ from runlens import bench, classify, config  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "runlens" / "config.example.toml"
-MFEATURE = ROOT / "examples" / "m-feature.toml"
 
 # The keys each section may hold: the contract the docs are checked against.
 KEYS = {
@@ -104,23 +103,6 @@ class ShippedConfigs(unittest.TestCase):
         documented = {k: float(v) for k, v in re.findall(r"(\w+) (\d+(?:\.\d+)?)", line)}
         self.assertEqual(documented, {m["key"]: float(m["weight"]) for m in bench.MEASURES})
 
-    def test_m_feature_example(self):
-        cfg = config.load(MFEATURE)
-        s = bench.settings(cfg)
-        self.check_keys(cfg, "m-feature.toml")
-        self.assertEqual([e["scope"] for e in cfg["evidence"]], ["run"])
-        outcomes = {o["name"]: o for o in s["outcomes"]}
-        step = outcomes["step check first-pass rate"]
-        self.assertEqual((step["kind"], step["marker"], step["success"], step["skills"]), ("marker", "step_check", {"PASS"}, ["m-build"]))
-        self.assertEqual(outcomes["PR opened"]["kind"], "pr")
-        self.assertEqual(s["weights"]["units"]["m-grilling"], {"interventions": 0.0})
-        group = next(g for g in s["groups"] if g["name"] == "m-stack")
-        self.assertIn("m-build", group["skills"])
-        self.assertTrue(all(m.startswith("skill:m-") for m in group["members"]))
-        self.assertEqual(bench.unit_weights(s["weights"], "skill:m-grilling", "m-grilling", ["interventions", "cost"]),
-                         {"interventions": 0.0, "cost": 2.0})
-
-
 class Rejected(unittest.TestCase):
     """A typo or a wrong type stops the command with an error that names the key."""
 
@@ -149,7 +131,7 @@ class Rejected(unittest.TestCase):
         self.fails("[method]\nresamples = 4000.5\n", "[method] resamples", "whole number")
         self.fails("[method]\nauto_groups = 1\n", "[method] auto_groups", "true or false")
         self.fails("[runs]\nidle_hours = true\n", "[runs] idle_hours", "a number")
-        self.fails('[select]\nskills = "m-feature"\n', "[select] skills", "list")
+        self.fails('[select]\nskills = "ship-feature"\n', "[select] skills", "list")
         self.fails("[privacy]\nredact = 'yes'\n", "[privacy] redact")
         self.fails("[dashboard]\nauto = 'no'\n", "[dashboard] auto")
 

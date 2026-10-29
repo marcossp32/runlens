@@ -79,7 +79,7 @@ def history(versions, skill="flow", other=None, cost=lambda v, i: 1.0, start=0, 
 class Settings(unittest.TestCase):
     def test_groups_are_validated(self):
         with self.assertRaises(ValueError):
-            bench.parse_groups([{"name": "x", "members": ["m-plan"]}])
+            bench.parse_groups([{"name": "x", "members": ["plan-feature"]}])
         with self.assertRaises(ValueError):
             bench.parse_groups([{"name": "x", "members": ["skill:a"]}, {"name": "x", "members": ["skill:b"]}])
         self.assertEqual(bench.parse_groups([{"name": "x", "members": ["skill:a", "agent:Explore"]}])[0]["members"],
@@ -92,8 +92,8 @@ class Settings(unittest.TestCase):
         for bad in ({"marker": "nope", "success": ["PASS"]}, {"marker": "check"}, {"pr": "merged"}, {"skills": ["a"]}):
             with self.assertRaises(ValueError, msg=bad):
                 bench.parse_outcomes(bad, markers)
-        w = bench.parse_weights({"cost": 1, "m-grilling": {"interventions": 0}})
-        self.assertEqual(w, {"default": {"cost": 1.0}, "units": {"m-grilling": {"interventions": 0.0}}})
+        w = bench.parse_weights({"cost": 1, "grill-plan": {"interventions": 0}})
+        self.assertEqual(w, {"default": {"cost": 1.0}, "units": {"grill-plan": {"interventions": 0.0}}})
         for bad in ({"speed": 1}, {"cost": -1}, {"x": {"cost": "high"}}):
             with self.assertRaises(ValueError, msg=bad):
                 bench.parse_weights(bad)
@@ -605,10 +605,10 @@ class SkillSets(unittest.TestCase):
         self.assertEqual([(g["name"], g["auto"]) for g in self.groups(model)], [("pair", False)])
 
     def test_a_set_is_named_after_the_common_prefix(self):
-        sv = {f"s{i}": {"m-plan": f"p{i // 5}", "m-build": f"b{i // 5}"} for i in range(15)}
+        sv = {f"s{i}": {"flow-plan": f"p{i // 5}", "flow-build": f"b{i // 5}"} for i in range(15)}
         runs = {sid: {"started": datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)} for i, sid in enumerate(sv)}
         (g,) = bench.skill_sets(sv, runs)
-        self.assertEqual((g["name"], g["members"]), ("m-* set", ["skill:m-build", "skill:m-plan"]))
+        self.assertEqual((g["name"], g["members"]), ("flow-* set", ["skill:flow-build", "skill:flow-plan"]))
 
     def stamps(self, sv):
         return {sid: {"started": datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)} for i, sid in enumerate(sv)}
