@@ -274,10 +274,30 @@ def install(skill=True):
         shutil.copy2(config.PACKAGE / "config.example.toml", cfg)
         print(f"config  {cfg} (edit [select], [[evidence]] and [[marker]] for your flow)")
     if skill:
-        src = config.PACKAGE / "skill" / "runlens-retro"
         dst = SKILLS / "runlens-retro"
-        shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("evals"))  # eval fixtures stay in the package
+        shutil.copytree(SKILL_SRC, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*SKILL_IGNORE))
         print(f"skill   {dst} (/runlens-retro)")
+
+
+SKILL_SRC = config.PACKAGE / "skill" / "runlens-retro"
+SKILL_IGNORE = ("evals", "__pycache__")  # eval fixtures stay in the package
+
+
+def stale_skill():
+    """The files of the installed /runlens-retro that differ from, or are missing next to, the ones this runlens ships.
+    Empty when the skill is current or was never installed (`install --no-skill`)."""
+    dst = SKILLS / "runlens-retro"
+    if not dst.is_dir():
+        return []
+    out = []
+    for f in sorted(SKILL_SRC.rglob("*")):
+        rel = f.relative_to(SKILL_SRC)
+        if f.is_dir() or rel.parts[0] in SKILL_IGNORE:
+            continue
+        mine = dst / rel
+        if not mine.is_file() or mine.read_bytes() != f.read_bytes():
+            out.append(rel.as_posix())
+    return out
 
 
 def uninstall():

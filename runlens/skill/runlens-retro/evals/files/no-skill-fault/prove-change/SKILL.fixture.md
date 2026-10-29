@@ -1,5 +1,5 @@
 ---
-name: m-prove
+name: prove-change
 description: Proves a change does what was asked by driving the running app.
 ---
 

@@ -112,8 +112,8 @@ class CommandLine(unittest.TestCase):
             con.execute("INSERT INTO tool_calls (session_id, agent_id, ts, skill, is_error, idle) VALUES (?, ?, ?, ?, ?, ?)",
                         [t["session_id"], t["agent_id"], t["ts"], t["skill"], t["is_error"], t["idle"]])
         for x in d["loads"]:
-            con.execute("INSERT INTO skill_loads (session_id, agent_id, ts, skill, content_hash) VALUES (?, ?, ?, ?, ?)",
-                        [x["session_id"], x["agent_id"], x["ts"], x["skill"], x["content_hash"]])
+            con.execute("INSERT INTO skill_loads (session_id, agent_id, ts, skill, skill_dir, content_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                        [x["session_id"], x["agent_id"], x["ts"], x["skill"], f"/skills/{x['skill']}", x["content_hash"]])
         con.close()
 
     @classmethod
@@ -145,8 +145,10 @@ class CommandLine(unittest.TestCase):
         for key in ("id", "hash", "runs", "invocations", "verdict", "vs", "confounders", "difference", "outcome", "diff"):
             self.assertIn(key, v2)
         self.assertEqual(v2["id"], "skill:flow@bbb")
+        self.assertEqual(doc["skill_dirs"], ["/skills/flow"])  # where the retro reads the skill's text
         _, out = self.run_cli("versions", "flow")
         self.assertIn("worse", out)
+        self.assertIn("files: /skills/flow", out)
         with self.assertRaises(ValueError):
             self.run_cli("versions", "nothing")
 

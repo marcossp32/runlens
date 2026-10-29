@@ -150,7 +150,7 @@ runlens migrate-evidence  # once, if you used [[evidence]] with runlens 0.1 (dry
 
 ## Improve a skill, step by step
 
-The loop is *find a weak spot → trace it to the skill text → edit → verify*. `/runlens-retro` in Claude Code runs steps 1 to 4 for you and records its proposals; the commands below are what it runs.
+The loop is *find a weak spot → trace it to the skill text → edit → verify*. `/runlens-retro` in Claude Code does steps 1 to 4 and the production half of step 6 for you: it reports how earlier proposals did, traces today's failures to the skill text, and records its proposals. It decides how to investigate; the commands below are what it has to work with. Add `label` to its arguments to let it spend `claude -p` calls on labelling.
 
 1. **Refresh and check.** `runlens refresh`, then `runlens check`. A `FAIL` line means the numbers are wrong (stop and fix it first); `WARN` lines name gaps such as runs archived but not ingested, queued by the hook, or changed since they were archived. Runs still open show as `ok … open:`.
 2. **Find where to look.** `runlens score` lists every skill's current version against its previous one. `runlens versions <skill>` shows all versions of one skill: runs, invocations, outcome, the verdict against the version before, its confounders, and the diff. Look first at versions whose verdict is `worse`, then at skills with a low or falling outcome, then at the ones with the most incidents.
@@ -211,7 +211,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 | `archive` | Copy selected runs from `~/.claude/projects` into the archive. A run whose source changed is copied again | `--since DATE`, `--skill NAME`, `--project TEXT`, `--session ID` (the last three repeatable), `--quiet` |
 | `ingest` | Load the archive into DuckDB. Incremental: unchanged runs are skipped (see [Data](#data-reference)) | as `archive`, plus `--force` (parse every run again) |
 | `refresh` | Drain the hook's queue, then `archive` + `ingest` | as `ingest` |
-| `check` | Compare the database with the archive and the archive with `~/.claude/projects`; exits 1 on any `FAIL` or `WARN` | `--session ID` (repeatable), `--no-sources` (skip the comparison with `~/.claude/projects`) |
+| `check` | Compare the database with the archive and the archive with `~/.claude/projects`, and warn when the installed `/runlens-retro` is older than this runlens's; exits 1 on any `FAIL` or `WARN` | `--session ID` (repeatable), `--no-sources` (skip the comparison with `~/.claude/projects`) |
 | `prune` | Delete runs from the database and the archive. Lists them unless `--yes` | `--before DATE`, `--session ID` (or 8-char prefix, repeatable), `--keep-archive` (database rows only), `--yes` |
 | `migrate-evidence` | Convert evidence archived by runlens 0.1 into deduplicated blobs and delete the old folders. Dry run unless `--yes` | `--yes`, `--keep-excluded` (also keep browser profiles, databases, node_modules) |
 | `sql "<query>"` | Any read-only query over the tables and views | `--json`, `--csv` |
@@ -221,7 +221,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 | Command | What it does | Flags |
 |---|---|---|
 | `score` | Each unit's current version against its previous one: runs, invocations, verdict, difference, outcome, typical cost | `--kind skill\|agent\|group` (default `skill`), `--json` |
-| `versions <skill>` | Every version of a skill (or a unit id such as `group:my-flow`): runs, invocations, score, verdict, confounders, outcome, cost per success | `--json` |
+| `versions <skill>` | Every version of a skill (or a unit id such as `group:my-flow`): runs, invocations, score, verdict, confounders, outcome, cost per success, the diff against the previous version, and the folders the skill was loaded from | `--json` |
 | `proposals add` | Record a proposed edit; prints its id (`p-0001`, ...) | `--skill` (required), `--hypothesis` (required), `--measure` (required: `score` or a measure key), `--direction lower\|higher` (required), `--evidence ID ...`, `--base-version HASH` (default: the current version) |
 | `proposals list` | List recorded proposals | `--json` |
 | `verify [<id>]` | Check one or every proposal against the runs since: `confirmed`, `refuted`, `inconclusive`, `not enough runs`, `confounded` | `--json` |
@@ -230,7 +230,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 
 | Command | What it does | Flags |
 |---|---|---|
-| `incidents` | List incidents. Permission denials caused by your permission rules are hidden unless `--all` | `--type`, `--skill`, `--limit N` (50), `--all`, `--json`, `--csv` |
+| `incidents` | List incidents with their latest label (a human one before an LLM one); `--json` and `--csv` add the quoted instruction and the skill hash the judge saw. Permission denials caused by your permission rules are hidden unless `--all` | `--type`, `--skill`, `--limit N` (50), `--all`, `--json`, `--csv` |
 | `show <id>` | The timeline around an incident or tool call: what the agent was asked, said and did | `--steps N` (12 before), `--after N` (4) |
 | `classify` | Label incidents with the failure taxonomy through `claude -p`. Prints its cost | `--type` (repeatable), `--skill` (repeatable), `--limit N` (20), `--model ALIAS`, `--workers N` (4), `--relabel`, `--sample stratified\|priority`, `--seed N`, `--dry-run` (print one prompt, no model call) |
 | `labels export\|import <csv>` | Human review of the labels | export: `--limit N` (stratified sample), `--seed N`, `--blind` (leave the LLM labels out) |

@@ -155,6 +155,7 @@ class RunlensTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         build_fixture()
+        hooks.SKILLS = TMP / "skills"  # never the real ~/.claude/skills
         config.HOME.mkdir(parents=True, exist_ok=True)
         (config.HOME / "config.toml").write_text(CFG_TOML, encoding="utf-8")
         cls.cfg = config.load()
@@ -326,6 +327,51 @@ class RunlensTest(unittest.TestCase):
         self.assertIn("imported 1 human labels", o.getvalue())
         self.assertIn("agreement 100%", o.getvalue())
         type(self).con = store.connect(read_only=True)
+
+    def test_incidents_show_the_latest_label_human_first(self):
+        from runlens import cli
+        self.con.close()
+        con = store.connect()
+        iid = con.execute("SELECT incident_id FROM incidents WHERE type = 'error_streak'").fetchone()[0]
+        con.execute("""INSERT INTO labels (incident_id, source, category, fault, instruction, skill_hash)
+                       VALUES (?, 'llm', 'tool_misuse', 'skill_instructions', 'Run pytest.', 'abc')""", [iid])
+        con.close()
+        try:
+            with redirect_stdout(io.StringIO()) as out:
+                cli.main(["incidents", "--type", "error_streak", "--json"])
+            row = next(r for r in json.loads(out.getvalue()) if r["incident_id"] == iid)
+            self.assertEqual((row["label"], row["fault"], row["label_source"], row["instruction"], row["skill_hash"]),
+                             ("tool_misuse", "skill_instructions", "llm", "Run pytest.", "abc"))
+            con = store.connect()
+            con.execute("INSERT INTO labels (incident_id, source, category, fault) VALUES (?, 'human', 'environment', 'tooling_or_environment')", [iid])
+            con.close()
+            with redirect_stdout(io.StringIO()) as out:
+                cli.main(["incidents", "--type", "error_streak"])
+            self.assertIn("environment", out.getvalue())  # a human label wins over the newer-or-older llm one
+            self.assertNotIn("Run pytest.", out.getvalue())  # quotes only in --json/--csv
+        finally:
+            con = store.connect()
+            con.execute("DELETE FROM labels WHERE incident_id = ?", [iid])
+            con.close()
+            type(self).con = store.connect(read_only=True)
+
+    def test_check_warns_when_the_installed_skill_is_stale(self):
+        settings, hooks.SETTINGS = hooks.SETTINGS, TMP / "settings-skill.json"
+        try:
+            self.assertEqual(hooks.stale_skill(), [])  # never installed: nothing to warn about
+            with redirect_stdout(io.StringIO()):
+                hooks.install()
+            self.assertEqual(hooks.stale_skill(), [])
+            self.assertFalse((hooks.SKILLS / "runlens-retro" / "evals").exists())
+            (hooks.SKILLS / "runlens-retro" / "SKILL.md").write_text("old text", encoding="utf-8")
+            self.assertEqual(hooks.stale_skill(), ["SKILL.md"])
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertGreater(check.check(sources=False), 0)
+            self.assertIn("WARN  skill", out.getvalue())
+            self.assertIn("runlens install", out.getvalue())
+        finally:
+            shutil.rmtree(hooks.SKILLS, ignore_errors=True)
+            hooks.SETTINGS = settings
 
     def test_judge_prompt_and_schema(self):
         cats = classify.taxonomy()

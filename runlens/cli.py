@@ -213,8 +213,16 @@ def main(argv=None):
         if not a.all:
             where.append("NOT coalesce(policy, false)")
         args.append(a.limit)
-        emit(con.execute(f"""SELECT incident_id, session_id[:8] AS run, type, n, skill, role, left(key, 80) AS key, policy
-                             FROM incidents WHERE {' AND '.join(where)} ORDER BY ts LIMIT ?""", args), a)
+        # Each incident's latest label, a human one before an LLM one; the quote and the skill hash only in --json/--csv.
+        from .classify import latest_labels
+        quote = ", l.instruction, l.skill_hash" if a.json or a.csv else ""
+        emit(con.execute(f"""SELECT incident_id, session_id[:8] AS run, type, n, skill, role, left(key, 80) AS key, policy,
+                                    l.category AS label, l.fault, l.source AS label_source{quote}
+                             FROM incidents
+                             LEFT JOIN (SELECT * FROM {latest_labels(con)}
+                                        QUALIFY row_number() OVER (PARTITION BY incident_id ORDER BY (source = 'human') DESC) = 1) l
+                               USING (incident_id)
+                             WHERE {' AND '.join(where)} ORDER BY ts LIMIT ?""", args), a)
         con.close()
     elif a.command == "classify":
         from .classify import classify
@@ -278,6 +286,10 @@ def method_command(a, cfg):
             out = bench.versions_summary(model, proposals.unit_id(a.skill))
             if out is None:
                 raise ValueError(f"no finished, non-stub runs of {a.skill!r}; `runlens score` lists the units")
+            # where the skill's files live, most recently loaded first, so its text can be read and cited
+            out["skill_dirs"] = [r[0] for r in con.execute(
+                """SELECT skill_dir FROM skill_loads WHERE skill = ? AND skill_dir IS NOT NULL
+                   GROUP BY skill_dir ORDER BY max(ts) DESC""", [out["skill"]]).fetchall()]
             dump(out) if a.json else print(_versions_text(out))
         elif a.command == "proposals":
             p = proposals.add(con, model, a.skill, a.hypothesis, a.measure, a.direction, a.evidence, a.base_version)
@@ -327,8 +339,9 @@ def _versions_text(out):
     rows = [[v["label"], v["hash"], v["runs"], v["invocations"], _num(v["score"]), v["verdict"] or "first", v["vs"] or "-",
              _diff_text(v["difference"]), _outcome_text(v["outcome"]), _num(v["cost_per_success_usd"], 2)] for v in out["versions"]]
     notes = [f"{v['label']}: confounded by {'; '.join(v['confounders'])}" for v in out["versions"] if v["confounders"]]
+    dirs = [f"files: {'; '.join(out['skill_dirs'])}"] if out.get("skill_dirs") else []
     return "\n".join([f"{out['skill']}: score 100 = its own typical run; difference = the version against the one before "
-                      "(100 = no change)", _table(cols, rows)] + notes)
+                      "(100 = no change)", _table(cols, rows)] + notes + dirs)
 
 
 def output_flags(p):
