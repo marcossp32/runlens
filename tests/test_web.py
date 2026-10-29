@@ -363,8 +363,9 @@ class Renders(unittest.TestCase):
     def test_measures_heatmap_is_alphabetical_and_ratios_are_not_percentages(self):
         path = TMP / "heat.html"
         path.write_text(dashboard.render(wording_model()), encoding="utf-8")
-        dom = dump(path, "#/?tab=measures")
+        dom = dump(path, "#/?tab=measures", until=r'class="rowlabel"')  # the heatmap is drawn on a frame
         rows = re.findall(r'class="rowlabel"[^>]*>([^<]+)<', dom)
+        self.assertTrue(rows, "the heatmap was not drawn")
         self.assertEqual(rows, sorted(rows, key=str.lower), "rows are not ordered by score")
         text = visible(dom)
         self.assertRegex(text, r"60 ?% vs 90 ?%")  # a rate shows its value against the reference
