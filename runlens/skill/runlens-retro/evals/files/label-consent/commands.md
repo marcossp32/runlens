@@ -26,29 +26,29 @@ all checks passed
 ## runlens score --kind skill --json
 ```json
 {"kind": "skill", "population": {"runs": 13, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation",
- "units": [{"unit": "skill:m-prove", "name": "m-prove", "kind": "skill", "runs": 13, "invocations": 46, "versions": 2, "current": "v2",
+ "units": [{"unit": "skill:prove-change", "name": "prove-change", "kind": "skill", "runs": 13, "invocations": 46, "versions": 2, "current": "v2",
             "verdict": "not enough runs", "direction": null, "vs": "v1", "confounders": [], "outcome": null,
             "difference": {"score": 97.2, "ci95": null, "measures": {}}}]}
 ```
 
-## runlens versions m-prove --json
+## runlens versions prove-change --json
 ```json
-{"skill": "m-prove", "unit": "skill:m-prove", "unit_of_analysis": "invocation", "versions": [
-  {"id": "skill:m-prove@a1b2c3d4", "label": "v1", "hash": "a1b2c3d4", "runs": 9, "invocations": 31, "score": 101.3,
+{"skill": "prove-change", "unit": "skill:prove-change", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:prove-change@a1b2c3d4", "label": "v1", "hash": "a1b2c3d4", "runs": 9, "invocations": 31, "score": 101.3,
    "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null},
-  {"id": "skill:m-prove@e5f6a7b8", "label": "v2", "hash": "e5f6a7b8", "runs": 4, "invocations": 15, "score": 97.0,
+  {"id": "skill:prove-change@e5f6a7b8", "label": "v2", "hash": "e5f6a7b8", "runs": 4, "invocations": 15, "score": 97.0,
    "verdict": "not enough runs", "direction": null, "vs": "v1", "confounders": [],
    "difference": {"score": 95.8, "ci95": null, "measures": {}}, "outcome": null}
-], "skill_dirs": ["evals/files/no-skill-fault/m-prove"]}
+], "skill_dirs": ["evals/files/no-skill-fault/prove-change"]}
 ```
 
-## runlens incidents --skill m-prove --json
+## runlens incidents --skill prove-change --json
 ```json
 [
-  {"incident_id": "b1", "run": "c66287aa", "type": "idle_loop", "n": 9, "skill": "m-prove", "role": "Supervisor", "key": "9 idle calls, e.g. sleep 60", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
-  {"incident_id": "b2", "run": "d81f02bb", "type": "idle_loop", "n": 14, "skill": "m-prove", "role": "Supervisor", "key": "14 idle calls, e.g. Start-Sleep -Seconds 120", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
-  {"incident_id": "b3", "run": "e93a1c44", "type": "idle_loop", "n": 6, "skill": "m-prove", "role": "Supervisor", "key": "6 idle calls, e.g. sleep 90; echo waiting", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
-  {"incident_id": "b4", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "m-prove", "role": "Prover", "key": "Bash: rm -rf .git/mstack/prove", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
+  {"incident_id": "b1", "run": "c66287aa", "type": "idle_loop", "n": 9, "skill": "prove-change", "role": "Supervisor", "key": "9 idle calls, e.g. sleep 60", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
+  {"incident_id": "b2", "run": "d81f02bb", "type": "idle_loop", "n": 14, "skill": "prove-change", "role": "Supervisor", "key": "14 idle calls, e.g. Start-Sleep -Seconds 120", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
+  {"incident_id": "b3", "run": "e93a1c44", "type": "idle_loop", "n": 6, "skill": "prove-change", "role": "Supervisor", "key": "6 idle calls, e.g. sleep 90; echo waiting", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
+  {"incident_id": "b4", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "prove-change", "role": "Prover", "key": "Bash: rm -rf .git/scratch/prove", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
 ]
 ```
 
@@ -84,40 +84,40 @@ incident idle_loop: 6 idle calls
 
 ## runlens show b4
 ```
-incident permission_denied: Bash: rm -rf .git/mstack/prove
->> 30 [Bash] rm -rf .git/mstack/prove -> ERROR denied: blocked by a permission rule
+incident permission_denied: Bash: rm -rf .git/scratch/prove
+>> 30 [Bash] rm -rf .git/scratch/prove -> ERROR denied: blocked by a permission rule
 ```
 
-## runlens classify --skill m-prove --dry-run (any --limit)
+## runlens classify --skill prove-change --dry-run (any --limit)
 ```
 4 incidents, stratified sample (seed 7: --seed 7 picks the same ones)
-b1  idle_loop                skill=m-prove
-b2  idle_loop                skill=m-prove
-b3  idle_loop                skill=m-prove
-b4  permission_denied        skill=m-prove
+b1  idle_loop                skill=prove-change
+b2  idle_loop                skill=prove-change
+b3  idle_loop                skill=prove-change
+b4  permission_denied        skill=prove-change
 
 --- judge prompt for b1 ---
 Read the task, the skill instructions and the timeline, then classify what happened at the step marked >>.
 (prompt body omitted in this fixture)
 ```
 
-## runlens classify --skill m-prove (without --dry-run, any --limit)
+## runlens classify --skill prove-change (without --dry-run, any --limit)
 ```
 4 incidents, stratified sample (seed 7: --seed 7 picks the same ones)
 b1  idle_loop        busy_waiting               skill_instructions     Polls with sleep because the skill never says to wait for the background agents' notifications.
 b2  idle_loop        busy_waiting               skill_instructions     Same polling loop while both provers run in the background.
 b3  idle_loop        busy_waiting               agent_judgment         Polls with sleep and echo; the skill does not cover waiting.
-b4  permission_denied permission_blocked        tooling_or_environment The sandbox blocks deleting .git/mstack.
+b4  permission_denied permission_blocked        tooling_or_environment The sandbox blocks deleting .git/scratch.
 labeled 4/4 incidents with sonnet, $0.38
 ```
 
-## runlens incidents --skill m-prove --json (after classify)
+## runlens incidents --skill prove-change --json (after classify)
 ```json
 [
-  {"incident_id": "b1", "run": "c66287aa", "type": "idle_loop", "n": 9, "skill": "m-prove", "role": "Supervisor", "key": "9 idle calls, e.g. sleep 60", "policy": false, "label": "busy_waiting", "fault": "skill_instructions", "label_source": "llm", "instruction": "missing: wait for the background agents’ notifications instead of polling", "skill_hash": null},
-  {"incident_id": "b2", "run": "d81f02bb", "type": "idle_loop", "n": 14, "skill": "m-prove", "role": "Supervisor", "key": "14 idle calls, e.g. Start-Sleep -Seconds 120", "policy": false, "label": "busy_waiting", "fault": "skill_instructions", "label_source": "llm", "instruction": "missing: wait for the background agents’ notifications instead of polling", "skill_hash": null},
-  {"incident_id": "b3", "run": "e93a1c44", "type": "idle_loop", "n": 6, "skill": "m-prove", "role": "Supervisor", "key": "6 idle calls, e.g. sleep 90; echo waiting", "policy": false, "label": "busy_waiting", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": null},
-  {"incident_id": "b4", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "m-prove", "role": "Prover", "key": "Bash: rm -rf .git/mstack/prove", "policy": false, "label": "permission_blocked", "fault": "tooling_or_environment", "label_source": "llm", "instruction": null, "skill_hash": null}
+  {"incident_id": "b1", "run": "c66287aa", "type": "idle_loop", "n": 9, "skill": "prove-change", "role": "Supervisor", "key": "9 idle calls, e.g. sleep 60", "policy": false, "label": "busy_waiting", "fault": "skill_instructions", "label_source": "llm", "instruction": "missing: wait for the background agents’ notifications instead of polling", "skill_hash": null},
+  {"incident_id": "b2", "run": "d81f02bb", "type": "idle_loop", "n": 14, "skill": "prove-change", "role": "Supervisor", "key": "14 idle calls, e.g. Start-Sleep -Seconds 120", "policy": false, "label": "busy_waiting", "fault": "skill_instructions", "label_source": "llm", "instruction": "missing: wait for the background agents’ notifications instead of polling", "skill_hash": null},
+  {"incident_id": "b3", "run": "e93a1c44", "type": "idle_loop", "n": 6, "skill": "prove-change", "role": "Supervisor", "key": "6 idle calls, e.g. sleep 90; echo waiting", "policy": false, "label": "busy_waiting", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": null},
+  {"incident_id": "b4", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "prove-change", "role": "Prover", "key": "Bash: rm -rf .git/scratch/prove", "policy": false, "label": "permission_blocked", "fault": "tooling_or_environment", "label_source": "llm", "instruction": null, "skill_hash": null}
 ]
 ```
 
@@ -128,5 +128,5 @@ labeled 4/4 incidents with sonnet, $0.38
 
 ## runlens proposals add (any arguments)
 ```
-p-0011 recorded: m-prove 1a2b3c4d
+p-0011 recorded: prove-change 1a2b3c4d
 ```

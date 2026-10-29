@@ -26,40 +26,40 @@ all checks passed
 ## runlens score --kind skill --json
 ```json
 {"kind": "skill", "population": {"runs": 13, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation", "units": [
-  {"unit": "skill:m-feature", "name": "m-feature", "kind": "skill", "runs": 13, "invocations": 13, "versions": 1, "current": "v1",
+  {"unit": "skill:ship-feature", "name": "ship-feature", "kind": "skill", "runs": 13, "invocations": 13, "versions": 1, "current": "v1",
    "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null},
-  {"unit": "skill:m-build", "name": "m-build", "kind": "skill", "runs": 13, "invocations": 61, "versions": 1, "current": "v1",
+  {"unit": "skill:build-step", "name": "build-step", "kind": "skill", "runs": 13, "invocations": 61, "versions": 1, "current": "v1",
    "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null},
-  {"unit": "skill:m-scan", "name": "m-scan", "kind": "skill", "runs": 13, "invocations": 56, "versions": 2, "current": "v2",
+  {"unit": "skill:scan-repo", "name": "scan-repo", "kind": "skill", "runs": 13, "invocations": 56, "versions": 2, "current": "v2",
    "verdict": "confounded", "direction": "better", "vs": "v1",
    "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
    "outcome": null, "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}}
 ]}
 ```
 
-## runlens sql "SELECT agent_id = 'main' AS in_main, count(*) FROM skill_loads WHERE skill = 'm-scan' GROUP BY 1"
+## runlens sql "SELECT agent_id = 'main' AS in_main, count(*) FROM skill_loads WHERE skill = 'scan-repo' GROUP BY 1"
 ```
 in_main  count
 false    56
 ```
 
-## runlens versions m-scan --json
+## runlens versions scan-repo --json
 ```json
-{"skill": "m-scan", "unit": "skill:m-scan", "unit_of_analysis": "invocation", "versions": [
-  {"id": "skill:m-scan@9e8d7c6b", "label": "v1", "hash": "9e8d7c6b", "runs": 7, "invocations": 30, "score": 91.0,
+{"skill": "scan-repo", "unit": "skill:scan-repo", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:scan-repo@9e8d7c6b", "label": "v1", "hash": "9e8d7c6b", "runs": 7, "invocations": 30, "score": 91.0,
    "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null},
-  {"id": "skill:m-scan@5a4b3c2d", "label": "v2", "hash": "5a4b3c2d", "runs": 6, "invocations": 26, "score": 110.0,
+  {"id": "skill:scan-repo@5a4b3c2d", "label": "v2", "hash": "5a4b3c2d", "runs": 6, "invocations": 26, "score": 110.0,
    "verdict": "confounded", "direction": "better", "vs": "v1",
    "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
    "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}, "outcome": null}
 ]}
 ```
 
-## runlens incidents --skill m-scan --json
+## runlens incidents --skill scan-repo --json
 ```json
 [
-  {"incident_id": "c1", "run": "c66287aa", "type": "error_streak", "n": 3, "skill": "m-scan", "role": "Scan", "key": "Grep: other", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
-  {"incident_id": "c2", "run": "d81f02bb", "type": "error_streak", "n": 2, "skill": "m-scan", "role": "Scan", "key": "Bash: not_found", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
+  {"incident_id": "c1", "run": "c66287aa", "type": "error_streak", "n": 3, "skill": "scan-repo", "role": "Scan", "key": "Grep: other", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
+  {"incident_id": "c2", "run": "d81f02bb", "type": "error_streak", "n": 2, "skill": "scan-repo", "role": "Scan", "key": "Bash: not_found", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
 ]
 ```
 

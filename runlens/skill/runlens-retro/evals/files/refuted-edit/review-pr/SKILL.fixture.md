@@ -1,5 +1,5 @@
 ---
-name: m-review
+name: review-pr
 description: Reviews a change and reports each finding with its source.
 ---
 

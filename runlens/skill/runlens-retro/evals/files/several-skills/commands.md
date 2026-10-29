@@ -26,99 +26,99 @@ all checks passed
 ## runlens score --kind skill --json
 ```json
 {"kind": "skill", "population": {"runs": 30, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation", "units": [
-  {"unit": "skill:m-build", "name": "m-build", "kind": "skill", "runs": 13, "invocations": 61, "versions": 3, "current": "v3",
+  {"unit": "skill:build-step", "name": "build-step", "kind": "skill", "runs": 13, "invocations": 61, "versions": 3, "current": "v3",
    "verdict": "worse", "direction": "worse", "vs": "v2", "confounders": [],
    "outcome": {"measure": "step_check first-pass rate", "value": 0.71, "n": 61},
    "difference": {"score": 71.4, "ci95": [58.2, 88.9], "measures": {},
                   "outcome": {"a": 0.87, "b": 0.55, "value": -0.32, "ci95": [-0.51, -0.12]}}},
-  {"unit": "skill:m-scan", "name": "m-scan", "kind": "skill", "runs": 13, "invocations": 56, "versions": 2, "current": "v2",
+  {"unit": "skill:scan-repo", "name": "scan-repo", "kind": "skill", "runs": 13, "invocations": 56, "versions": 2, "current": "v2",
    "verdict": "confounded", "direction": "better", "vs": "v1",
    "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
    "outcome": null, "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}},
-  {"unit": "skill:m-review", "name": "m-review", "kind": "skill", "runs": 17, "invocations": 17, "versions": 3, "current": "v3",
+  {"unit": "skill:review-pr", "name": "review-pr", "kind": "skill", "runs": 17, "invocations": 17, "versions": 3, "current": "v3",
    "verdict": "better", "direction": "better", "vs": "v2", "confounders": [], "outcome": null,
    "difference": {"score": 118.0, "ci95": [104.0, 133.0], "measures": {}}},
-  {"unit": "skill:m-plan", "name": "m-plan", "kind": "skill", "runs": 5, "invocations": 5, "versions": 2, "current": "v2",
+  {"unit": "skill:plan-feature", "name": "plan-feature", "kind": "skill", "runs": 5, "invocations": 5, "versions": 2, "current": "v2",
    "verdict": "not enough runs", "direction": null, "vs": "v1", "confounders": [], "outcome": null,
    "difference": {"score": 61.0, "ci95": null, "measures": {}}}
 ]}
 ```
 
-## runlens versions m-build --json
+## runlens versions build-step --json
 ```json
-{"skill": "m-build", "unit": "skill:m-build", "unit_of_analysis": "invocation", "versions": [
-  {"id": "skill:m-build@33e62960", "label": "v2", "hash": "33e62960", "runs": 6, "invocations": 30, "score": 112.4,
+{"skill": "build-step", "unit": "skill:build-step", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:build-step@33e62960", "label": "v2", "hash": "33e62960", "runs": 6, "invocations": 30, "score": 112.4,
    "verdict": null, "vs": null, "confounders": [], "difference": null,
    "outcome": {"measure": "step_check first-pass rate", "value": 0.87, "n": 30}},
-  {"id": "skill:m-build@f72bcc1f", "label": "v3", "hash": "f72bcc1f", "runs": 7, "invocations": 31, "score": 80.3,
+  {"id": "skill:build-step@f72bcc1f", "label": "v3", "hash": "f72bcc1f", "runs": 7, "invocations": 31, "score": 80.3,
    "verdict": "worse", "direction": "worse", "vs": "v2", "confounders": [],
    "difference": {"score": 71.4, "ci95": [58.2, 88.9],
                   "measures": {"outcome": {"a": 0.87, "b": 0.55, "effect": 0.36, "ci95": [0.21, 0.71]}},
                   "outcome": {"a": 0.87, "b": 0.55, "value": -0.32, "ci95": [-0.51, -0.12]}},
    "outcome": {"measure": "step_check first-pass rate", "value": 0.55, "n": 31},
    "diff": "@@ -8 +8,2 @@\n Read the issue, write the code, run the step's tests.\n+If a test still fails after your fix, update the test so it passes."}
-], "skill_dirs": ["evals/files/regression/m-build"]}
+], "skill_dirs": ["evals/files/regression/build-step"]}
 ```
 
-## runlens versions m-scan --json
+## runlens versions scan-repo --json
 ```json
-{"skill": "m-scan", "unit": "skill:m-scan", "unit_of_analysis": "invocation", "versions": [
-  {"id": "skill:m-scan@9e8d7c6b", "label": "v1", "hash": "9e8d7c6b", "runs": 7, "invocations": 30, "score": 91.0,
+{"skill": "scan-repo", "unit": "skill:scan-repo", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:scan-repo@9e8d7c6b", "label": "v1", "hash": "9e8d7c6b", "runs": 7, "invocations": 30, "score": 91.0,
    "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null},
-  {"id": "skill:m-scan@5a4b3c2d", "label": "v2", "hash": "5a4b3c2d", "runs": 6, "invocations": 26, "score": 110.0,
+  {"id": "skill:scan-repo@5a4b3c2d", "label": "v2", "hash": "5a4b3c2d", "runs": 6, "invocations": 26, "score": 110.0,
    "verdict": "confounded", "direction": "better", "vs": "v1",
    "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
    "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}, "outcome": null}
 ]}
 ```
 
-## runlens versions m-review --json
+## runlens versions review-pr --json
 ```json
-{"skill": "m-review", "unit": "skill:m-review", "unit_of_analysis": "invocation", "versions": [
-  {"id": "skill:m-review@a0a0a0a0", "label": "v2", "hash": "a0a0a0a0", "runs": 8, "invocations": 8, "score": 100.0,
+{"skill": "review-pr", "unit": "skill:review-pr", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:review-pr@a0a0a0a0", "label": "v2", "hash": "a0a0a0a0", "runs": 8, "invocations": 8, "score": 100.0,
    "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null},
-  {"id": "skill:m-review@b1b1b1b1", "label": "v3", "hash": "b1b1b1b1", "runs": 9, "invocations": 9, "score": 118.0,
+  {"id": "skill:review-pr@b1b1b1b1", "label": "v3", "hash": "b1b1b1b1", "runs": 9, "invocations": 9, "score": 118.0,
    "verdict": "better", "direction": "better", "vs": "v2", "confounders": [],
    "difference": {"score": 118.0, "ci95": [104.0, 133.0], "measures": {}}, "outcome": null}
 ]}
 ```
 
-## runlens versions m-plan --json
+## runlens versions plan-feature --json
 ```json
-{"skill": "m-plan", "unit": "skill:m-plan", "unit_of_analysis": "invocation", "versions": [
-  {"id": "skill:m-plan@0c1d2e3f", "label": "v1", "hash": "0c1d2e3f", "runs": 3, "invocations": 3, "score": 118.0,
+{"skill": "plan-feature", "unit": "skill:plan-feature", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:plan-feature@0c1d2e3f", "label": "v1", "hash": "0c1d2e3f", "runs": 3, "invocations": 3, "score": 118.0,
    "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null, "measures": {"cost": 1.9}},
-  {"id": "skill:m-plan@4a5b6c7d", "label": "v2", "hash": "4a5b6c7d", "runs": 2, "invocations": 2, "score": 79.0,
+  {"id": "skill:plan-feature@4a5b6c7d", "label": "v2", "hash": "4a5b6c7d", "runs": 2, "invocations": 2, "score": 79.0,
    "verdict": "not enough runs", "direction": null, "vs": "v1", "confounders": [],
    "difference": {"score": 61.0, "ci95": null, "measures": {"cost": {"a": 1.9, "b": 6.4, "effect": 0.5, "ci95": null}}},
    "outcome": null, "measures": {"cost": 6.4}}
 ]}
 ```
 
-## runlens incidents --skill m-build --json
+## runlens incidents --skill build-step --json
 ```json
 [
-  {"incident_id": "7a1c", "run": "c66287aa", "type": "test_edit_after_failure", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Edit: tests/cart.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
-  {"incident_id": "8b2d", "run": "d81f02bb", "type": "test_edit_after_failure", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Edit: tests/search.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
-  {"incident_id": "9c3e", "run": "e93a1c44", "type": "test_edit_after_failure", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Write: tests/menu.test.mjs", "policy": false, "label": "test_tampering", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": "f72bcc1f"},
-  {"incident_id": "4d4f", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Bash: rm -rf .git/mstack", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
+  {"incident_id": "7a1c", "run": "c66287aa", "type": "test_edit_after_failure", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Edit: tests/cart.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
+  {"incident_id": "8b2d", "run": "d81f02bb", "type": "test_edit_after_failure", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Edit: tests/search.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
+  {"incident_id": "9c3e", "run": "e93a1c44", "type": "test_edit_after_failure", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Write: tests/menu.test.mjs", "policy": false, "label": "test_tampering", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": "f72bcc1f"},
+  {"incident_id": "4d4f", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Bash: rm -rf .git/scratch", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
 ]
 ```
 
-## runlens incidents --skill m-review --json
+## runlens incidents --skill review-pr --json
 ```json
 [
-  {"incident_id": "f1", "run": "c66287aa", "type": "error_streak", "n": 3, "skill": "m-review", "role": "main", "key": "Bash", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
+  {"incident_id": "f1", "run": "c66287aa", "type": "error_streak", "n": 3, "skill": "review-pr", "role": "main", "key": "Bash", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
 ]
 ```
 
-## runlens incidents --skill m-scan --json
+## runlens incidents --skill scan-repo --json
 ```json
 [
 ]
 ```
 
-## runlens incidents --skill m-plan --json
+## runlens incidents --skill plan-feature --json
 ```json
 [
 ]
@@ -178,5 +178,5 @@ incident error_streak: 3 errors in a row, Bash
 
 ## runlens proposals add (any arguments)
 ```
-p-0007 recorded: m-build f72bcc1f
+p-0007 recorded: build-step f72bcc1f
 ```

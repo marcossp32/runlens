@@ -5,22 +5,22 @@
     {
       "id": 1,
       "name": "regression-traced-to-an-instruction",
-      "prompt": "/runlens-retro m-build\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/regression/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/regression/m-build/SKILL.fixture.md (renamed so it is not loaded as a skill).",
-      "expected_output": "A report that names m-build v3 as worse than v2 with its run counts, groups the three test-edit incidents into one mode, quotes SKILL.md line 9 as the cause, proposes a minimal edit to that line, and shows a recorded proposal id with its measure.",
-      "files": ["evals/files/regression/commands.md", "evals/files/regression/m-build/SKILL.fixture.md"],
+      "prompt": "/runlens-retro build-step\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/regression/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/regression/build-step/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "expected_output": "A report that names build-step v3 as worse than v2 with its run counts, groups the three test-edit incidents into one mode, quotes SKILL.md line 9 as the cause, proposes a minimal edit to that line, and shows a recorded proposal id with its measure.",
+      "files": ["evals/files/regression/commands.md", "evals/files/regression/build-step/SKILL.fixture.md"],
       "assertions": [
-        "States that m-build v3 is worse than v2 using the runlens verdict and the run counts (n=7 vs n=6)",
+        "States that build-step v3 is worse than v2 using the runlens verdict and the run counts (n=7 vs n=6)",
         "Cites at least two of the incident ids 7a1c, 8b2d, 9c3e, each with what happened in its trace",
-        "Cites line 9 of m-build's SKILL.md and quotes 'If a test still fails after your fix, update the test so it passes.'",
+        "Cites line 9 of build-step's SKILL.md and quotes 'If a test still fails after your fix, update the test so it passes.'",
         "Proposes an edit that changes or removes that line rather than adding a rule that restates the skill",
         "Reports the recorded proposal under the id p-0007",
         "Names a measure and direction for the proposal (e.g. step_check first-pass rate up, or test_edit_after_failure incidents down)",
         "Does not apply the edit to SKILL.md"
       ],
       "expectations": [
-        "States that m-build v3 is worse than v2 using the runlens verdict and the run counts (n=7 vs n=6)",
+        "States that build-step v3 is worse than v2 using the runlens verdict and the run counts (n=7 vs n=6)",
         "Cites at least two of the incident ids 7a1c, 8b2d, 9c3e, each with what happened in its trace",
-        "Cites line 9 of m-build's SKILL.md and quotes 'If a test still fails after your fix, update the test so it passes.'",
+        "Cites line 9 of build-step's SKILL.md and quotes 'If a test still fails after your fix, update the test so it passes.'",
         "Proposes an edit that changes or removes that line rather than adding a rule that restates the skill",
         "Reports the recorded proposal under the id p-0007",
         "Names a measure and direction for the proposal (e.g. step_check first-pass rate up, or test_edit_after_failure incidents down)",
@@ -30,49 +30,49 @@
     {
       "id": 2,
       "name": "no-skill-instruction-faults-and-no-human-labels",
-      "prompt": "/runlens-retro m-prove\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/no-skill-fault/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/no-skill-fault/m-prove/SKILL.fixture.md (renamed so it is not loaded as a skill).",
-      "expected_output": "A report that says the labels are unverified hypotheses (no human labels), offers the blind label export, reads m-prove's SKILL.md itself, and either names the missing instruction behind the polling mode (two or more incidents) or says agent judgment; the single permission incident is not turned into a mode.",
-      "files": ["evals/files/no-skill-fault/commands.md", "evals/files/no-skill-fault/m-prove/SKILL.fixture.md"],
+      "prompt": "/runlens-retro prove-change\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/no-skill-fault/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/no-skill-fault/prove-change/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "expected_output": "A report that says the labels are unverified hypotheses (no human labels), offers the blind label export, reads prove-change's SKILL.md itself, and either names the missing instruction behind the polling mode (two or more incidents) or says agent judgment; the single permission incident is not turned into a mode.",
+      "files": ["evals/files/no-skill-fault/commands.md", "evals/files/no-skill-fault/prove-change/SKILL.fixture.md"],
       "assertions": [
         "Says there are no or too few human labels, so label counts are hypotheses rather than findings",
         "Points the person to human labelling (for example a blind label export) as the way to turn the label categories into findings",
-        "Grounds the cause in m-prove's SKILL.md (what it says or fails to say about waiting), not only in the labels' fault field",
+        "Grounds the cause in prove-change's SKILL.md (what it says or fails to say about waiting), not only in the labels' fault field",
         "Treats the polling incidents (b1, b2, b3) as one mode and either names a missing instruction (e.g. wait for the notification instead of polling) or says agent judgment, with incident ids",
         "Does not make a failure mode out of the single permission_denied incident (one incident is an anecdote)",
-        "Does not claim any m-prove version is better or worse"
+        "Does not claim any prove-change version is better or worse"
       ],
       "expectations": [
         "Says there are no or too few human labels, so label counts are hypotheses rather than findings",
         "Points the person to human labelling (for example a blind label export) as the way to turn the label categories into findings",
-        "Grounds the cause in m-prove's SKILL.md (what it says or fails to say about waiting), not only in the labels' fault field",
+        "Grounds the cause in prove-change's SKILL.md (what it says or fails to say about waiting), not only in the labels' fault field",
         "Treats the polling incidents (b1, b2, b3) as one mode and either names a missing instruction (e.g. wait for the notification instead of polling) or says agent judgment, with incident ids",
         "Does not make a failure mode out of the single permission_denied incident (one incident is an anecdote)",
-        "Does not claim any m-prove version is better or worse"
+        "Does not claim any prove-change version is better or worse"
       ]
     },
     {
       "id": 3,
       "name": "not-enough-runs-to-judge-a-version",
-      "prompt": "/runlens-retro m-plan\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/not-enough-runs/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
-      "expected_output": "A report that says m-plan v2 against v1 is 'not enough runs' (n=2 vs n=3), makes no better/worse claim even though v2's raw cost is higher, and reports proposal p-0003 as 'not enough runs' from runlens verify. With nothing new to find, the report is short, records no proposal and says what more runs would allow.",
+      "prompt": "/runlens-retro plan-feature\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/not-enough-runs/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
+      "expected_output": "A report that says plan-feature v2 against v1 is 'not enough runs' (n=2 vs n=3), makes no better/worse claim even though v2's raw cost is higher, and reports proposal p-0003 as 'not enough runs' from runlens verify. With nothing new to find, the report is short, records no proposal and says what more runs would allow.",
       "files": ["evals/files/not-enough-runs/commands.md"],
       "assertions": [
-        "Reports the m-plan v2 verdict as not enough runs, with the run counts 2 and 3",
+        "Reports the plan-feature v2 verdict as not enough runs, with the run counts 2 and 3",
         "Does not say v2 is worse or better, and draws no conclusion from v2's raw cost against v1's",
         "Any run count it names as needed for a verdict is 5 runs a side (runlens's default minimum) or is left unstated; it names no other number",
         "Reports proposal p-0003 as not enough runs, as runlens verify gave it",
         "Does not claim that the edit behind p-0003 helped",
         "Records no proposal and names no failure mode (there are no incidents)",
-        "Says what would let a later retro judge: more runs of m-plan v2 (and of any version after p-0003's edit)"
+        "Says what would let a later retro judge: more runs of plan-feature v2 (and of any version after p-0003's edit)"
       ],
       "expectations": [
-        "Reports the m-plan v2 verdict as not enough runs, with the run counts 2 and 3",
+        "Reports the plan-feature v2 verdict as not enough runs, with the run counts 2 and 3",
         "Does not say v2 is worse or better, and draws no conclusion from v2's raw cost against v1's",
         "Any run count it names as needed for a verdict is 5 runs a side (runlens's default minimum) or is left unstated; it names no other number",
         "Reports proposal p-0003 as not enough runs, as runlens verify gave it",
         "Does not claim that the edit behind p-0003 helped",
         "Records no proposal and names no failure mode (there are no incidents)",
-        "Says what would let a later retro judge: more runs of m-plan v2 (and of any version after p-0003's edit)"
+        "Says what would let a later retro judge: more runs of plan-feature v2 (and of any version after p-0003's edit)"
       ]
     },
     {
@@ -97,26 +97,26 @@
     {
       "id": 5,
       "name": "subagent-skill-with-a-confounded-version",
-      "prompt": "/runlens-retro m-scan\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/subagent-confounded/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
-      "expected_output": "A report that finds m-scan in runlens score as a unit of its own (it loads only in subagents), reports the v2 verdict as confounded by the Claude Code version and model mix instead of blaming the skill text, and continues from its incidents.",
+      "prompt": "/runlens-retro scan-repo\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/subagent-confounded/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
+      "expected_output": "A report that finds scan-repo in runlens score as a unit of its own (it loads only in subagents), reports the v2 verdict as confounded by the Claude Code version and model mix instead of blaming the skill text, and continues from its incidents.",
       "files": ["evals/files/subagent-confounded/commands.md"],
       "assertions": [
-        "Finds m-scan in runlens score with its own verdict and treats it like any other skill, without saying it is missing or unscored",
-        "Continues with m-scan's incidents rather than stopping",
-        "Reports the m-scan v2 verdict as confounded and names the Claude Code version change and the model mix",
+        "Finds scan-repo in runlens score with its own verdict and treats it like any other skill, without saying it is missing or unscored",
+        "Continues with scan-repo's incidents rather than stopping",
+        "Reports the scan-repo v2 verdict as confounded and names the Claude Code version change and the model mix",
         "Does not attribute the change between versions to the skill text"
       ],
       "expectations": [
-        "Finds m-scan in runlens score with its own verdict and treats it like any other skill, without saying it is missing or unscored",
-        "Continues with m-scan's incidents rather than stopping",
-        "Reports the m-scan v2 verdict as confounded and names the Claude Code version change and the model mix",
+        "Finds scan-repo in runlens score with its own verdict and treats it like any other skill, without saying it is missing or unscored",
+        "Continues with scan-repo's incidents rather than stopping",
+        "Reports the scan-repo v2 verdict as confounded and names the Claude Code version change and the model mix",
         "Does not attribute the change between versions to the skill text"
       ]
     },
     {
       "id": 6,
       "name": "unpriced-model-does-not-stop-the-retro",
-      "prompt": "/runlens-retro m-build\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/unpriced-model/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
+      "prompt": "/runlens-retro build-step\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/unpriced-model/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
       "expected_output": "The retro does not stop at the FAIL for the unpriced model: it reports the line as a warning, says cost-based numbers for that model are understated, suggests adding the price under [prices] and running runlens refresh, and carries on with the version verdict (no clear change).",
       "files": ["evals/files/unpriced-model/commands.md"],
       "assertions": [
@@ -124,7 +124,7 @@
         "Reports the unpriced-model FAIL (claude-nova-9, run d81f02bb) as a warning in the report",
         "Says costs for that model are missing or understated",
         "Suggests adding a price under [prices] and running runlens refresh",
-        "Continues to the score and versions and reports m-build v3 as no clear change",
+        "Continues to the score and versions and reports build-step v3 as no clear change",
         "Does not run runlens classify without asking (there are no incidents to classify here)"
       ],
       "expectations": [
@@ -132,14 +132,14 @@
         "Reports the unpriced-model FAIL (claude-nova-9, run d81f02bb) as a warning in the report",
         "Says costs for that model are missing or understated",
         "Suggests adding a price under [prices] and running runlens refresh",
-        "Continues to the score and versions and reports m-build v3 as no clear change",
+        "Continues to the score and versions and reports build-step v3 as no clear change",
         "Does not run runlens classify without asking (there are no incidents to classify here)"
       ]
     },
     {
       "id": 7,
       "name": "verify-confirmed-and-refuted",
-      "prompt": "/runlens-retro m-review\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/verify-results/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
+      "prompt": "/runlens-retro review-pr\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/verify-results/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run.",
       "expected_output": "A report that gives p-0004 as confirmed and p-0005 as refuted, each as runlens verify gave it, and does not call either edit helpful on impressions.",
       "files": ["evals/files/verify-results/commands.md"],
       "assertions": [
@@ -158,41 +158,41 @@
     {
       "id": 8,
       "name": "refuted-edit-behind-new-failures",
-      "prompt": "/runlens-retro m-review\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/refuted-edit/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/refuted-edit/m-review/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "prompt": "/runlens-retro review-pr\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/refuted-edit/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/refuted-edit/review-pr/SKILL.fixture.md (renamed so it is not loaded as a skill).",
       "expected_output": "A report that gives p-0005 as refuted (cost rose 2.1 to 2.9, 8 vs 9 runs) before suggesting anything, traces the INCOMPLETE reviews e1-e3 to the same cap line that edit added (line 10), and recommends reverting or reworking that line instead of stacking a new rule on it.",
-      "files": ["evals/files/refuted-edit/commands.md", "evals/files/refuted-edit/m-review/SKILL.fixture.md"],
+      "files": ["evals/files/refuted-edit/commands.md", "evals/files/refuted-edit/review-pr/SKILL.fixture.md"],
       "assertions": [
         "Reports proposal p-0005 as refuted, as runlens verify gave it, with its run counts (8 and 9) or the cost change (2.1 to 2.9)",
-        "Groups e1, e2 and e3 into one mode and cites line 10 of m-review's SKILL.md, quoting 'Stop after 5 comments; summarise the rest in one line.'",
+        "Groups e1, e2 and e3 into one mode and cites line 10 of review-pr's SKILL.md, quoting 'Stop after 5 comments; summarise the rest in one line.'",
         "Says the line behind the new failures is the edit p-0005 introduced in v3",
         "Recommends reverting or reworking that line, rather than keeping it and adding another rule on top of it",
-        "Reports m-review v3 against v2 as no clear change, without calling it better or worse",
+        "Reports review-pr v3 against v2 as no clear change, without calling it better or worse",
         "Does not apply any edit to SKILL.md"
       ],
       "expectations": [
         "Reports proposal p-0005 as refuted, as runlens verify gave it, with its run counts (8 and 9) or the cost change (2.1 to 2.9)",
-        "Groups e1, e2 and e3 into one mode and cites line 10 of m-review's SKILL.md, quoting 'Stop after 5 comments; summarise the rest in one line.'",
+        "Groups e1, e2 and e3 into one mode and cites line 10 of review-pr's SKILL.md, quoting 'Stop after 5 comments; summarise the rest in one line.'",
         "Says the line behind the new failures is the edit p-0005 introduced in v3",
         "Recommends reverting or reworking that line, rather than keeping it and adding another rule on top of it",
-        "Reports m-review v3 against v2 as no clear change, without calling it better or worse",
+        "Reports review-pr v3 against v2 as no clear change, without calling it better or worse",
         "Does not apply any edit to SKILL.md"
       ]
     },
     {
       "id": 9,
       "name": "open-proposal-is-not-repeated",
-      "prompt": "/runlens-retro m-build\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/open-proposal/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/regression/m-build/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "prompt": "/runlens-retro build-step\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/open-proposal/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/regression/build-step/SKILL.fixture.md (renamed so it is not loaded as a skill).",
       "expected_output": "A report that finds the test-edit regression again, sees that open proposal p-0007 already targets that line and has no runs of a newer version yet, points to p-0007 instead of recording a duplicate, and says the next step is applying that edit and gathering runs.",
-      "files": ["evals/files/open-proposal/commands.md", "evals/files/regression/m-build/SKILL.fixture.md"],
+      "files": ["evals/files/open-proposal/commands.md", "evals/files/regression/build-step/SKILL.fixture.md"],
       "assertions": [
-        "Reports m-build v3 as worse than v2 with the run counts (n=7 vs n=6)",
+        "Reports build-step v3 as worse than v2 with the run counts (n=7 vs n=6)",
         "Reports p-0007 as not enough runs, with no runs of a newer version since it was recorded",
         "Says the test-edit mode (7a1c, 8b2d, 9c3e) is what p-0007 already covers and points to p-0007",
         "Does not record a new proposal for that same mode (reports no p-0008 for the update-the-test line)",
         "Names applying p-0007's edit, or gathering runs of the edited version, as the next step"
       ],
       "expectations": [
-        "Reports m-build v3 as worse than v2 with the run counts (n=7 vs n=6)",
+        "Reports build-step v3 as worse than v2 with the run counts (n=7 vs n=6)",
         "Reports p-0007 as not enough runs, with no runs of a newer version since it was recorded",
         "Says the test-edit mode (7a1c, 8b2d, 9c3e) is what p-0007 already covers and points to p-0007",
         "Does not record a new proposal for that same mode (reports no p-0008 for the update-the-test line)",
@@ -202,24 +202,24 @@
     {
       "id": 10,
       "name": "several-skills-without-a-skill-argument",
-      "prompt": "/runlens-retro\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/several-skills/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/regression/m-build/SKILL.fixture.md (renamed so it is not loaded as a skill).",
-      "expected_output": "A report across four skills: m-build v3 worse and traced to line 9; m-scan v2 confounded by the Claude Code version and model mix; m-review v3 better with no edit proposed and its single incident left as an anecdote; m-plan v2 not enough runs. It says what it examined in depth and what it did not.",
-      "files": ["evals/files/several-skills/commands.md", "evals/files/regression/m-build/SKILL.fixture.md"],
+      "prompt": "/runlens-retro\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/several-skills/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/regression/build-step/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "expected_output": "A report across four skills: build-step v3 worse and traced to line 9; scan-repo v2 confounded by the Claude Code version and model mix; review-pr v3 better with no edit proposed and its single incident left as an anecdote; plan-feature v2 not enough runs. It says what it examined in depth and what it did not.",
+      "files": ["evals/files/several-skills/commands.md", "evals/files/regression/build-step/SKILL.fixture.md"],
       "assertions": [
-        "Reports m-build v3 as worse than v2 (n=7 vs n=6) and traces its test-edit mode to line 9 of m-build's SKILL.md",
-        "Reports m-scan v2 as confounded, names the Claude Code version change and the model mix, and does not credit the skill text",
-        "Reports m-review v3 as better than v2 with its run counts (9 vs 8) and proposes no edit for m-review",
-        "Does not make a failure mode out of the single m-review incident f1",
-        "Reports m-plan v2 as not enough runs (2 vs 3) with no better or worse claim",
+        "Reports build-step v3 as worse than v2 (n=7 vs n=6) and traces its test-edit mode to line 9 of build-step's SKILL.md",
+        "Reports scan-repo v2 as confounded, names the Claude Code version change and the model mix, and does not credit the skill text",
+        "Reports review-pr v3 as better than v2 with its run counts (9 vs 8) and proposes no edit for review-pr",
+        "Does not make a failure mode out of the single review-pr incident f1",
+        "Reports plan-feature v2 as not enough runs (2 vs 3) with no better or worse claim",
         "Says which skills it examined in depth and which it did not, with a reason",
         "Does not rank or compare the skills against each other"
       ],
       "expectations": [
-        "Reports m-build v3 as worse than v2 (n=7 vs n=6) and traces its test-edit mode to line 9 of m-build's SKILL.md",
-        "Reports m-scan v2 as confounded, names the Claude Code version change and the model mix, and does not credit the skill text",
-        "Reports m-review v3 as better than v2 with its run counts (9 vs 8) and proposes no edit for m-review",
-        "Does not make a failure mode out of the single m-review incident f1",
-        "Reports m-plan v2 as not enough runs (2 vs 3) with no better or worse claim",
+        "Reports build-step v3 as worse than v2 (n=7 vs n=6) and traces its test-edit mode to line 9 of build-step's SKILL.md",
+        "Reports scan-repo v2 as confounded, names the Claude Code version change and the model mix, and does not credit the skill text",
+        "Reports review-pr v3 as better than v2 with its run counts (9 vs 8) and proposes no edit for review-pr",
+        "Does not make a failure mode out of the single review-pr incident f1",
+        "Reports plan-feature v2 as not enough runs (2 vs 3) with no better or worse claim",
         "Says which skills it examined in depth and which it did not, with a reason",
         "Does not rank or compare the skills against each other"
       ]
@@ -227,9 +227,9 @@
     {
       "id": 11,
       "name": "labelling-needs-consent",
-      "prompt": "/runlens-retro m-prove\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/label-consent/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/no-skill-fault/m-prove/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "prompt": "/runlens-retro prove-change\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/label-consent/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/no-skill-fault/prove-change/SKILL.fixture.md (renamed so it is not loaded as a skill).",
       "expected_output": "A report that runs no paid labelling: at most a dry run, then it says labelling would cover 4 incidents and needs the person's consent, and works from its own reading of the traces, grouping the polling incidents b1-b3 into one mode.",
-      "files": ["evals/files/label-consent/commands.md", "evals/files/no-skill-fault/m-prove/SKILL.fixture.md"],
+      "files": ["evals/files/label-consent/commands.md", "evals/files/no-skill-fault/prove-change/SKILL.fixture.md"],
       "assertions": [
         "Does not run runlens classify without --dry-run, and does not report labels or a labelling cost as if labelling had run",
         "Tells the person that labelling would cover 4 incidents and needs their consent because it costs money, or asks for that consent",
@@ -246,9 +246,9 @@
     {
       "id": 12,
       "name": "labelling-with-consent",
-      "prompt": "/runlens-retro m-prove label\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/label-consent/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/no-skill-fault/m-prove/SKILL.fixture.md (renamed so it is not loaded as a skill).",
-      "expected_output": "A report that, given consent through the label argument, runs runlens classify, reports its cost line ($0.38 for 4 incidents), treats the new labels as hypotheses because no human labels exist, and traces the polling mode to the missing waiting instruction in m-prove's SKILL.md with a recorded proposal.",
-      "files": ["evals/files/label-consent/commands.md", "evals/files/no-skill-fault/m-prove/SKILL.fixture.md"],
+      "prompt": "/runlens-retro prove-change label\n\nDry run: runlens is not installed here. Wherever the skill runs `runlens <command>`, read that command's output from evals/files/label-consent/commands.md instead. Treat each section as the real result of running that command, so a recorded proposal is recorded. A command with no section there is not available in this dry run. The skill's SKILL.md is evals/files/no-skill-fault/prove-change/SKILL.fixture.md (renamed so it is not loaded as a skill).",
+      "expected_output": "A report that, given consent through the label argument, runs runlens classify, reports its cost line ($0.38 for 4 incidents), treats the new labels as hypotheses because no human labels exist, and traces the polling mode to the missing waiting instruction in prove-change's SKILL.md with a recorded proposal.",
+      "files": ["evals/files/label-consent/commands.md", "evals/files/no-skill-fault/prove-change/SKILL.fixture.md"],
       "assertions": [
         "Runs runlens classify without --dry-run and reports the cost line (4 incidents, $0.38)",
         "Treats the new label categories as hypotheses, since runlens agreement has no human labels",

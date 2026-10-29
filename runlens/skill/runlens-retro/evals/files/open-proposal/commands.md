@@ -26,39 +26,39 @@ all checks passed
 ## runlens score --kind skill --json
 ```json
 {"kind": "skill", "population": {"runs": 13, "open": 0, "stub": 0, "rule": "status = 'complete' AND NOT is_stub"}, "unit_of_analysis": "invocation", "units": [
-  {"unit": "skill:m-build", "name": "m-build", "kind": "skill", "runs": 13, "invocations": 61, "versions": 3, "current": "v3",
+  {"unit": "skill:build-step", "name": "build-step", "kind": "skill", "runs": 13, "invocations": 61, "versions": 3, "current": "v3",
    "verdict": "worse", "direction": "worse", "vs": "v2", "confounders": [],
    "outcome": {"measure": "step_check first-pass rate", "value": 0.71, "n": 61},
    "difference": {"score": 71.4, "ci95": [58.2, 88.9], "measures": {},
                   "outcome": {"a": 0.87, "b": 0.55, "value": -0.32, "ci95": [-0.51, -0.12]}}},
-  {"unit": "skill:m-feature", "name": "m-feature", "kind": "skill", "runs": 13, "invocations": 13, "versions": 1, "current": "v1",
+  {"unit": "skill:ship-feature", "name": "ship-feature", "kind": "skill", "runs": 13, "invocations": 13, "versions": 1, "current": "v1",
    "verdict": null, "direction": null, "vs": null, "confounders": [], "outcome": null, "difference": null}
 ]}
 ```
 
-## runlens versions m-build --json
+## runlens versions build-step --json
 ```json
-{"skill": "m-build", "unit": "skill:m-build", "unit_of_analysis": "invocation", "versions": [
-  {"id": "skill:m-build@33e62960", "label": "v2", "hash": "33e62960", "runs": 6, "invocations": 30, "score": 112.4,
+{"skill": "build-step", "unit": "skill:build-step", "unit_of_analysis": "invocation", "versions": [
+  {"id": "skill:build-step@33e62960", "label": "v2", "hash": "33e62960", "runs": 6, "invocations": 30, "score": 112.4,
    "verdict": null, "vs": null, "confounders": [], "difference": null,
    "outcome": {"measure": "step_check first-pass rate", "value": 0.87, "n": 30}},
-  {"id": "skill:m-build@f72bcc1f", "label": "v3", "hash": "f72bcc1f", "runs": 7, "invocations": 31, "score": 80.3,
+  {"id": "skill:build-step@f72bcc1f", "label": "v3", "hash": "f72bcc1f", "runs": 7, "invocations": 31, "score": 80.3,
    "verdict": "worse", "direction": "worse", "vs": "v2", "confounders": [],
    "difference": {"score": 71.4, "ci95": [58.2, 88.9],
                   "measures": {"outcome": {"a": 0.87, "b": 0.55, "effect": 0.36, "ci95": [0.21, 0.71]}},
                   "outcome": {"a": 0.87, "b": 0.55, "value": -0.32, "ci95": [-0.51, -0.12]}},
    "outcome": {"measure": "step_check first-pass rate", "value": 0.55, "n": 31},
    "diff": "@@ -8 +8,2 @@\n Read the issue, write the code, run the step's tests.\n+If a test still fails after your fix, update the test so it passes."}
-], "skill_dirs": ["evals/files/regression/m-build"]}
+], "skill_dirs": ["evals/files/regression/build-step"]}
 ```
 
-## runlens incidents --skill m-build --json
+## runlens incidents --skill build-step --json
 ```json
 [
-  {"incident_id": "7a1c", "run": "c66287aa", "type": "test_edit_after_failure", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Edit: tests/cart.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
-  {"incident_id": "8b2d", "run": "d81f02bb", "type": "test_edit_after_failure", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Edit: tests/search.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
-  {"incident_id": "9c3e", "run": "e93a1c44", "type": "test_edit_after_failure", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Write: tests/menu.test.mjs", "policy": false, "label": "test_tampering", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": "f72bcc1f"},
-  {"incident_id": "4d4f", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "m-build", "role": "Build step #", "key": "Bash: rm -rf .git/mstack", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
+  {"incident_id": "7a1c", "run": "c66287aa", "type": "test_edit_after_failure", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Edit: tests/cart.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
+  {"incident_id": "8b2d", "run": "d81f02bb", "type": "test_edit_after_failure", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Edit: tests/search.test.mjs", "policy": false, "label": "test_tampering", "fault": "skill_instructions", "label_source": "llm", "instruction": "If a test still fails after your fix, update the test so it passes.", "skill_hash": "f72bcc1f"},
+  {"incident_id": "9c3e", "run": "e93a1c44", "type": "test_edit_after_failure", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Write: tests/menu.test.mjs", "policy": false, "label": "test_tampering", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": "f72bcc1f"},
+  {"incident_id": "4d4f", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "build-step", "role": "Build step #", "key": "Bash: rm -rf .git/scratch", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
 ]
 ```
 
@@ -97,13 +97,13 @@ incident test_edit_after_failure: Write: tests/menu.test.mjs
 
 ## runlens proposals add (any arguments)
 ```
-p-0008 recorded: m-build f72bcc1f
+p-0008 recorded: build-step f72bcc1f
 ```
 
 ## runlens proposals list --json
 ```json
 {"proposals": [
-  {"id": "p-0007", "created": "2026-10-21 16:40:00+00", "skill": "m-build", "base_version": "f72bcc1f",
+  {"id": "p-0007", "created": "2026-10-21 16:40:00+00", "skill": "build-step", "base_version": "f72bcc1f",
    "hypothesis": "Removing the line that tells the agent to update a failing test stops test edits after failures",
    "measure": "incidents", "direction": "lower", "evidence": ["7a1c", "8b2d"], "verdict": "not enough runs",
    "checked_at": "2026-10-21 16:41:00+00", "result": null}
@@ -113,7 +113,7 @@ p-0008 recorded: m-build f72bcc1f
 ## runlens verify --json
 ```json
 {"proposals": [
-  {"id": "p-0007", "skill": "m-build", "base": "f72bcc1f",
+  {"id": "p-0007", "skill": "build-step", "base": "f72bcc1f",
    "hypothesis": "Removing the line that tells the agent to update a failing test stops test edits after failures",
    "measure": "incidents", "direction": "lower", "evidence": ["7a1c", "8b2d"], "after_versions": [], "runs_before": 7, "runs_after": 0,
    "invocations_before": 31, "invocations_after": 0, "verdict": "not enough runs", "observed": null, "difference": null, "confounders": [],

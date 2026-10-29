@@ -1,5 +1,5 @@
 ---
-name: m-build
+name: build-step
 description: Builds one step from its issue and opens one pull request. Use for any change with an observable Done when.
 ---
 
