@@ -14,6 +14,7 @@ Every call is a model call on your account.
 """
 import argparse
 import json
+import os
 import shutil
 import statistics
 import subprocess
@@ -158,7 +159,7 @@ def main(argv=None):
     ap.add_argument("--model", default="sonnet", help="model the skill runs on")
     ap.add_argument("--judge", default="sonnet", help="model that grades the reports")
     ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--out", help="output folder (default evals/benchmarks/<date>)")
+    ap.add_argument("--out", help="output folder (default ~/.runlens/retro-benchmarks/<date>, outside the repo)")
     a = ap.parse_args(argv)
     evals = json.loads((SKILL / "evals" / "evals.json").read_text(encoding="utf-8"))["evals"]
     evals = [e for e in evals if not a.evals or e["id"] in a.evals]
@@ -166,9 +167,10 @@ def main(argv=None):
                                text=True, encoding="utf-8", check=True).stdout
     texts = {"new": (SKILL / "SKILL.md").read_text(encoding="utf-8"), "base": base_text}
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    out_dir = Path(a.out) if a.out else SKILL / "evals" / "benchmarks" / date
+    home = Path(os.environ.get("RUNLENS_HOME") or Path.home() / ".runlens")
+    out_dir = Path(a.out) if a.out else home / "retro-benchmarks" / date
     work = Path(tempfile.mkdtemp(prefix="retro-eval-"))
-    shutil.copytree(SKILL / "evals", work / "evals", ignore=shutil.ignore_patterns("benchmarks"))  # fixtures only, no skill text
+    shutil.copytree(SKILL / "evals", work / "evals")  # fixtures only, no skill text
     jobs = [(e, arm, n) for e in evals for arm in ("new", "base") for n in range(1, a.runs + 1)]
     try:
         with ThreadPoolExecutor(a.workers) as pool:
