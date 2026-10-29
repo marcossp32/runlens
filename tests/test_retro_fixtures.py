@@ -61,6 +61,8 @@ class Real:
         cls.out["agreement"] = json.loads(cls.run("agreement", "--json"))
         cls.out["check"] = cls.run("check").splitlines()
         cls.out["incidents"] = cls.run("incidents", "--limit", "3").splitlines()
+        cls.out["incidents_json"] = json.loads(cls.run("incidents", "--limit", "3", "--json"))
+        cls.out["proposals"] = json.loads(cls.run("proposals", "list", "--json"))
         cls.out["help"] = cls.run("--help")
 
     @classmethod
@@ -164,7 +166,16 @@ class Fixtures(unittest.TestCase):
             self.assertEqual(set(doc), {"proposals"}, case)
             self.assertLessEqual(keys_of(doc["proposals"]), keys_of(real), case)
             for p in doc["proposals"]:
-                self.assertIn(p["verdict"], {"confirmed", "refuted", "not enough runs", "confounded"}, case)
+                self.assertIn(p["verdict"], {"confirmed", "refuted", "inconclusive", "not enough runs", "confounded"}, case)
+
+    def test_proposals_list_keys(self):
+        real = Real.out["proposals"]["proposals"]
+        self.assertTrue(real)
+        for case, body in self.blocks("proposals"):
+            if body.lstrip().startswith("{"):  # `proposals list --json`; `proposals add` prints a plain line
+                doc = json.loads(body)
+                self.assertEqual(set(doc), {"proposals"}, case)
+                self.assertLessEqual(keys_of(doc["proposals"]), keys_of(real), case)
 
     def test_agreement_keys(self):
         real = Real.out["agreement"]
@@ -172,12 +183,20 @@ class Fixtures(unittest.TestCase):
             doc = json.loads(body)
             self.assertLessEqual(set(doc), set(real), case)
 
-    def test_incidents_header(self):
+    def test_incidents_format(self):
+        """A text block has the real header; a --json block has exactly the real keys, labels included."""
         header = Real.out["incidents"][0].split()
+        real_keys = keys_of(Real.out["incidents_json"])
+        self.assertTrue({"label", "fault", "label_source", "instruction", "skill_hash"} <= real_keys)
         for case, body in self.blocks("incidents"):
-            lines = body.strip().splitlines()
-            if lines[0] != "(no incidents)":
-                self.assertEqual(lines[0].split(), header, case)
+            if body.lstrip().startswith("["):
+                rows = json.loads(body)
+                for r in rows:
+                    self.assertEqual(set(r), real_keys, case)
+            else:
+                lines = body.strip().splitlines()
+                if lines[0] != "(no incidents)":
+                    self.assertEqual(lines[0].split(), header, case)
 
     def test_verdict_words(self):
         """The verdicts the fixtures use are ones the skill's text and the CLI both know."""

@@ -58,6 +58,10 @@
 - The run page links a PR only when its URL starts with `https://`.
 
 ### Retro skill
+- `/runlens-retro` is rewritten to shape the result rather than script the steps. It opens with what a retro is for, a Done when and acceptance criteria for the report, and the three lines it must not cross, each with its reason (wrong data stops it, it proposes but does not apply, labelling needs consent). The fixed step order, the checklist and the numeric quotas are gone. It knows how earlier proposals did before suggesting new edits, does not repeat an open proposal, says what it left out, and keeps a run with nothing new short. Consent to labelling can be given up front with the `label` argument.
+- `runlens incidents` shows each incident's latest label (human before LLM), with the quoted instruction and skill hash in `--json`/`--csv`, and `runlens versions --json` gives `skill_dirs`, so the retro no longer writes SQL against internal tables to find them.
+- `runlens check` warns when the installed `/runlens-retro` differs from the one this runlens ships (`runlens install` copies it once, so it fell behind silently).
+- Five eval scenarios were added (a refuted edit behind new failures, an open proposal that must not be repeated, several skills at once, labelling with and without consent), and `scripts/eval_retro.py` runs every scenario against the skill text on another git ref, graded blind, and writes `benchmark.md`. Against the previous skill, 3 runs per scenario: 94% of assertions pass against 90% on Sonnet, and 95% against 89% on Haiku (`evals/benchmarks/2026-10-29`).
 - `/runlens-retro` stops only on a FAIL about counts or ingest. An unpriced model, an old parser version, a cost-state mismatch or an orphan subagent now give a warning and the fix (`[prices]`, `runlens refresh`) and the retro goes on.
 - `/runlens-retro` runs `runlens classify --dry-run` first and asks before it spends `claude -p` calls on the sample.
 - Its description no longer says Claude uses it automatically: it is `disable-model-invocation`, so you run it yourself.

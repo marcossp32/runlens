@@ -39,32 +39,22 @@ all checks passed
   {"id": "skill:m-prove@e5f6a7b8", "label": "v2", "hash": "e5f6a7b8", "runs": 4, "invocations": 15, "score": 97.0,
    "verdict": "not enough runs", "direction": null, "vs": "v1", "confounders": [],
    "difference": {"score": 95.8, "ci95": null, "measures": {}}, "outcome": null}
-]}
+], "skill_dirs": ["evals/files/no-skill-fault/m-prove"]}
 ```
 
-## runlens incidents --skill m-prove
-```
-incident_id  run       type               n   skill    role        key                                           policy
------------  --------  -----------------  --  -------  ----------  --------------------------------------------  ------
-b1           c66287aa  idle_loop          9   m-prove  Supervisor  9 idle calls, e.g. sleep 60                   False
-b2           d81f02bb  idle_loop          14  m-prove  Supervisor  14 idle calls, e.g. Start-Sleep -Seconds 120  False
-b3           e93a1c44  idle_loop          6   m-prove  Supervisor  6 idle calls, e.g. sleep 90; echo waiting     False
-b4           e93a1c44  permission_denied  1   m-prove  Prover      Bash: rm -rf .git/mstack/prove                False
-(4 rows)
+## runlens incidents --skill m-prove --json
+```json
+[
+  {"incident_id": "b1", "run": "c66287aa", "type": "idle_loop", "n": 9, "skill": "m-prove", "role": "Supervisor", "key": "9 idle calls, e.g. sleep 60", "policy": false, "label": "busy_waiting", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": null},
+  {"incident_id": "b2", "run": "d81f02bb", "type": "idle_loop", "n": 14, "skill": "m-prove", "role": "Supervisor", "key": "14 idle calls, e.g. Start-Sleep -Seconds 120", "policy": false, "label": "busy_waiting", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": null},
+  {"incident_id": "b3", "run": "e93a1c44", "type": "idle_loop", "n": 6, "skill": "m-prove", "role": "Supervisor", "key": "6 idle calls, e.g. sleep 90; echo waiting", "policy": false, "label": "busy_waiting", "fault": "agent_judgment", "label_source": "llm", "instruction": null, "skill_hash": null},
+  {"incident_id": "b4", "run": "e93a1c44", "type": "permission_denied", "n": 1, "skill": "m-prove", "role": "Prover", "key": "Bash: rm -rf .git/mstack/prove", "policy": false, "label": "permission_blocked", "fault": "tooling_or_environment", "label_source": "llm", "instruction": null, "skill_hash": null}
+]
 ```
 
 ## runlens agreement --json
 ```json
 {"pairs": 0, "min_pairs": 30, "enough": false, "agreement": null, "kappa": null, "kappa_ci95": null, "categories": []}
-```
-
-## Labels of these incidents (any `runlens sql` over `labels`)
-```
-incident_id  category            fault                   instruction
-b1           busy_waiting        agent_judgment
-b2           busy_waiting        agent_judgment
-b3           busy_waiting        agent_judgment
-b4           permission_blocked  tooling_or_environment
 ```
 
 ## runlens show b1
@@ -96,11 +86,6 @@ incident idle_loop: 6 idle calls
 ```
 incident permission_denied: Bash: rm -rf .git/mstack/prove
 >> 30 [Bash] rm -rf .git/mstack/prove -> ERROR denied: blocked by a permission rule
-```
-
-## runlens sql "SELECT DISTINCT skill_dir FROM skill_loads WHERE skill = 'm-prove'"
-```
-evals/files/no-skill-fault/m-prove
 ```
 
 ## runlens proposals add (any arguments)

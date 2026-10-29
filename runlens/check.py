@@ -5,7 +5,8 @@ This catches a silent parse break (counts that no longer match the raw files,
 costs that no longer add up, subagents that lost their parent) and silent gaps:
 runs whose source kept growing after they were archived, sessions [select]
 wants that were never archived, archived runs that failed to ingest, runs still
-open, models with no price, and sessions still waiting in the hook's queue.
+open, models with no price, sessions still waiting in the hook's queue, and an
+installed /runlens-retro older than the one this runlens ships.
 """
 from . import config, store
 from .fs import fs_path, read_json
@@ -114,6 +115,12 @@ def gaps(con, cfg, sessions=None, sources=True):
     if missing:
         n += 1
         print(f"FAIL  evidence  {missing} evidence file(s) listed in a manifest have no blob in {config.BLOBS}")
+    from . import hooks
+    stale = hooks.stale_skill()
+    if stale:
+        n += 1
+        print(f"WARN  skill  the installed /runlens-retro is not the one this runlens ships ({', '.join(stale)} differ): "
+              "run `runlens install`")
     orphans = orphan_labels(con)
     if orphans:
         n += 1

@@ -22,6 +22,7 @@ from runlens.fs import fs_path, makedirs, plain, read_json, write_atomic
 
 ROOT = Path(__file__).resolve().parent.parent
 T0 = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
+hooks.SKILLS = Path(tempfile.mkdtemp(prefix="runlens-skills-"))  # `check` compares the installed skill: never the real ~/.claude/skills
 
 
 def iso(t):

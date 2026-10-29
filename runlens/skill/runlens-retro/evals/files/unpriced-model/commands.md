@@ -32,11 +32,10 @@ FAIL  d81f02bb  3 api call(s) without a cost: no price for claude-nova-9 (add it
 ]}
 ```
 
-## runlens incidents --skill m-build
-```
-incident_id  run  type  n  skill  role  key  policy
------------  ---  ----  -  -----  ----  ---  ------
-(0 rows)
+## runlens incidents --skill m-build --json
+```json
+[
+]
 ```
 
 ## runlens agreement --json

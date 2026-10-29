@@ -30,11 +30,10 @@ all checks passed
 ]}
 ```
 
-## runlens incidents --skill m-review
-```
-incident_id  run  type  n  skill  role  key  policy
------------  ---  ----  -  -----  ----  ---  ------
-(0 rows)
+## runlens incidents --skill m-review --json
+```json
+[
+]
 ```
 
 ## runlens agreement --json

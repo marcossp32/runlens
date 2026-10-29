@@ -55,13 +55,12 @@ false    56
 ]}
 ```
 
-## runlens incidents --skill m-scan
-```
-incident_id  run       type          n  skill   role  key              policy
------------  --------  ------------  -  ------  ----  ---------------  ------
-c1           c66287aa  error_streak  3  m-scan  Scan  Grep: other      False
-c2           d81f02bb  error_streak  2  m-scan  Scan  Bash: not_found  False
-(2 rows)
+## runlens incidents --skill m-scan --json
+```json
+[
+  {"incident_id": "c1", "run": "c66287aa", "type": "error_streak", "n": 3, "skill": "m-scan", "role": "Scan", "key": "Grep: other", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null},
+  {"incident_id": "c2", "run": "d81f02bb", "type": "error_streak", "n": 2, "skill": "m-scan", "role": "Scan", "key": "Bash: not_found", "policy": false, "label": null, "fault": null, "label_source": null, "instruction": null, "skill_hash": null}
+]
 ```
 
 ## runlens agreement --json
