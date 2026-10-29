@@ -28,9 +28,13 @@ jobs:
   test:
     strategy:
       fail-fast: false
+      # Both supported ends of Python on Linux; the newest on Windows and macOS, where the OS is what is under test.
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.11", "3.14"]
+        include:
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.14" }
+          - { os: windows-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.14" }
     runs-on: ${{ matrix.os }}
     defaults:
       run:
