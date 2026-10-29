@@ -345,7 +345,7 @@ uvx ruff@0.17.0 check                                # lint
 uv tool install -e .                          # a `runlens` command that runs this checkout
 ```
 
-Dependencies are locked in `uv.lock`; after changing `pyproject.toml`, run `uv lock`. CI runs the suite on Linux, Windows and macOS with Python 3.11 and 3.14, lints with ruff, checks the dashboard script with `node --check`, renders every dashboard page in headless Chrome (Linux only), and smoke-tests the built wheel. The browser tests look for Chrome, Chromium or Edge and are skipped without one; `RUNLENS_BROWSER` points them at a specific binary.
+Dependencies are locked in `uv.lock`; after changing `pyproject.toml`, run `uv lock`. CI runs the suite with Python 3.11 and 3.14 on Linux and 3.14 on Windows and macOS, lints with ruff, checks the dashboard script with `node --check`, renders every dashboard page in headless Chrome (Linux only), and smoke-tests the built wheel. The browser tests look for Chrome, Chromium or Edge and are skipped without one; `RUNLENS_BROWSER` points them at a specific binary.
 
 ### Screenshots
 
