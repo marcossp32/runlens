@@ -75,6 +75,7 @@
 - `config.toml` is checked for typos and wrong types: an unknown section or key (`[runs] idle_hourz`, `[selectt]`) and a value of the wrong type (`[method] min_runs = "x"`, `resamples = 4000.5`) stop the command with a one-line error that names the key (#17).
 - `uv run pytest` works: pytest is a dev dependency group. pyproject lists the supported Python versions (3.11 to 3.14) and explains why `pytz` is a dependency although it is never imported (DuckDB needs it for TIMESTAMPTZ).
 - CI runs `install` and `uninstall` end to end from the built wheel, against a temporary `RUNLENS_HOME`, `CLAUDE_SETTINGS` and home directory, and fails when the dashboard tests are skipped on any OS, not only Linux.
+- CI tests Python 3.11 and 3.14 on Linux and 3.14 on Windows and macOS: four jobs instead of six, with one Windows job instead of two.
 
 ### Docs
 - Fixed false or misleading claims in the README and changelog: skills loaded only in subagents, which `check` lines are `WARN`, what comes from `cost-state`, the measures sentence, the demo commands, the unverifiable token-coverage figure, the Evals link title, the CI browser platform and the pinned ruff version (#16).
