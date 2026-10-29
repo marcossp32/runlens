@@ -128,7 +128,7 @@ Works on Windows, macOS and Linux. Do this on every machine where you run Claude
    - adds a `SessionEnd` hook to `~/.claude/settings.json` (backed up first to `settings.json.runlens-backup-<date>`);
    - copies the `/runlens-retro` skill into `~/.claude/skills`;
    - writes `~/.runlens/config.toml` from [`config.example.toml`](runlens/config.example.toml) if there is none.
-3. **Say which runs to record** under `[select]` in `~/.runlens/config.toml` (default: every session). For mstack's `/m-feature` flow, start from [`examples/m-feature.toml`](examples/m-feature.toml).
+3. **Say which runs to record** under `[select]` in `~/.runlens/config.toml` (default: every session).
 4. **Load what you already have:** `runlens refresh`, then `runlens check`.
 
 **How the hook works.** When a session ends, the hook only writes `~/.runlens/pending/<session_id>`, logs one line to `~/.runlens/hooks.log`, starts a detached `runlens drain` and returns, well under a second. It is synchronous with a 10 s timeout, because an async hook can be killed when a `claude -p` session tears down (we saw it die before queuing anything). The detached drain archives and ingests the queued runs and rebuilds the dashboard. If a drain never ran (the machine slept, the process was killed), `runlens refresh` processes the queue first.
@@ -246,7 +246,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 
 ## Config reference
 
-Every section is optional. [`config.example.toml`](runlens/config.example.toml) documents every key with its default; [`examples/m-feature.toml`](examples/m-feature.toml) is a real config for [mstack](https://github.com/marcossp32/mstack)'s `/m-feature` flow. A value runlens cannot use stops the command with a one-line error naming the key.
+Every section is optional. [`config.example.toml`](runlens/config.example.toml) documents every key with its default. A value runlens cannot use stops the command with a one-line error naming the key.
 
 | Section | Keys (default) | What it sets |
 |---|---|---|

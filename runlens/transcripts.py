@@ -58,7 +58,7 @@ HUMAN_SOURCES = {"typed", "suggestion_accepted", "queued"}
 # What Claude Code writes into user turns for local commands and shell output: the harness's, not a person's.
 HARNESS_OUTPUT = ("<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>", "<bash-stdout>",
                   "<bash-stderr>", "<bash-input>")
-# A typed slash command is a person asking for something (/m-feature, /review-pr); these built-ins only change the
+# A typed slash command is a person asking for something (/ship-feature, /review-pr); these built-ins only change the
 # session (clear, compact, switch model...) and send no request.
 COMMAND_NAME = re.compile(r"<command-name>/?([\w:-]+)</command-name>")
 HOUSEKEEPING = frozenset({

@@ -49,7 +49,7 @@ def _rows(con, where="", args=()):
 
 
 def unit_id(name):
-    """`m-build` -> `skill:m-build`; a full unit id (`group:flow`) is kept."""
+    """`build-step` -> `skill:build-step`; a full unit id (`group:flow`) is kept."""
     return name if ":" in name else f"skill:{name}"
 
 

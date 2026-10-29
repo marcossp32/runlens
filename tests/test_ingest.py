@@ -198,7 +198,7 @@ class Ingest(Sandbox):
                       f"Base directory for this skill: C:\\skills\\{load}\n\n# {load}"})
             r.turn(f"m{n}", f"t{n}", cmd=f"echo {n}", attr=attr)
 
-        # the attribution sequence of a real /m-feature run (issue #1)
+        # the attribution sequence of a real feature-flow run (issue #1)
         turn("flow", load="flow")
         turn(None)
         turn("grill", load="grill")
@@ -621,13 +621,13 @@ class Evidence(Sandbox):
         deep = "/".join(["legacy-folder-with-quite-a-long-name"] * 7)
         when = (self.start - timedelta(days=5)).timestamp()
         for r in (a, b):  # 0.1 copied the same tree into every run
-            base = self.home / "archive" / "C--work-repo" / r.sid / "evidence" / "mstack"
+            base = self.home / "archive" / "C--work-repo" / r.sid / "evidence" / "flow"
             for rel, text in ((f"{deep}/notes.md", "notes"), ("prove/profile/Cookies", "secret"), ("ledger.md", "ledger")):
                 p = fs_path(base / rel)
                 makedirs(p.parent)
                 p.write_text(text, encoding="utf-8")
                 os.utime(p, (when, when))
-        self.assertGreater(len(str(self.home / "archive" / "C--work-repo" / a.sid / "evidence" / "mstack" / deep)), 260)
+        self.assertGreater(len(str(self.home / "archive" / "C--work-repo" / a.sid / "evidence" / "flow" / deep)), 260)
         dry = archive.migrate_evidence(dry_run=True, quiet=True)
         self.assertEqual((dry["files"], dry["excluded_files"], dry["blobs_new"], dry["folders_deleted"]), (6, 2, 2, 0))
         self.assertTrue(fs_path(self.home / "archive" / "C--work-repo" / a.sid / "evidence").exists())
@@ -635,7 +635,7 @@ class Evidence(Sandbox):
         self.assertEqual((done["blobs_new"], done["folders_deleted"]), (2, 2))
         self.assertFalse(fs_path(self.home / "archive" / "C--work-repo" / a.sid / "evidence").exists())
         self.assertEqual(len(list(fs_path(self.home / "archive" / "_blobs").glob("*/*"))), 2)
-        self.assertEqual(fs_path(archive.evidence_file("C--work-repo", b.sid, "mstack", f"{deep}/notes.md")).read_text(), "notes")
+        self.assertEqual(fs_path(archive.evidence_file("C--work-repo", b.sid, "flow", f"{deep}/notes.md")).read_text(), "notes")
         self.refresh()  # re-archiving keeps the migrated entries
         self.assertEqual(len(read_json(self.home / "archive" / "C--work-repo" / f"{a.sid}.evidence.json")["files"]), 2)
         self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
@@ -877,9 +877,8 @@ class Units(unittest.TestCase):
         self.assertEqual(self._build(a)[0]["incident_id"], self._build(b)[0]["incident_id"])
 
     def test_shipped_configs_are_valid(self):
-        for p in (config.PACKAGE / "config.example.toml", ROOT / "examples" / "m-feature.toml"):
-            cfg = config.load(p)
-            self.assertIn("runs", cfg)
+        cfg = config.load(config.PACKAGE / "config.example.toml")
+        self.assertIn("runs", cfg)
 
     def test_default_excludes_cover_browser_profiles(self):
         ex = archive.excluder(config.EVIDENCE_EXCLUDE)
