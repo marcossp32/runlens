@@ -43,8 +43,9 @@ function profileTable(periods) {
 // A confounded verdict names everything else that changed; the sentence keeps the names, the list keeps the detail.
 const confounderName = (c) => String(c).replace(/:.*$/, "").replace(/\s*\(.*\)\s*$/, "").replace(/ also changed$/, "");
 // Notes on a verdict: what differed between the sides without counting as a confounder (Claude Code patch releases
-// under cc_version = "minor", runs whose cost was left out). Said next to the verdict, never as its cause.
-const verdictNotes = (x, cls) => (x && x.verdict && (x.notes || []).length
+// under cc_version = "minor", runs whose cost was left out). Said next to the verdict, never as its cause, and not
+// under "not enough runs", where they decided nothing (as with confounders).
+const verdictNotes = (x, cls) => (x && x.verdict && x.verdict !== "not enough runs" && (x.notes || []).length
   ? h("ul", { class: `vnotes ${cls || ""}`.trim() }, x.notes.map((n) => h("li", {}, `Note: ${n}.`))) : null);
 
 function unitPage(id) {

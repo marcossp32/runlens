@@ -360,7 +360,7 @@ def method_command(a, cfg):
                 for r in results:
                     if r["confounders"]:
                         print(f"{r['id']} confounded by: {'; '.join(r['confounders'])}")
-                    for n in r.get("notes") or []:
+                    for n in (r.get("notes") or []) if r["verdict"] != "not enough runs" else []:
                         print(f"{r['id']} note: {n}")
     finally:
         con.close()
@@ -390,7 +390,8 @@ def _verdict_notes(items):
     for name, x in items:
         if x["verdict"] == "confounded":
             lines.append(f"{name}: confounded by {'; '.join(x['confounders'])}")
-        lines += [f"{name}: note: {n}" for n in x.get("notes") or []]
+        if x["verdict"] != "not enough runs":  # as with confounders: too few runs, the notes decided nothing either
+            lines += [f"{name}: note: {n}" for n in x.get("notes") or []]
     return lines
 
 

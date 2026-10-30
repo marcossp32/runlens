@@ -449,6 +449,11 @@ class Renders(unittest.TestCase):
         text = visible(dump(path, "#/unit/skill%3Aflow"))
         self.assertGreaterEqual(text.count(f"Note: {note}."), 2, text)  # under the verdict and on the version
         self.assertNotIn("Not comparable", text)
+        # Under `not enough runs` the note decided nothing, so it is not shown, like the confounders.
+        for x in (m["units"][0], m["versions"]["skill:flow"][1]):
+            x.update(verdict="not enough runs", direction=None)
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        self.assertNotIn("Note: Claude Code", visible(dump(path, "#/unit/skill%3Aflow")))
 
     def test_range_takeaway_speaks_only_of_the_rows_it_judged(self):
         # A confounded skill whose whole range is above 100 sits next to a skill whose range crosses 100:

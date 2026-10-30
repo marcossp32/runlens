@@ -110,7 +110,7 @@ function comparison(sa, sb) {
         h("summary", {}, h("strong", {}, pair.verdict === "confounded" ? `What else changed between A and B (${conf.length})` : `Also changed (${conf.length})`)),
         h("ul", {}, conf.map((c) => h("li", {}, c)))) : null,
       conf.length && pair.verdict === "confounded" && pair.direction ? h("p", { class: "muted" }, `Without these, the interval alone would say: ${pair.direction}.`) : null,
-      pair && (pair.notes || []).length ? h("ul", { class: "vnotes muted" }, pair.notes.map((n) => h("li", {}, `Note: ${n}.`))) : null),
+      pair && pair.verdict !== "not enough runs" && (pair.notes || []).length ? h("ul", { class: "vnotes muted" }, pair.notes.map((n) => h("li", {}, `Note: ${n}.`))) : null),
     scoreSettingsNote(),
     h("div", { class: "sides" }, sideCard("A", A, nameA), sideCard("B", B, nameB)),
     crossSkill || !forestRows.length ? null : forestPlot({

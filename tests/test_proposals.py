@@ -175,6 +175,12 @@ class CommandLine(unittest.TestCase):
         # a note is said under any verdict, apart from the confounders
         noted = cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "better", "notes": ["Claude Code also differed"]}]})
         self.assertIn("v2: note: Claude Code also differed", noted)
+        # ...but not under `not enough runs`, where it decided nothing (the JSON keeps it)
+        few = cli._versions_text({"skill": "flow", "versions": [{**v, "notes": ["Claude Code also differed"]}]})
+        self.assertNotIn("note:", few)
+        self.assertNotIn("note:", cli._score_text({"kind": "skill", "population": {"runs": 2, "open": 0, "stub": 0}, "units": [
+            {"unit": "skill:flow", "runs": 2, "invocations": 2, "current": "v2", "versions": 2, "verdict": "not enough runs", "vs": "v1",
+             "difference": None, "confounders": [], "notes": ["Claude Code also differed"]}]}))
         self.assertNotIn("confounded by", noted)
         empty = cli._score_text({"kind": "skill", "population": {"runs": 0, "open": 0, "stub": 0}, "units": []})
         self.assertIn("runlens refresh", empty)
