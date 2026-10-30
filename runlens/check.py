@@ -35,15 +35,35 @@ def raw_counts(main):
 
 def check(sessions=None, cfg=None, sources=True):
     """Print one line per run and per gap. Returns the number of problems (FAIL and WARN lines)."""
+    from .hooks import pending
     con = store.connect(read_only=True)
     failures = 0
     try:
         in_db = {r[0]: r[1:] for r in con.execute("SELECT session_id, status, is_stub, parser_version FROM runs").fetchall()}
         failed = {r[0] for r in con.execute("SELECT session_id FROM ingest_errors").fetchall()}
         gone = pruned()
+        wanted = lambda sid: not sessions or sid in sessions or sid[:8] in sessions
+        archived = {mf.name.removesuffix(".runlens.json") for mf in fs_path(config.ARCHIVE).glob("*/*.runlens.json")}
+        for sid in sorted(set(in_db) - archived):
+            if wanted(sid):
+                failures += 1
+                print(f"WARN  {sid[:8]}  in the database but not in the archive, so it cannot be checked or parsed again: "
+                      f"`runlens refresh` archives it again if its source is still in {config.PROJECTS}, "
+                      f"`runlens prune --session {sid[:8]} --yes` drops it")
+        for s in sessions or []:
+            known = archived | set(in_db) | failed | {p.name for p in pending()}
+            if any(s == sid or s == sid[:8] for sid in known - set(gone)):
+                continue
+            hit = [sid for sid in gone if s == sid or s == sid[:8]]
+            if hit:
+                print(f"note  {s[:8]}  pruned on {gone[hit[0]].get('pruned_at', '?')[:10]}: "
+                      f"`runlens refresh --session {hit[0]}` brings it back")
+            else:
+                failures += 1
+                print(f"WARN  {s[:8]}  no run with this id in the database, the archive or the hook's queue")
         for mf in sorted(fs_path(config.ARCHIVE).glob("*/*.runlens.json")):
             sid = mf.name.removesuffix(".runlens.json")
-            if (sessions and sid not in sessions and sid[:8] not in sessions) or sid in gone:
+            if not wanted(sid) or sid in gone:
                 continue  # a run pruned with --keep-archive is no longer tracked
             if sid not in in_db:
                 if sid in failed:
@@ -64,7 +84,12 @@ def check(sessions=None, cfg=None, sources=True):
         failures += gaps(con, cfg or config.load(), sessions, sources)
     finally:
         con.close()
-    print(f"{failures} problem(s)" if failures else "all checks passed")
+    if failures:
+        print(f"{failures} problem(s)")
+    elif not in_db and not archived:
+        print("nothing to check: no runs in the database or the archive yet (run `runlens refresh`)")
+    else:
+        print("all checks passed")
     return failures
 
 

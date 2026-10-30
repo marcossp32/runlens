@@ -604,6 +604,21 @@ class Sources(Sandbox):
         self.refresh()
         self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
 
+    def test_check_finds_database_only_runs_and_unknown_sessions(self):
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
+        self.assertIn("nothing to check", self.out)  # an empty home is not "all checks passed"
+        r = simple_run(self.projects, "bdbdbdbd-0000-0000-0000-000000000001")
+        self.refresh()
+        self.assertEqual(self.quiet(check.check, ["deadbeef"], cfg=self.cfg), 1, self.out)
+        self.assertIn("deadbeef  no run with this id", self.out)
+        self.assertEqual(self.quiet(check.check, [r.sid[:8]], cfg=self.cfg), 0, self.out)
+        archive.remove_run("C--work-repo", r.sid)  # the archive lost it, the database still has it
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg, sources=False), 1, self.out)
+        self.assertIn("in the database but not in the archive", self.out)
+        self.quiet(store.prune, sessions=[r.sid], yes=True)
+        self.assertEqual(self.quiet(check.check, [r.sid[:8]], cfg=self.cfg), 0, self.out)
+        self.assertIn("pruned on", self.out)
+
     def test_scan_cache_skips_unchanged_sessions(self):
         simple_run(self.projects, "bcbcbcbc-0000-0000-0000-000000000001")
         self.quiet(archive.archive, self.cfg)

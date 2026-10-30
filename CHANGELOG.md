@@ -78,6 +78,7 @@
 - A `config.toml` that does not load no longer makes the SessionEnd hook lose the session: the hook queues it first and writes the config error to `hooks.log`, and the detached drain logs its config error there too instead of to nowhere. `runlens refresh` drains the queue once the config is fixed (#33).
 - `ingest --skill` and `--project` (and the ingest step of `refresh`) are applied; they were accepted and ignored (#33).
 - Pruned runs stay pruned. `prune` records what it deleted, so `refresh` no longer copies a run back from `~/.claude/projects`, `ingest` no longer reloads one pruned with `--keep-archive`, and `check` no longer asks for either. Naming a run with `--session` in `archive`, `ingest` or `refresh` brings it back (#33).
+- `runlens check` warns about runs in the database whose archive is gone, and about a `--session` that matches no run (it said "all checks passed"). On an empty home it says there is nothing to check yet (#33).
 - The drain's log says why a queued session was skipped: pruned, no transcript, or not selected by `[select]` (#33).
 
 ### Config, packaging and CI
