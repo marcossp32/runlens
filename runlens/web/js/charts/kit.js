@@ -40,7 +40,8 @@ const emptyCard = (title, text, notes) => h("figure", { class: "card" }, h("figc
   [notes].flat().filter(Boolean).map((n) => (n instanceof Node ? n : note(n))));
 
 /* ---- horizontal bars: one value per category ----
-   spec: {title, sub, notes, items: [{label, value, ns, href, sub}], fmt, valueTitle, share, sort = true, colour, single} */
+   spec: {title, sub, notes, items: [{label, value, ns, href, sub}], fmt, valueTitle, share, sort = true, colour, single,
+          ms (values are durations in ms: ticks on clock steps, the CSV in seconds)} */
 function barChart(spec) {
   const fmtv = spec.fmt || fmt.num;
   let items = spec.items.filter((i) => valid(i.value));
@@ -50,10 +51,12 @@ function barChart(spec) {
   const shareOf = (v) => (spec.share && total ? ` · ${fmt.pct(v / total, v / total < 0.1 ? 1 : 0)}` : "");
   if (items.length === 1 && spec.single !== false) {
     const it = items[0];
-    return statCard(spec.title, it.label, fmtv(it.value), spec.singleSub || spec.sub || "the only one recorded", spec.notes);
+    // spec.sub describes the bars (how many, how they are chosen), so it does not describe a lone value
+    return statCard(spec.title, it.label, fmtv(it.value), spec.singleSub || "the only one recorded", spec.notes);
   }
   const tableCols = [{ label: spec.labelTitle || "Item", value: (i) => i.label },
-    { label: spec.valueTitle || "Value", num: true, value: (i) => i.value, cell: (i) => fmtv(i.value) }];
+    { label: spec.valueTitle || "Value", num: true, value: (i) => i.value, cell: (i) => fmtv(i.value),
+      ...(spec.ms ? { csv: (i) => i.value / 1000, csvLabel: `${spec.valueTitle || "Value"} (seconds)` } : {}) }];
   if (spec.share) tableCols.push({ label: "Share", num: true, value: (i) => (total ? i.value / total : null), cell: (i) => fmt.pct(total ? i.value / total : null) });
   return chartCard({
     title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: items.length * rowH() + 50,
@@ -65,7 +68,8 @@ function barChart(spec) {
       const valW = Math.min(maxLabel(items.map(textOf), FONT.axis) + 10, w * 0.4);
       const x0 = labelW, x1 = Math.max(x0 + 40, w - valW - 4);
       const top = 6, H = top + items.length * R + 40;
-      const { max, ticks: tk } = niceMax(Math.max(...items.map((i) => i.value)), Math.max(2, Math.floor((x1 - x0) / 90)), items.every((i) => Number.isInteger(i.value)));
+      const count = Math.max(2, Math.floor((x1 - x0) / 90)), top0 = Math.max(...items.map((i) => i.value));
+      const { max, ticks: tk } = spec.ms ? durationMax(top0, count) : niceMax(top0, count, items.every((i) => Number.isInteger(i.value)));
       const x = scaleLinear(0, max, x0, x1);
       const root = svgRoot(w, H, `${spec.title}: ${items.length} bars, largest ${items[0].label} ${fmtv(items[0].value)}`);
       axisX(root, { scale: x, ticks: tk, fmt: spec.tickFmt || fmtv, x0, x1, y: top + items.length * R, grid: true, gridTop: top, title: spec.valueTitle });

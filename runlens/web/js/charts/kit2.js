@@ -55,7 +55,8 @@ function waterfallChart(spec) {
       const vals = steps.flatMap((s) => [s.from, s.to]).concat([100, total]);
       const lo = Math.min(...vals) / 1.06, hi = Math.max(...vals) * 1.06;
       const x = scaleLog(lo, hi, x0, x1);
-      const tk = ticks(lo, hi, Math.max(3, Math.floor((x1 - x0) / 70))).filter((t) => t > 0);
+      // whole-number steps: a 2.5 step labelled without decimals reads as 93, 98, 103
+      const tk = ticks(lo, hi, Math.max(3, Math.floor((x1 - x0) / 70)), true).filter((t) => t > 0);
       const H = top + (steps.length + 1) * R + 46;
       const root = svgRoot(w, H, `${spec.title}: from 100 to ${fmt.score(total)} in ${steps.length} steps`);
       axisX(root, { scale: x, ticks: tk.map((v) => ({ v, label: fmt.num(v, v < 10 ? 1 : 0) })), x0, x1, y: top + (steps.length + 1) * R, grid: true, gridTop: top - 6,

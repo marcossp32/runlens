@@ -138,6 +138,28 @@ def visible(dom):
     return re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style)\b.*?</\1>", " ", dom)).replace("&nbsp;", " ")
 
 
+def card(dom, question):
+    """The markup of the chart card whose heading is `question` (empty when there is none)."""
+    i = dom.find(f">{question}</figcaption>")
+    if i < 0:
+        return ""
+    return dom[dom.rfind("<figure", 0, i):dom.find("</figure>", i)]
+
+
+def x_ticks(markup):
+    """The tick labels of the first horizontal axis in some chart markup."""
+    axis = re.search(r'<g class="axis-x">(.*?)</g>', markup, re.S)
+    return re.findall(r'<text class="tick"[^>]*>([^<]*)</text>', axis.group(1)) if axis else []
+
+
+def duration_ms(label):
+    """A duration label as the page writes it ("1.5 h", "30 min", "0 ms"), in ms."""
+    m = re.fullmatch(r"(-?[\d.,]+)\s*(ms|s|min|h)", re.sub(r"\s", " ", label).strip())
+    if not m:
+        raise ValueError(label)
+    return float(m.group(1).replace(",", ".")) * {"ms": 1, "s": 1e3, "min": 6e4, "h": 36e5}[m.group(2)]
+
+
 def wording_model():
     """The model with a PR outcome on one skill, a check outcome on another, and a confounded group whose range starts at 100.2."""
     m = copy.deepcopy(model())
@@ -455,6 +477,35 @@ class Renders(unittest.TestCase):
         plain = dump(path, "#/")
         self.assertNotIn('class="ghost custom"', plain)
         self.assertNotIn('class="settingsnote"', plain)
+
+    def test_a_single_point_scatter_keeps_its_x_ticks(self):
+        # One skill: the log cost axis spans about 0.9-1.6 $, which holds no 1, 2 or 5 step.
+        path = TMP / "onepoint.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost&skills=flow", until=r'<g class="axis-x">')
+        ticks = x_ticks(card(dom, "How do the items' scores and cost sit side by side?"))
+        self.assertGreaterEqual(len(ticks), 2, ticks)
+
+    def test_axis_ticks_land_on_round_values(self):
+        m = model()
+        t = m["explore"]["tools"]
+        t["r"] += [[r[0], "Bash", r[2], 10, 0, 0, 1_000_000] for r in t["r"]]  # 6 × 1000 s in Bash
+        path = TMP / "ticks.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        # a waterfall's score axis: whole steps, never 97.5 shown as "98"
+        dom = dump(path, "#/unit/skill%3Aflow?tab=drivers", until=r'<g class="axis-x">')
+        vals = [float(x.replace(",", "")) for x in x_ticks(card(dom, "Which measure moves the score of v2, and by how much?"))]
+        self.assertGreaterEqual(len(vals), 3, vals)
+        step = vals[1] - vals[0]
+        self.assertIn(step, (1, 2, 5, 10, 20, 50), vals)
+        self.assertTrue(all(v % step == 0 for v in vals), vals)
+        # durations: clock steps (30 min, 1 h), never 33.3 min or 1.1 h
+        dom = dump(path, "#/diagnostics?tab=tools", until=r'<g class="axis-x">')
+        ms = [duration_ms(x) for x in x_ticks(card(dom, "Which tools does the waiting come from?"))]
+        self.assertGreaterEqual(len(ms), 3, ms)
+        step = ms[1] - ms[0]
+        self.assertIn(step, (6e4, 5 * 6e4, 10 * 6e4, 15 * 6e4, 30 * 6e4, 36e5), ms)
+        self.assertTrue(all(abs(v / step - round(v / step)) < 1e-6 for v in ms), ms)
 
 
 def build_demo():

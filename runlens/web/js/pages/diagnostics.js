@@ -164,8 +164,9 @@ function diagTools() {
     { key: "errors", label: "Errors", num: true, value: (t) => t.errors, cell: (t) => fmt.int(t.errors) },
     { key: "rate", label: "Error rate", num: true, value: (t) => (t.calls ? t.errors / t.calls : null), cell: (t) => fmt.pct(t.calls ? t.errors / t.calls : null) },
     { key: "denied", label: "Denied", num: true, value: (t) => t.denied, more: true },
-    { key: "avg", label: "Average call", num: true, value: (t) => (t.calls ? t.ms / t.calls : null), cell: (t) => fmt.ms(t.calls ? t.ms / t.calls : null) },
-    { key: "total", label: "Total time", num: true, value: (t) => t.ms, cell: (t) => fmt.ms(t.ms) },
+    { key: "avg", label: "Average call", num: true, value: (t) => (t.calls ? t.ms / t.calls : null), cell: (t) => fmt.ms(t.calls ? t.ms / t.calls : null),
+      csv: (t) => (t.calls ? t.ms / t.calls / 1000 : null), csvLabel: "Average call (seconds)" },
+    { key: "total", label: "Total time", num: true, value: (t) => t.ms, cell: (t) => fmt.ms(t.ms), csv: (t) => t.ms / 1000, csvLabel: "Total time (seconds)" },
   ];
   const top = tools.slice(0, 12);
   const slowest = [...tools].filter((t) => t.calls >= 20 && t.ms).sort((a, b) => b.ms / b.calls - a.ms / a.calls)[0];
@@ -187,7 +188,7 @@ function diagTools() {
           takeaway: () => shareTakeaway(tools.map((t) => ({ label: t.label, value: t.calls })), "of the calls") }),
         barChart({ title: "Where tool time goes", question: "Which tools does the waiting come from?", sub: "total time spent in each tool", items: tools.map((t) => ({ label: t.label, value: t.ms || 0 })).filter((t) => t.value > 0).slice(0, 12),
           takeaway: () => shareTakeaway(tools.map((t) => ({ label: t.label, value: t.ms || 0 })), "of the time in tools"),
-          fmt: fmt.ms, valueTitle: "Total time", share: true, labelTitle: "Tool" })),
+          fmt: fmt.ms, ms: true, valueTitle: "Total time", share: true, labelTitle: "Tool" })),
       section({ title: "Every tool", count: plural(tools.length, "tool") }, sortTable({ caption: "Tools", cols, rows: tools, sort: { key: "calls", dir: -1 }, csvName: "tools" }).el)));
 }
 
