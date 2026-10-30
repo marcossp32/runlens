@@ -576,6 +576,13 @@ class Recompute(unittest.TestCase):
         self.assertNotIn("the most common hand-over is", text)
         self.assertRegex(text, r"the widest band is [\w-]+ → [\w-]+ from step \d to \d")
 
+    def test_ties_are_not_reported_as_one_winner(self):
+        # In the demo two problem kinds have 18 problems each, and two tools show the same rounded average call.
+        text = visible(dump(self.path, "#/diagnostics", budget=12000))
+        self.assertRegex(text, r"(Error streak and Repeated call|Repeated call and Error streak): 24 ?% of the problems each")
+        text = visible(dump(self.path, "#/diagnostics?tab=tools", budget=12000))
+        self.assertRegex(text, r"(Bash and Grep|Grep and Bash) are the slowest on average")
+
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")
         self.assertGreater(score, 0)

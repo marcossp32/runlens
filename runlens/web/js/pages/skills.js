@@ -633,7 +633,10 @@ function shareTakeaway(items, what, lead) {
   const total = sumOf(list, (i) => i.value);
   if (!list.length || !total) return null;
   const top = list[0];
-  return `${lead ? `${lead} ${top.label}` : top.label}: ${fmt.pct(top.value / total, 0)} ${what}${list[1] ? `, then ${list[1].label} (${fmt.pct(list[1].value / total, 0)})` : ""}.`;
+  // Items that share the top value are named together: a tie has no single winner.
+  const ties = list.filter((i) => i.value === top.value), next = list[ties.length];
+  const name = listWords(ties.map((i) => i.label));
+  return `${lead ? `${lead} ${name}` : name}: ${fmt.pct(top.value / total, 0)} ${what}${ties.length > 1 ? " each" : ""}${next ? `, then ${next.label} (${fmt.pct(next.value / total, 0)})` : ""}.`;
 }
 
 // The busiest day of a day-by-day chart.
