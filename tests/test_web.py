@@ -394,6 +394,16 @@ class Renders(unittest.TestCase):
         self.assertNotIn("every range crosses 100", text)
         self.assertIn("The one skill that can be judged is not clearly above or below its usual level: its range crosses 100.", text)
 
+    def test_compare_chart_words_agree_with_the_table(self):
+        # The dot is A ÷ B (×1.25 for cost); the table is B ÷ A − 1 on the same values. The words beside the dot
+        # must give the table's number, not "25% better".
+        path = TMP / "compare.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/compare?a=skill%3Aflow&av=v1&b=skill%3Aflow&bv=v2", until=r'class="value'))
+        self.assertNotRegex(text, r"25 ?% better")
+        self.assertRegex(text, r"8 ?% lower")  # the cost row of the chart
+        self.assertRegex(text, r"−8 ?%")  # the same change in the table
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")

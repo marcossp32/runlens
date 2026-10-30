@@ -100,7 +100,7 @@ function forestPlot(spec) {
       { label: "◆ the weighted score", css: "var(--text2)", shape: "diamond" }]),
     table: () => ({
       cols: [{ label: "Row", value: (r) => r.label }, { label: "Effect (×)", num: true, value: (r) => r.effect, cell: (r) => fmt.ratio(r.effect) },
-        { label: "In words", value: (r) => effectWords(r.effect) },
+        { label: "In words", value: (r) => r.words || effectWords(r.effect) },
         { label: "Interval low", num: true, value: (r) => (r.ci ? r.ci[0] : null), cell: (r) => (r.ci ? fmt.ratio(r.ci[0]) : "—") },
         { label: "Interval high", num: true, value: (r) => (r.ci ? r.ci[1] : null), cell: (r) => (r.ci ? fmt.ratio(r.ci[1]) : "—") },
         { label: "Reading", value: (r) => TONE[r.tone].word }, ...(spec.extraCols || [])],
@@ -134,7 +134,7 @@ function forestPlot(spec) {
         if (r.ci) kids.push(svg("line", { class: "ciline", x1: x(clamp(r.ci[0], lo, hi)), x2: x(clamp(r.ci[1], lo, hi)), y1: y, y2: y, style: `stroke:${t.css}` }));
         kids.push(marker(r.bold ? "diamond" : "circle", x(clamp(r.effect, lo, hi)), y, r.bold ? 7 : 5.5, { class: `dot${r.ci ? "" : " hollow"}`, style: r.ci ? `fill:${t.css}` : `stroke:${t.css}` }));
         kids.push(svg("rect", { class: "hit", x: x0 - 4, y: y - R / 2, width: x1 - x0 + 8, height: R }));
-        root.append(markGroup({ title: r.label, rows: [["Effect", `${effectWords(r.effect)} (${fmt.ratio(r.effect)})`], ["Interval", r.ci ? `${fmt.ratio(r.ci[0])} – ${fmt.ratio(r.ci[1])}` : "none: too few runs"],
+        root.append(markGroup({ title: r.label, rows: [["Effect", `${r.words || effectWords(r.effect)} (${fmt.ratio(r.effect)})`], ["Interval", r.ci ? `${fmt.ratio(r.ci[0])} – ${fmt.ratio(r.ci[1])}` : "none: too few runs"],
           ["Reading", `${t.icon} ${r.word || t.word}`], ...(r.tip || [])] }, ...kids));
         root.append(svg("text", { class: `value${r.bold ? " strong" : ""}`, x: x1 + 8, y: y + 4 }, fitText(`${t.icon} ${txt(r)}`, w - x1 - 10, FONT.axis)));
       });
