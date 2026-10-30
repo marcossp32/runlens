@@ -791,10 +791,27 @@ class Install(Sandbox):
 
 
 class Cli(Sandbox):
-    def run_cli(self, *args):
-        env = {**os.environ, "RUNLENS_HOME": str(self.home), "CLAUDE_PROJECTS": str(self.projects)}
+    def run_cli(self, *args, stdin=None):
+        env = {**os.environ, "RUNLENS_HOME": str(self.home), "CLAUDE_PROJECTS": str(self.projects),
+               "CLAUDE_SETTINGS": str(self.tmp / "settings.json"), "CLAUDE_CONFIG_DIR": str(self.tmp / "claude")}
+        env.pop("RUNLENS_HOOK_INLINE", None)
         return subprocess.run([sys.executable, "-m", "runlens", *args], capture_output=True, text=True, env=env, cwd=ROOT,
-                              encoding="utf-8")
+                              encoding="utf-8", input=stdin)
+
+    def test_a_broken_config_still_queues_the_session_and_logs_why(self):
+        (self.home / "config.toml").write_text("[select", encoding="utf-8")
+        payload = json.dumps({"hook_event_name": "SessionEnd", "session_id": "abc"})
+        res = self.run_cli("hook", stdin=payload)
+        self.assertEqual(res.returncode, 0, res.stderr)  # a hook never fails the session
+        self.assertEqual([p.name for p in hooks.pending()], ["abc"])
+        log = (self.home / "hooks.log").read_text(encoding="utf-8")
+        self.assertIn("queued abc", log)
+        self.assertIn("config error", log)
+        self.assertIn("runlens refresh", log)
+        drain = self.run_cli("drain")  # the detached drain has no terminal: its config error goes to the log too
+        self.assertEqual(drain.returncode, 1)
+        self.assertEqual((self.home / "hooks.log").read_text(encoding="utf-8").count("config error"), 2)
+        self.assertEqual([p.name for p in hooks.pending()], ["abc"])
 
     def test_sql_errors_are_one_line_and_output_formats(self):
         simple_run(self.projects, "eaeaeaea-0000-0000-0000-000000000001")

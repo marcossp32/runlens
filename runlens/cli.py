@@ -140,6 +140,8 @@ def main(argv=None):
     # argparse prints help=SUPPRESS subcommands as "==SUPPRESS==", so hidden ones are left out of the metavar instead.
     sub.metavar = "{" + ",".join(c for c in sub.choices if c not in HIDDEN) + "}"
     a = ap.parse_args(argv)
+    if a.command in ("hook", "drain"):
+        return hook_command(a)
     cfg = config.load(a.config)
     flt = lambda: {"since": a.since, "skills": a.skill, "projects": a.project, "sessions": a.session}
 
@@ -176,9 +178,6 @@ def main(argv=None):
         print(f"{s['runs']} run folder(s), {s['files']} file(s), {gb(s['bytes'])}; excluded {s['excluded_files']} file(s) "
               f"({gb(s['excluded_bytes'])}); {'at most ' if not a.yes else ''}{s['blobs_new']} distinct file(s) to keep, {gb(s['blob_bytes_new'])}")
         print(f"deleted {s['folders_deleted']} old evidence folder(s)" if a.yes else "dry run: add --yes to convert and delete the old folders")
-    elif a.command == "drain":
-        from .hooks import drain
-        drain(cfg)
     elif a.command == "summary":
         from .store import connect
         con = connect(read_only=True)
@@ -241,9 +240,6 @@ def main(argv=None):
         from .evals import export
         return 0 if export(cfg, ids=a.incident, skills=a.skill, labels=a.label, types=a.type, fmt=a.format, out=a.out,
                            limit=a.limit, use_history=a.history) else 1
-    elif a.command == "hook":
-        from .hooks import handle
-        return handle(cfg, sys.stdin.read())
     elif a.command == "install":
         from .hooks import install
         install(skill=not a.no_skill)
@@ -257,6 +253,23 @@ def main(argv=None):
             emit(con.execute(a.query), a)
         finally:
             con.close()
+    return 0
+
+
+def hook_command(a):
+    """The hook and its detached drain. Neither has a terminal to print to (the drain's stderr goes nowhere), so a
+    config that cannot load is written to hooks.log, and the hook still queues the session before anything else."""
+    from . import hooks
+    try:
+        cfg, error = config.load(a.config), None
+    except Exception as e:
+        cfg, error = None, e
+    if a.command == "hook":
+        return hooks.handle(cfg, sys.stdin.read(), config_error=error)
+    if error:
+        hooks.log(f"drain: {hooks.config_error_text(error)}")
+        return 1
+    hooks.drain(cfg)
     return 0
 
 

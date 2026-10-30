@@ -71,8 +71,16 @@ def queued_transcript(sid):
     return path if isinstance(path, str) and path else None
 
 
-def handle(cfg, payload):
-    """The hook itself: queue the session and start a detached drain. Returns at once."""
+def config_error_text(e):
+    return (f"config error: {e}. Queued sessions stay in {config.PENDING}: "
+            "fix the config, then run `runlens refresh`")
+
+
+def handle(cfg, payload, config_error=None):
+    """The hook itself: queue the session and start a detached drain. Returns at once.
+
+    With a config that does not load (`config_error`), the session is still queued and the error logged; no drain
+    starts, since it would fail the same way. `runlens refresh` drains the queue once the config is fixed."""
     if os.environ.get("RUNLENS_JUDGE"):
         return 0
     try:
@@ -84,7 +92,9 @@ def handle(cfg, payload):
             return 0
         log(f"queued {sid} ({data.get('reason')})")
         enqueue(sid, {"session_id": sid, "reason": data.get("reason"), "transcript_path": data.get("transcript_path"), "queued_at": datetime.now().astimezone().isoformat()})
-        if os.environ.get("RUNLENS_HOOK_INLINE"):
+        if config_error is not None:
+            log(config_error_text(config_error))
+        elif os.environ.get("RUNLENS_HOOK_INLINE"):
             drain(cfg)
         else:
             spawn_drain()
