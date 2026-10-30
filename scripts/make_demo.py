@@ -8,8 +8,11 @@ then point runlens at that folder:
 
 The random seed is fixed, so the same history comes out every time. The history covers
 what the dashboard can show: skill versions with an outcome marker, two repos, a Claude
-Code update, cache writes, stop reasons, API limits, nested subagents, context
-compactions, Claude Code's own token totals, an open run, a stub and one failed ingest.
+Code patch release and a minor update, cache writes, stop reasons, API limits, nested
+subagents, context compactions, Claude Code's own token totals, an open run, a stub and
+one failed ingest. Among the verdicts are a clear "better" (review-pr v2, with a note
+that Claude Code patches differed) and a "confounded" one (write-tests v2, edited the
+day Claude Code went from 2.1 to 2.2).
 """
 import hashlib
 import os
@@ -21,12 +24,13 @@ from pathlib import Path
 HOME = Path(sys.argv[1] if len(sys.argv) > 1 else "demo-home").resolve()
 os.environ["RUNLENS_HOME"] = str(HOME)  # before runlens is imported: it reads this once
 
-from runlens import store  # noqa: E402
+from runlens import classify, store  # noqa: E402
 from runlens.transcripts import PARSER_VERSION  # noqa: E402
 
 rng = random.Random(2)  # a seed whose history shows a clear "better" and a "confounded" verdict
 extra = random.Random(11)  # for fields added later, so they do not shift the rest of the history
 ctx = random.Random(13)  # context growth and compactions, on their own stream for the same reason
+nest = random.Random(17)  # the tool calls of nested subagents, on their own stream for the same reason
 START = datetime(2026, 9, 1, 8, 0, tzinfo=timezone.utc)
 DAYS = 40
 
@@ -64,7 +68,14 @@ TOOLS = [("Bash", 0.5), ("Read", 0.2), ("Edit", 0.15), ("Grep", 0.1), ("Write", 
 ERRORS = ["nonzero_exit", "syntax", "not_found", "permission_denied", "test_failure", "harness_blocked"]
 INCIDENTS = ["error_streak", "repeated_call", "idle_loop", "permission_denied", "test_edit_after_failure"]
 AGENT_TYPES = [("Explore", 0.5), ("general-purpose", 0.35), ("Plan", 0.15)]
-CC_UPDATE = 38  # the day Claude Code moved from 2.1 to 2.2
+# Claude Code versions: steady for weeks, as when updates are not taken every day. A patch release inside
+# review-pr v2 (a note on its verdict, not a confounder), and the minor update on the day write-tests v2 appeared:
+# that verdict is confounded on purpose, since the skill text and Claude Code changed together.
+CC_RELEASES = [(0, "2.1.284"), (12, "2.1.290"), (28, "2.2.0")]
+
+
+def cc_version(day):
+    return [v for d, v in CC_RELEASES if d <= day][-1]
 
 
 def pick(pairs):
@@ -138,7 +149,7 @@ for day in range(DAYS):
         docs = flow == ["docs-writer"]
         repo = "docs-site" if docs else "acme-shop"
         run = {"session_id": sid, "project": repo, "cwd": f"/work/{repo}", "git_branch": "main" if docs else f"feature/{task.split()[0].lower()}-{day}",
-               "cc_version": f"2.1.{280 + day}" if day < CC_UPDATE else f"2.2.{day - CC_UPDATE}", "title": task, "skills": flow, "started": t,
+               "cc_version": cc_version(day), "title": task, "skills": flow, "started": t,
                "cost_estimated": False, "lines_added": 0, "lines_removed": 0, "status": "complete", "ended_by": "session_end", "is_stub": False,
                "entrypoint": "cli", "parser_version": PARSER_VERSION, "bad_lines": 0, "unpriced_models": []}
         main_cost = sub_cost = active = 0.0
@@ -205,18 +216,25 @@ for day in range(DAYS):
                                                 "post_tokens": extra.randint(15000, 25000), "duration_ms": extra.randint(15000, 40000)})
                 if extra.random() < 0.15:  # a subagent that starts one of its own
                     cid = uid("a")[:17]
-                    c_start, c_cost = t, 0.0
-                    for _ in range(extra.randint(2, 5)):
+                    c_start, c_cost, c_calls = t, 0.0, extra.randint(2, 5)
+                    for _ in range(c_calls):
                         t += timedelta(seconds=extra.randint(5, 30))
                         cc = 0.006 * extra.uniform(0.5, 1.5) * WEIGHT[skill]
                         c_cost += cc
-                        api_call(sid, cid, uid("m"), t, "claude-haiku-5-5", "medium", skill, cc, 100, 500, 3000, 20000)
+                        cmid = uid("m")
+                        api_call(sid, cid, cmid, t, "claude-haiku-5-5", "medium", skill, cc, 100, 500, 3000, 20000)
+                        seq += 1  # one tool call per turn, as agents.tool_calls says
+                        rows["tool_calls"].append({"session_id": sid, "agent_id": cid, "tool_use_id": "t%032x" % nest.getrandbits(128), "msg_id": cmid,
+                                                   "seq": seq, "ts": t, "duration_ms": int(nest.expovariate(1 / 900)),
+                                                   "tool": "Glob", "skill": skill, "is_error": False,
+                                                   "error_class": None, "idle": False})
                     sub_cost += c_cost
                     n_agents += 1
                     rows["agents"].append({"session_id": sid, "agent_id": cid, "parent_agent_id": aid, "agent_type": "Explore",
                                            "description": "Explore a detail", "role": "Explore detail #", "model": "haiku", "spawn_depth": 2,
                                            "background": False, "status": "completed", "started": c_start, "ended": t, "skills": [skill],
-                                           "api_calls": 3, "tool_calls": 3, "tool_errors": 0, "compactions": 0, "peak_context": 30000, "cost_usd": c_cost})
+                                           "api_calls": c_calls, "tool_calls": c_calls, "tool_errors": 0, "compactions": 0, "peak_context": 30000,
+                                           "cost_usd": c_cost})
                 rows["agents"].append({"session_id": sid, "agent_id": aid, "parent_agent_id": "main", "agent_type": atype,
                                        "description": f"{atype} step {rng.randint(1, 9)}", "role": f"{atype} step #", "model": "sonnet",
                                        "spawn_depth": 1, "background": rng.random() < 0.3, "status": "completed" if rng.random() < 0.97 else "failed",
@@ -242,7 +260,8 @@ for day in range(DAYS):
                                         "value": "PASS" if extra.random() < 0.8 else "FAIL", "bad": False, "source": "tool_result", "skill": skill})
             t += timedelta(seconds=30)
         prs = [f"https://example.com/acme/{repo}/pull/{100 + n_runs}"] if "review-pr" in flow and extra.random() < 0.7 else []
-        run.update({"ended": t, "active_ms": int(active * 1000), "human_prompts": prompts, "n_agents": n_agents,
+        run.update({"ended": t, "active_ms": min(int(active * 1000), int((t - run["started"]).total_seconds() * 1000)),  # never past the wall clock
+                    "human_prompts": prompts, "n_agents": n_agents,
                     "cost_usd": main_cost + sub_cost, "lines_added": rng.randint(80, 900), "lines_removed": rng.randint(10, 300),
                     "api_ms": int(active * 600), "tool_ms": int(active * 250), "archived_at": t, "n_api_calls": n_calls, "pr_urls": prs})
         rows["runs"].append(run)
@@ -251,13 +270,33 @@ for day in range(DAYS):
 for r in rows["markers"]:
     r["bad"] = r["value"] == "FAIL"
 
-# The newest run is still going (open: left out of scores), and one run barely did anything (a stub).
+# The newest run is still going (open: left out of scores), and one run barely did anything (a stub). The stub has
+# the rows a real one has: the main agent, its prompt, the skill it loaded, two model turns and one tool call.
 rows["runs"][-1].update(status="open", ended_by=None, cost_estimated=True)
 stub = rows["runs"][len(rows["runs"]) // 2]
 stub_sid = "5" + uid()[1:]
+s0 = stub["started"] + timedelta(hours=3)
+s_end = s0 + timedelta(seconds=60)
 rows["runs"].append({**stub, "session_id": stub_sid, "title": "Quick look at the logs", "skills": ["triage-bug"], "is_stub": True,
-                     "cost_usd": 0.01, "n_api_calls": 1, "lines_added": 0, "lines_removed": 0, "pr_urls": [], "human_prompts": 1, "n_agents": 0,
-                     "started": stub["started"] + timedelta(hours=3), "ended": stub["started"] + timedelta(hours=3, minutes=1)})
+                     "cost_usd": 0.0, "n_api_calls": 2, "lines_added": 0, "lines_removed": 0, "pr_urls": [], "human_prompts": 1, "n_agents": 0,
+                     "started": s0, "ended": s_end, "archived_at": s_end, "active_ms": 9_000, "api_ms": 7_000, "tool_ms": 400})
+rows["events"].append({"session_id": stub_sid, "agent_id": "main", "ts": s0, "kind": "human_prompt", "detail": "Quick look at the logs", "source": "typed"})
+s_body, s_digest = texts[("triage-bug", version_at("triage-bug", (s0 - START).days))]
+rows["skill_loads"].append({"session_id": stub_sid, "agent_id": "main", "ts": s0 + timedelta(seconds=2), "seq": 0, "skill": "triage-bug",
+                            "skill_dir": "/skills/triage-bug", "content_hash": s_digest, "content_len": len(s_body), "args": "Quick look at the logs"})
+stub_cost = 0.0
+for k, (sec, stop) in enumerate(((5, "tool_use"), (12, "end_turn"))):
+    smid = "m%032x" % extra.getrandbits(128)
+    stub_cost += api_call(stub_sid, "main", smid, s0 + timedelta(seconds=sec), "claude-sonnet-5-5", "medium", "triage-bug", 0.004 + 0.002 * k,
+                          80, 300, 8000, 12000)["cost_usd"]
+    rows["api_calls"][-1].update(stop_reason=stop, api_error=False, api_limit=None, api_error_kind=None, api_error_status=None)
+    if stop == "tool_use":
+        rows["tool_calls"].append({"session_id": stub_sid, "agent_id": "main", "tool_use_id": "t%032x" % extra.getrandbits(128), "msg_id": smid,
+                                   "seq": 1, "ts": s0 + timedelta(seconds=6), "duration_ms": 400, "tool": "Bash", "skill": "triage-bug",
+                                   "is_error": False, "error_class": None, "idle": False})
+rows["runs"][-1]["cost_usd"] = stub_cost
+rows["agents"].append({"session_id": stub_sid, "agent_id": "main", "agent_type": "main", "role": "main", "started": s0, "ended": s_end,
+                       "skills": ["triage-bug"], "cost_usd": stub_cost})
 
 for (sid, model), u in usage.items():
     rows["model_usage"].append({"session_id": sid, "model": model, "input_tokens": u["input"], "output_tokens": u["output"],
@@ -296,9 +335,12 @@ for table, items in rows.items():
     con.executemany(f"INSERT INTO {table} ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})", [[r.get(n) for n in names] for r in items])
 for (skill, _), (body, digest) in texts.items():
     con.execute("INSERT INTO skill_texts VALUES (?, ?, ?) ON CONFLICT DO NOTHING", [skill, digest, body])
-# What `runlens classify` would say about most problems: a failure category per incident.
-CATEGORIES = [("tool_misuse", "skill_instructions"), ("environment", "environment"), ("expected_behavior", "none"),
-              ("missing_context", "skill_instructions"), ("flaky_test", "environment")]
+# What `runlens classify` would say about most problems: a failure category per incident, from the taxonomy
+# runlens ships (runlens/taxonomy.toml) and a fault the judge can give (classify.FAULTS).
+CATEGORIES = [("tool_misuse", "agent_judgment"), ("environment_friction", "tooling_or_environment"), ("expected_behavior", "none"),
+              ("spec_disobeyed", "skill_instructions"), ("stuck_retrying", "agent_judgment")]
+known = {c["id"] for c in classify.taxonomy()}
+assert all(c in known and f in classify.FAULTS for c, f in CATEGORIES), "a demo label is outside the taxonomy"
 for i in rows["incidents"]:
     if extra.random() < 0.7:
         category, fault = extra.choice(CATEGORIES)

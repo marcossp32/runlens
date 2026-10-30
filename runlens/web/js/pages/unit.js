@@ -41,14 +41,19 @@ function profileTable(periods) {
 }
 
 // A confounded verdict names everything else that changed; the sentence keeps the names, the list keeps the detail.
-const confounderName = (c) => String(c).replace(/\s*\(.*\)\s*$/, "").replace(/ also changed$/, "");
+const confounderName = (c) => String(c).replace(/:.*$/, "").replace(/\s*\(.*\)\s*$/, "").replace(/ also changed$/, "");
+// Notes on a verdict: what differed between the sides without counting as a confounder (Claude Code patch releases
+// under cc_version = "minor", runs whose cost was left out). Said next to the verdict, never as its cause, and not
+// under "not enough runs", where they decided nothing (as with confounders).
+const verdictNotes = (x, cls) => (x && x.verdict && x.verdict !== "not enough runs" && (x.notes || []).length
+  ? h("ul", { class: `vnotes ${cls || ""}`.trim() }, x.notes.map((n) => h("li", {}, `Note: ${n}.`))) : null);
 
 function unitPage(id) {
   const base = UNITS.get(id);
   const sc = scoreUnit(base);
   // The unit as scored under the current filters and settings (the model's own with the defaults).
   const u = { ...base, score: sc.score, ci: sc.ci, verdict: sc.verdict, direction: sc.direction, vs: sc.vs, difference: sc.difference,
-    confounders: sc.confounders, delta: sc.delta, kpi: sc.kpi, runs: sc.runs, current: sc.current, low_sample: sc.runs < MIN_RUNS,
+    confounders: sc.confounders, notes: sc.notes, delta: sc.delta, kpi: sc.kpi, runs: sc.runs, current: sc.current, low_sample: sc.runs < MIN_RUNS,
     weights: sc.weights };
   const versions = sc.versions;
   const runs = sc.rows;
@@ -84,6 +89,7 @@ function unitPage(id) {
         versions.length > 1 ? `Current version ${u.current}. ` : "", sentence + few + members),
       conf.length > 1 ? h("details", { class: "confounders" }, h("summary", {}, `What else changed between ${u.vs || "the version before"} and ${u.current}`),
         h("ul", {}, conf.map((x) => h("li", {}, x)))) : null,
+      verdictNotes(u, "muted"),
       scoreSettingsNote()),
     profileTable(periods),
     tabs("Details", [
@@ -141,6 +147,7 @@ function versionRow(u, versions, v) {
       prev ? (c.text ? toneTag(c.tone, `${c.text}${v.vs ? ` against ${v.vs}` : ""}`) : null) : toneTag("first", "first version")),
     v.confounders && v.confounders.length ? h("details", { class: "changes" }, h("summary", {}, `Also changed at the same time (${v.confounders.length}): ${listWords(v.confounders.map(confounderName), 3)}`),
       h("ul", { class: "vmeta" }, v.confounders.map((x) => h("li", {}, x)))) : null,
+    verdictNotes(v, "vmeta"),
     prev ? changesDetails(v, prev) : null);
 }
 

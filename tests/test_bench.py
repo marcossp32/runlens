@@ -351,17 +351,70 @@ class Verdicts(unittest.TestCase):
                                       cc=lambda v, i: "2.1.290" if v == 0 else "2.2.1"), resamples=200)
         conf = model["versions"]["skill:flow"][1]["confounders"]
         self.assertTrue(any(c.startswith("model mix") for c in conf), conf)
-        self.assertIn("Claude Code 2.1.290 → 2.2.1", conf)
-        # Patch releases confound by default; with "minor" they do not.
-        model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"), resamples=200)
-        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code 2.1.290 → 2.1.291"])
+        # A minor release confounds by default, named at the minor level.
+        self.assertIn("Claude Code 2.1 → 2.2", conf)
+        self.assertEqual(model["method"]["cc_version"], "minor")
+        # With "patch" every release counts, named in full.
         model = bench.compute(history([("aaa", 6), ("bbb", 6)], cc=lambda v, i: f"2.1.{290 + v}"),
-                              cfg={"method": {"cc_version": "minor"}}, resamples=200)
-        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], [])
-        # A shift that leaves the most common version in place names the version whose share moved.
+                              cfg={"method": {"cc_version": "patch"}}, resamples=200)
+        v2 = model["versions"]["skill:flow"][1]
+        self.assertEqual(v2["confounders"], ["Claude Code 2.1.290 → 2.1.291"])
+        self.assertEqual(v2["notes"], [])
+        # A shift that leaves the most common version in place says what each side ran on and whose share moved.
         model = bench.compute(history([("aaa", 20), ("bbb", 20)], cc=lambda v, i: "2.2.1" if v == 1 and i < 8 else "2.1.290"),
-                              cfg={"method": {"cc_version": "minor"}}, resamples=200)
-        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"], ["Claude Code version: 2.2 0% → 40%"])
+                              resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["confounders"],
+                         ["Claude Code version: v1 ran on 2.1, v2 on 2 versions (2.1, 2.2), 1 shared; 2.2 0% → 40% of runs"])
+
+    def test_claude_code_patch_releases_are_a_note_not_a_confounder(self):
+        # Patches ship almost daily: by default a patch drift between the sides does not block a real improvement,
+        # but it is said, with how many patch versions each side ran on, never as one upgrade.
+        rng = random.Random(7)
+        cost = lambda v, i: (3.0 if v == 0 else 1.0) * math.exp(rng.gauss(0, 0.2))
+        cc = lambda v, i: f"2.1.{280 + i % 6}" if v == 0 else f"2.1.{290 + i}"
+        model = bench.compute(history([("aaa", 12), ("bbb", 12)], cost=cost, cc=cc), resamples=1000)
+        v2 = model["versions"]["skill:flow"][1]
+        self.assertEqual((v2["verdict"], v2["confounders"]), ("better", []))
+        self.assertEqual(len(v2["notes"]), 1, v2["notes"])
+        self.assertEqual(v2["notes"], ["Claude Code also differed, not counted as a confounder: within 2.1, "
+                                       "v1 ran on 6 patch versions (2.1.280 to 2.1.285), v2 on 12 patch versions (2.1.290 to 2.1.301), "
+                                       "none shared"])
+        unit = next(u for u in model["units"] if u["id"] == "skill:flow")
+        self.assertEqual(unit["notes"], v2["notes"])
+        self.assertEqual(bench.score_summary(model)["units"][0]["notes"], v2["notes"])
+        # Strict: the same history is confounded, and the reason spans the versions instead of naming one upgrade.
+        model = bench.compute(history([("aaa", 12), ("bbb", 12)], cost=cost, cc=cc),
+                              cfg={"method": {"cc_version": "patch"}}, resamples=1000)
+        v2 = model["versions"]["skill:flow"][1]
+        self.assertEqual((v2["verdict"], v2["direction"]), ("confounded", "better"))
+        self.assertTrue(v2["confounders"][0].startswith(
+            "Claude Code version: v1 ran on 6 versions (2.1.280 to 2.1.285), v2 on 12 versions (2.1.290 to 2.1.301), "
+            "none shared; "), v2["confounders"])
+        self.assertEqual(v2["notes"], [])
+        # The same patch on both sides is no note at all.
+        model = bench.compute(history([("aaa", 6), ("bbb", 6)]), resamples=200)
+        self.assertEqual(model["versions"]["skill:flow"][1]["notes"], [])
+
+    def test_a_minor_shift_below_the_threshold_is_said_as_a_minor_not_a_patch(self):
+        # 2.2 in 3 of v2's 20 runs: the minor mix moved by 0.15, under the 0.3 that confounds. The note names 2.2 with
+        # its share and the threshold, and the patch drift inside 2.1 apart from it; 2.2.0 is never called a patch.
+        cc = lambda v, i: "2.1.284" if v == 0 else ("2.2.0" if i < 3 else "2.1.290")
+        model = bench.compute(history([("aaa", 20), ("bbb", 20)], cc=cc), resamples=200)
+        v2 = model["versions"]["skill:flow"][1]
+        self.assertEqual(v2["confounders"], [])
+        self.assertEqual(v2["notes"], ["Claude Code also differed, not counted as a confounder: 2.2 in 15% of v2's runs and 0% "
+                                       "of v1's (a shift of 0.15, under the 0.34 that counts); within 2.1, v1 ran on 2.1.284, "
+                                       "v2 on 2.1.290, none shared"])
+        # Only the minor moved, with the same patch inside 2.1 on both sides: no patch part.
+        cc = lambda v, i: "2.1.284" if v == 0 or i >= 3 else "2.2.0"
+        v2 = bench.compute(history([("aaa", 20), ("bbb", 20)], cc=cc), resamples=200)["versions"]["skill:flow"][1]
+        self.assertEqual(v2["notes"], ["Claude Code also differed, not counted as a confounder: 2.2 in 15% of v2's runs and 0% "
+                                       "of v1's (a shift of 0.15, under the 0.34 that counts)"])
+        self.assertNotIn("patch", v2["notes"][0])
+
+    def test_versions_sort_by_number(self):
+        self.assertEqual(sorted(["2.1.10", "2.1.9", "unknown", "2.0.99"], key=bench._version_key),
+                         ["2.0.99", "2.1.9", "2.1.10", "unknown"])
 
     def test_model_change_within_a_family_confounds(self):
         model = bench.compute(history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: 1.0 if v == 0 else 0.4,

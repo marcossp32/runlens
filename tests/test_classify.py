@@ -432,6 +432,15 @@ class ClassifyTest(unittest.TestCase):
         g, _ = evals.checks(self.cfg, {"type": "idle_loop", "skill": "flow"}, None)
         self.assertTrue(all(x.get("input_match") for x in g if x["type"] == "tool_used" and "max" in x))
 
+    def test_error_streak_grader_fails_at_the_configured_streak(self):
+        # The incident streak was 3 calls long, but a streak counts from [analysis] error_streak_min (2 by default):
+        # a re-run with 2 failing calls in a row is the same failure.
+        inc = {"type": "error_streak", "skill": "flow", "key": "Bash", "n": 3}
+        g, _ = evals.checks(self.cfg, inc, None)
+        body = next(x["body"] for x in g if x["name"] == "changes-approach")
+        self.assertIn(f"made {self.cfg['analysis']['error_streak_min']} or more consecutive failing", body)
+        self.assertEqual(self.cfg["analysis"]["error_streak_min"], 2)
+
     def test_export_eval_prompt_from_skill_args_without_history(self):
         out = self.tmp / "evals-args"
         with redirect_stdout(io.StringIO()):

@@ -438,6 +438,23 @@ class Renders(unittest.TestCase):
         text = visible(dump(path, "#/?kind=groups"))
         self.assertIn("1 confounded", text)
 
+    def test_a_note_on_the_verdict_is_shown_beside_it(self):
+        # A Claude Code patch shift under cc_version = "minor" is a note: said next to the verdict, not a confounder.
+        m = copy.deepcopy(model())
+        note = "Claude Code also differed, not counted as a confounder: within 2.1, v1 ran on 2 patch versions (2.1.1, 2.1.2), v2 on 2.1.9, none shared"
+        m["units"][0]["notes"] = [note]
+        m["versions"]["skill:flow"][1]["notes"] = [note]
+        path = TMP / "notes.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/unit/skill%3Aflow"))
+        self.assertGreaterEqual(text.count(f"Note: {note}."), 2, text)  # under the verdict and on the version
+        self.assertNotIn("Not comparable", text)
+        # Under `not enough runs` the note decided nothing, so it is not shown, like the confounders.
+        for x in (m["units"][0], m["versions"]["skill:flow"][1]):
+            x.update(verdict="not enough runs", direction=None)
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        self.assertNotIn("Note: Claude Code", visible(dump(path, "#/unit/skill%3Aflow")))
+
     def test_range_takeaway_speaks_only_of_the_rows_it_judged(self):
         # A confounded skill whose whole range is above 100 sits next to a skill whose range crosses 100:
         # the takeaway may not say that every range crosses 100.
@@ -612,6 +629,35 @@ class Renders(unittest.TestCase):
         sel = re.search(r'<select aria-label="Colour the days by">(.*?)</select>', dom, re.S)
         self.assertIsNotNone(sel, "the calendar's colour select is not on the page")
         self.assertRegex(sel.group(1), r'<option value="runs" selected="">Runs</option>')
+
+    # ---- issue #32: change markers on time axes ----
+
+    def test_change_marker_labels_stay_on_the_chart_and_say_what_they_leave_out(self):
+        # Every run on its own Claude Code patch and three new models: far more markers than two label rows hold on a
+        # phone, whatever the system font's width.
+        m = copy.deepcopy(model())
+        runs = m["explore"]["runs"]
+        cc, models = runs["c"].index("cc"), runs["c"].index("models")
+        for i, r in enumerate(runs["r"]):
+            r[cc], r[models] = f"2.1.{300 + i}", [f"claude-model-{i}-{k}" for k in range(3)]
+        path = TMP / "marks.html"
+        dom = None
+        for level, many in (("minor", False), ("patch", True)):
+            m["method"]["cc_version"] = level
+            path.write_text(dashboard.render(m), encoding="utf-8")
+            # a tall phone window: charts are drawn only near the viewport, and the time chart sits below 860 px
+            dom = dump(path, "#/runs", size="390,4000", until=r'class="vmarklabel"')
+            labels = re.findall(r'<text class="vmarklabel"[^>]*\by="([\d.]+)"[^>]*>([^<]*)</text>', dom)
+            self.assertTrue(labels, level)
+            # by default a patch release is no marker; with "patch" each one is
+            self.assertEqual('<line class="vmark vm-cc"' in dom, many, (level, labels))
+            for y, text in labels:
+                self.assertGreaterEqual(float(y), 14, f"{text!r} is cut by the top of the chart")  # an 11 px label needs its height
+            # no marker goes unaccounted: each one has a label or is counted in the "+N more"
+            more = [int(t[1:].split()[0]) for _, t in labels if re.fullmatch(r"\+\d+ more", t)]
+            shown = len(labels) - len(more)
+            self.assertEqual(shown + sum(more), len(re.findall(r'<line class="vmark', dom)), (level, labels))
+        self.assertTrue(more, labels)  # with "patch" there are too many to label them all
 
     def test_per_unit_weights_keep_their_decimals(self):
         path = TMP / "wu.html"

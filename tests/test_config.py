@@ -35,7 +35,7 @@ KEYS = {
 }
 DEFAULTS = {
     "runs": config.RUNS, "analysis": config.ANALYSIS, "classify": classify.DEFAULTS, "evidence": config.EVIDENCE,
-    "method": {"min_runs": bench.MIN_RUNS, "resamples": bench.RESAMPLES, "confidence": bench.CONFIDENCE, "cc_version": "patch", "auto_groups": True},
+    "method": {"min_runs": bench.MIN_RUNS, "resamples": bench.RESAMPLES, "confidence": bench.CONFIDENCE, "cc_version": "minor", "auto_groups": True},
 }
 ASSIGNMENT = re.compile(r"^# ((?:\[\[?[\w.\-]+\]\]?(?:\s+#.*)?|[\w\"\-]+ = \S.*))$")
 
@@ -91,7 +91,7 @@ class ShippedConfigs(unittest.TestCase):
                 if key in defaults and isinstance(defaults[key], (int, float)) and not isinstance(defaults[key], bool):
                     self.assertEqual(value, defaults[key], f"[{section}] {key}: the example says {value}, the code uses {defaults[key]}")
         self.assertEqual(cfg["evidence"][0]["scope"], config.EVIDENCE["scope"])
-        self.assertEqual(cfg["method"]["cc_version"], "patch")
+        self.assertEqual(cfg["method"]["cc_version"], bench.settings()["cc_version"])
         self.assertEqual(cfg["classify"]["model"], classify.DEFAULTS["model"])
         self.assertEqual([o["kind"] for o in s["outcomes"]], ["marker", "pr"])
         self.assertEqual(s["weights"]["units"]["my-interview"], {"interventions": 0.0})

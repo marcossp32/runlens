@@ -84,8 +84,11 @@ model = "sonnet"        # model alias for the judge; --model overrides it
 # min_runs = 5             # finished runs needed on each side before a verdict ("not enough runs" below that)
 # resamples = 10000        # bootstrap resamples of the difference
 # confidence = 0.95        # central interval of the difference that must clear zero for "better" or "worse"
-# cc_version = "patch"     # level at which Claude Code versions are compared: when their mix shifts between the two
-#                          # sides (2.1.3 -> 2.1.4, or with "minor" only 2.1 -> 2.2), the verdict is "confounded"
+# cc_version = "minor"     # level at which Claude Code versions are compared: when their mix shifts between the two
+#                          # sides (2.1 -> 2.2), the verdict is "confounded". A shift in patch releases alone
+#                          # (2.1.3 -> 2.1.4) is shown as a note but does not block the verdict, because patches
+#                          # ship almost daily; the cost is that a patch that changed behaviour goes unflagged.
+#                          # Set "patch" to count every patch release as a confounder
 # auto_groups = true       # also score, as one set, skills used together in most of their runs and edited at the
 #                          # same time (named after their common prefix, e.g. "flow-* set"); a [[group]] with the same
 #                          # skills replaces the set found

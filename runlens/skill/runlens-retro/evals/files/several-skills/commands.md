@@ -33,7 +33,7 @@ all checks passed
                   "outcome": {"a": 0.87, "b": 0.55, "value": -0.32, "ci95": [-0.51, -0.12]}}},
   {"unit": "skill:scan-repo", "name": "scan-repo", "kind": "skill", "runs": 13, "invocations": 56, "versions": 2, "current": "v2",
    "verdict": "confounded", "direction": "better", "vs": "v1",
-   "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
+   "confounders": ["Claude Code 2.1 → 2.2", "model mix: claude-opus-5-5 90% → 20% of main-agent cost"],
    "outcome": null, "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}},
   {"unit": "skill:review-pr", "name": "review-pr", "kind": "skill", "runs": 17, "invocations": 17, "versions": 3, "current": "v3",
    "verdict": "better", "direction": "better", "vs": "v2", "confounders": [], "outcome": null,
@@ -67,7 +67,7 @@ all checks passed
    "verdict": null, "vs": null, "confounders": [], "difference": null, "outcome": null},
   {"id": "skill:scan-repo@5a4b3c2d", "label": "v2", "hash": "5a4b3c2d", "runs": 6, "invocations": 26, "score": 110.0,
    "verdict": "confounded", "direction": "better", "vs": "v1",
-   "confounders": ["Claude Code 2.1.283 → 2.1.293", "model mix (share of cost): opus 90% → 20%"],
+   "confounders": ["Claude Code 2.1 → 2.2", "model mix: claude-opus-5-5 90% → 20% of main-agent cost"],
    "difference": {"score": 121.0, "ci95": [104.2, 139.8], "measures": {}}, "outcome": null}
 ]}
 ```

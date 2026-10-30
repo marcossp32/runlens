@@ -348,7 +348,7 @@ function fromModel(u) {
   const pairs = (DATA.pairs || {})[u.id] || [];
   return { u, recomputed: false, rows: DATA.runs[u.id] || [], baseline: u.baseline, pseudo: u.pseudo, weights: u.weights, versions,
     pairs, score: u.score, ci: u.ci, verdict: u.verdict, direction: u.direction, vs: u.vs, difference: u.difference,
-    confounders: u.confounders || [], delta: u.delta, kpi: u.kpi, runs: u.runs, current: u.current, outcome: u.outcome };
+    confounders: u.confounders || [], notes: u.notes || [], delta: u.delta, kpi: u.kpi, runs: u.runs, current: u.current, outcome: u.outcome };
 }
 
 function recompute(u) {
@@ -406,7 +406,7 @@ function recompute(u) {
   for (const p of pairs.filter((x) => x.vs_previous)) {
     const v = versions.find((x) => x.label === p.b);
     const prev = versions[versions.indexOf(v) - 1];
-    Object.assign(v, { verdict: p.verdict, direction: p.direction, vs: p.a, difference: p.difference, confounders: p.confounders,
+    Object.assign(v, { verdict: p.verdict, direction: p.direction, vs: p.a, difference: p.difference, confounders: p.confounders, notes: p.notes,
       delta: v.score !== null && prev.score !== null ? v.score - prev.score : null });
   }
   const last = versions[versions.length - 1] || null;
@@ -414,7 +414,7 @@ function recompute(u) {
   return { u, recomputed: true, rows, baseline, pseudo, weights, versions, pairs,
     score: u.kind === "agent" ? null : last ? last.score : null, ci: last ? last.ci : null,
     verdict: last ? last.verdict : null, direction: last ? last.direction : null, vs: last ? last.vs : null,
-    difference: last ? last.difference : null, confounders: last ? last.confounders : [], delta: last ? last.delta : null,
+    difference: last ? last.difference : null, confounders: last ? last.confounders : [], notes: last ? last.notes || [] : [], delta: last ? last.delta : null,
     kpi: { ...u.kpi, ...kp, spend: sumOf(rows, (r) => r.cost) }, runs: sessions, current: last ? last.label : u.current,
     outcome: u.outcome ? { ...u.outcome, value: kp.outcome, n: sumOf(rows, (r) => r.on) } : null };
 }

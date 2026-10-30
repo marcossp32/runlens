@@ -377,23 +377,21 @@ function rateFacets(spec) {
     }),
     draw(w) {
       const cols = facets.length === 1 ? 1 : Math.max(1, Math.min(4, Math.floor(w / 300), facets.length));
-      const fw = (w - (cols - 1) * 18) / cols, fh = facets.length === 1 ? 220 : 150;
+      const band = weekly.some((f) => (f.vlines || []).length) ? VLINE_BAND : 0;  // room for the version labels
+      const fw = (w - (cols - 1) * 18) / cols, fh = (facets.length === 1 ? 220 : 150) + band;
       const rowsN = Math.ceil(weekly.length / cols);
       const H = rowsN * (fh + 30) + 6;
       const root = svgRoot(w, H, `${spec.title}: ${weekly.length} panels on a shared time axis`);
       weekly.forEach((f, i) => {
         const g = svg("g", { transform: `translate(${(i % cols) * (fw + 18)},${Math.floor(i / cols) * (fh + 30)})` });
-        const x0 = maxLabel(["100%"]) + 10, x1 = fw - 8, top = 28, bottom = fh - 4;
+        const x0 = maxLabel(["100%"]) + 10, x1 = fw - 8, top = 28 + band, bottom = fh - 4;
         const x = scaleLinear(t0 - DAY, t1 + DAY, x0 + 6, x1 - 6);
         const y = scaleLinear(0, 1, bottom, top);
         if (f.ns) g.append(entityDot(f.ns, f.name ?? f.label, 5, 10));
         g.append(svg("text", { class: "facettitle", x: f.ns ? 14 : 0, y: 14 }, fitText(f.label, fw - 20, FONT.label, 600)));
         axisY(g, { scale: y, ticks: [0, 0.5, 1], fmt: (v) => fmt.pct(v, 0), x0, x1, top });
         axisX(g, { scale: x, ticks: timeTicks(t0 - DAY, t1 + DAY, Math.max(2, Math.floor((x1 - x0) / 80))).map((t) => ({ v: t.t, label: t.label })), x0, x1, y: bottom });
-        for (const v of f.vlines || []) {
-          const vx = x(v.t);
-          if (vx >= x0 && vx <= x1) g.append(svg("line", { class: "vmark", x1: vx, x2: vx, y1: top, y2: bottom }), svg("text", { class: "vmarklabel", x: vx + 3, y: top + 9 }, v.label));
-        }
+        placeVlines(g, f.vlines || [], x, x0, x1, top, bottom);
         const pts = f.weeks.map((e) => ({ ...e, cx: x(e.t + 3.5 * DAY) }));
         if (pts.length > 1) {
           g.append(svg("path", { class: "band-area", d: `M${pts.map((p) => `${p.cx},${y(p.ci[1])}`).join("L")}L${[...pts].reverse().map((p) => `${p.cx},${y(p.ci[0])}`).join("L")}Z` }));
@@ -429,7 +427,7 @@ function laneChart(spec) {
       rows: lanes.flatMap((l) => l.items.map((it) => ({ ...it, lane: l.label }))).sort((a, b) => a.t - b.t),
     }),
     draw(w) {
-      const RH = PREFS.density === "compact" ? 24 : 30, top = spec.vlines && spec.vlines.length ? 30 : 10;
+      const RH = PREFS.density === "compact" ? 24 : 30, top = spec.vlines && spec.vlines.length ? 10 + VLINE_BAND : 10;
       const labelW = Math.min(maxLabel(lanes.map((l) => l.label), FONT.label) + 14, Math.max(90, w * 0.28));
       const x0 = labelW, x1 = w - 12;
       const a = Math.min(...all), b = Math.max(...all), pad = Math.max(36e5, (b - a) * 0.03);
@@ -459,24 +457,39 @@ function laneChart(spec) {
   });
 }
 
-// Vertical markers on a time axis (a new skill version, a model change, a Claude Code update), labelled
-// where the labels do not collide; every marker keeps its line and a tooltip.
+// Vertical markers on a time axis (a new skill version, a model change, a Claude Code update). Every marker keeps
+// its line and a tooltip; labels go in two rows in the VLINE_BAND the caller leaves above `top`. A label that fits
+// in neither row is not dropped silently: the rest are counted in a "+N more" at the end of the first row, whose
+// tooltip lists them.
 function placeVlines(root, vlines, x, x0, x1, top, bottom, labels = true) {
-  let lastEnd = -Infinity, row = 0;
-  for (const v of [...vlines].sort((a, b) => a.t - b.t)) {
-    const vx = x(v.t);
-    if (vx < x0 || vx > x1) continue;
+  const marks = vlines.filter((v) => valid(v.t)).map((v) => ({ v, vx: x(v.t) })).filter((m) => m.vx >= x0 && m.vx <= x1)
+    .sort((a, b) => a.vx - b.vx || String(a.v.label).localeCompare(String(b.v.label)));
+  for (const { v, vx } of marks) {
     const cls = `vmark${v.kind ? ` vm-${v.kind}` : ""}`;
-    const label = v.label;
-    const tw = textWidth(label, FONT.small);
-    row = vx > lastEnd + 6 ? 0 : row + 1;
-    const g = markGroup({ title: v.title || label, rows: v.rows || [] }, svg("line", { class: cls, x1: vx, x2: vx, y1: top - 4, y2: bottom }),
-      svg("rect", { class: "hit", x: vx - 5, y: top - 4, width: 10, height: bottom - top + 4 }));
-    root.append(g);
-    if (labels && row < 2) {
-      root.append(svg("text", { class: "vmarklabel", x: Math.min(vx + 3, x1 - tw), y: top - 18 + row * 11 }, label));
-      lastEnd = Math.max(lastEnd, vx + tw + 3);
+    root.append(markGroup({ title: v.title || v.label, rows: v.rows || [] }, svg("line", { class: cls, x1: vx, x2: vx, y1: top - 4, y2: bottom }),
+      svg("rect", { class: "hit", x: vx - 5, y: top - 4, width: 10, height: bottom - top + 4 })));
+  }
+  if (!labels || !marks.length) return;
+  // row 0 clears a dot of radius 8 drawn on the top gridline
+  const rowY = (r) => top - 10 - r * 12;
+  const layout = (limit) => {
+    const ends = [-Infinity, -Infinity], placed = [], hidden = [];
+    for (const m of marks) {
+      const tw = textWidth(m.v.label, FONT.small);
+      const start = Math.max(x0, Math.min(m.vx + 3, limit - tw));
+      const r = ends.findIndex((e) => start > e + 6);
+      if (r < 0 || start + tw > limit + 0.5) { hidden.push(m); continue; }
+      ends[r] = start + tw;
+      placed.push({ m, start, r });
     }
+    return { placed, hidden };
+  };
+  let { placed, hidden } = layout(x1);
+  if (hidden.length) ({ placed, hidden } = layout(x1 - textWidth(`+${marks.length} more`, FONT.small) - 8));
+  for (const p of placed) root.append(svg("text", { class: "vmarklabel", x: p.start, y: rowY(p.r) }, p.m.v.label));
+  if (hidden.length) {
+    root.append(markGroup({ title: `${hidden.length} more ${hidden.length === 1 ? "change" : "changes"} not labelled`, rows: hidden.map((m) => [m.v.label, m.v.title || ""]) },
+      svg("text", { class: "vmarklabel", x: x1, y: rowY(0), "text-anchor": "end" }, `+${hidden.length} more`)));
   }
 }
 

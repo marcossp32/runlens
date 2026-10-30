@@ -22,9 +22,9 @@ from tests.test_bench import T0, history
 BEFORE_EDIT = T0 + timedelta(seconds=6500)  # between the 6th and 7th run of history()
 
 
-def model_of(cost, versions=(("aaa", 6), ("bbb", 6)), other=None):
+def model_of(cost, versions=(("aaa", 6), ("bbb", 6)), other=None, **kw):
     rng = random.Random(5)
-    return bench.compute(history(list(versions), cost=lambda v, i: cost(v) * math.exp(rng.gauss(0, 0.15)), other=other), resamples=1000)
+    return bench.compute(history(list(versions), cost=lambda v, i: cost(v) * math.exp(rng.gauss(0, 0.15)), other=other, **kw), resamples=1000)
 
 
 class Proposals(unittest.TestCase):
@@ -97,6 +97,14 @@ class Proposals(unittest.TestCase):
         with self.assertRaises(ValueError):
             proposals.verify(self.con, m, "p-9999")
 
+    def test_claude_code_patch_releases_are_a_note_on_the_proposal(self):
+        m = model_of(lambda v: 1.0 if v == 0 else 0.3, cc=lambda v, i: f"2.1.{280 + v * 10 + i}")
+        proposals.add(self.con, m, "flow", "cheaper", "cost", "lower", base_version="aaa", now=BEFORE_EDIT)
+        r = proposals.verify(self.con, m, "p-0001")[0]
+        self.assertEqual((r["verdict"], r["confounders"]), ("confirmed", []))
+        self.assertEqual(len(r["notes"]), 1, r["notes"])
+        self.assertTrue(r["notes"][0].startswith("Claude Code also differed, not counted as a confounder: within 2.1, v1 ran on 6 patch versions"), r["notes"])
+
 
 class CommandLine(unittest.TestCase):
     """The commands end to end on a small database, checking the JSON fields the retro skill relies on."""
@@ -164,6 +172,16 @@ class CommandLine(unittest.TestCase):
         text = cli._versions_text({"skill": "flow", "versions": [v]})
         self.assertNotIn("confounded by", text)  # the verdict is not enough runs: the confounders decided nothing
         self.assertIn("confounded by", cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "confounded"}]}))
+        # a note is said under any verdict, apart from the confounders
+        noted = cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "better", "notes": ["Claude Code also differed"]}]})
+        self.assertIn("v2: note: Claude Code also differed", noted)
+        # ...but not under `not enough runs`, where it decided nothing (the JSON keeps it)
+        few = cli._versions_text({"skill": "flow", "versions": [{**v, "notes": ["Claude Code also differed"]}]})
+        self.assertNotIn("note:", few)
+        self.assertNotIn("note:", cli._score_text({"kind": "skill", "population": {"runs": 2, "open": 0, "stub": 0}, "units": [
+            {"unit": "skill:flow", "runs": 2, "invocations": 2, "current": "v2", "versions": 2, "verdict": "not enough runs", "vs": "v1",
+             "difference": None, "confounders": [], "notes": ["Claude Code also differed"]}]}))
+        self.assertNotIn("confounded by", noted)
         empty = cli._score_text({"kind": "skill", "population": {"runs": 0, "open": 0, "stub": 0}, "units": []})
         self.assertIn("runlens refresh", empty)
 

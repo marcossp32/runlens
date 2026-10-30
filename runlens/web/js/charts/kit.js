@@ -230,7 +230,9 @@ function scatterChart(spec) {
     }),
     draw(w) {
       const H = Math.max(240, Math.min(380, Math.round(w * 0.5)));
-      const top = 28, bottom = 44, right = spec.labels ? 16 : 12;
+      // change markers get a band of their own between the axis title and the plot, so neither covers the other
+      const band = (spec.vlines || []).length ? VLINE_BAND : 0;
+      const top = 28 + band, bottom = 44, right = spec.labels ? 16 : 12;
       const ys = pts.map((p) => p.y).concat(spec.y.ref != null ? [spec.y.ref] : []);
       let y, yt;
       if (spec.y.log) {
@@ -269,7 +271,7 @@ function scatterChart(spec) {
         xt = nm.ticks.map((v) => ({ v, label: fx(v) }));
       }
       const root = svgRoot(w, H, `${spec.title}: ${pts.length} points`);
-      axisY(root, { scale: y, ticks: yt, fmt: fy, x0, x1, top, title: spec.y.title, ref: spec.y.ref, labelWidth: x0 - 12 });
+      axisY(root, { scale: y, ticks: yt, fmt: fy, x0, x1, top, title: spec.y.title, titleY: top - band - 10, ref: spec.y.ref, labelWidth: x0 - 12 });
       axisX(root, { scale: x, ticks: xt, x0, x1, y: H - bottom, title: spec.x.title, grid: spec.x.log || spec.x.time, gridTop: top });
       if (spec.y.ref != null && !yt.includes(spec.y.ref)) {
         root.append(svg("line", { class: "ref", x1: x0, x2: x1, y1: y(spec.y.ref), y2: y(spec.y.ref) }));
@@ -522,7 +524,9 @@ function versionTimeline(spec) {
     draw(w) {
       const cols = facets.length === 1 ? 1 : Math.max(1, Math.min(6, Math.floor(w / 250), facets.length));
       const fw = (w - (cols - 1) * 16) / cols;
-      const fh = facets.length === 1 ? 230 : 140;
+      // one panel labels its change markers, in a band under the panel title; several panels only draw the lines
+      const band = facets.length === 1 && (spec.vlines || []).concat(facets[0].vlines || []).length ? VLINE_BAND : 0;
+      const fh = (facets.length === 1 ? 230 : 140) + band;
       const rowsN = Math.ceil(facets.length / cols);
       const H = rowsN * (fh + 34) + 8;
       const t0 = Math.min(...all.map((v) => v.t0)), t1 = Math.max(...all.map((v) => v.t1));
@@ -535,7 +539,7 @@ function versionTimeline(spec) {
         const ox = (k % cols) * (fw + 16), oy = Math.floor(k / cols) * (fh + 34);
         const g = svg("g", { transform: `translate(${ox},${oy})` });
         const yLabels = yt.map(fmt.score);
-        const x0 = maxLabel(yLabels) + 10, x1 = fw - 10, top = 30, bottom = fh - 4;
+        const x0 = maxLabel(yLabels) + 10, x1 = fw - 10, top = 30 + band, bottom = fh - 4;
         const x = scaleLinear(t0 - pad, t1 + pad, x0 + 6, x1 - 6);
         const y = scaleLinear(Math.min(lo - ypad, yt[0]), Math.max(hi + ypad, yt[yt.length - 1]), bottom, top);
         if (f.ns) g.append(entityDot(f.ns, f.name ?? f.label, 5, 10));
