@@ -497,6 +497,39 @@ class Ingest(Sandbox):
             con.close()
         self.assertEqual(ids, {"cdcdcdcd-1111-0000-0000-000000000001", "cdcdcdcd-2222-0000-0000-000000000002", "cececece"})
 
+    def test_synthetic_is_not_a_model_on_the_dashboard(self):
+        from runlens import explorer
+        r = Run(self.projects, "dededede-0000-0000-0000-000000000001")
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        r.turn("m1", "t1")
+        r.rec(type="assistant", isApiErrorMessage=True, apiErrorStatus=529,
+              message={"id": "e1", "model": "<synthetic>", "content": [{"type": "text", "text": "API Error: 529 Overloaded"}]})
+        r.turn("m2", "t2")
+        r.end()
+        r.write()
+        sub = Run(self.projects, "agent-h1", project=f"C--work-repo/{r.sid}/subagents")
+        sub.turn("h1", "ht1")
+        sub.write()
+        # the agent asked for "haiku" by alias; it called claude-sonnet-5-5
+        (sub.path.parent / "agent-h1.meta.json").write_text(json.dumps({"agentType": "Explore", "toolUseId": "t1", "model": "haiku"}))
+        self.refresh()
+        self.assertEqual(self.q("SELECT count(*) FROM api_calls WHERE model = '<synthetic>' AND api_error")[0][0], 1)  # kept as written
+        con = store.connect(read_only=True)
+        try:
+            facts = explorer.build(con)
+        finally:
+            con.close()
+
+        def rows(name):
+            t = facts[name]
+            return [{c: (t["d"][c][v] if c in t.get("d", {}) else v) for c, v in zip(t["c"], r)} for r in t["r"]]
+        self.assertEqual([x["models"] for x in rows("runs")], [["claude-sonnet-5-5"]])  # the Model filter and first-use markers
+        for name in ("calls", "days", "stops", "apierr", "agents"):
+            self.assertNotIn("<synthetic>", {x["model"] for x in rows(name)}, name)
+        self.assertEqual(sum(x["calls"] for x in rows("calls")), 4)  # the error still counts as a turn of the model it called
+        self.assertEqual([(x["model"], x["n"]) for x in rows("apierr")], [("claude-sonnet-5-5", 1)])
+        self.assertEqual({x["model"] for x in rows("agents") if x["i"] == 1}, {"claude-sonnet-5-5"})
+
     def test_unknown_model_is_flagged_not_guessed(self):
         r = Run(self.projects, "adadadad-0000-0000-0000-000000000001")
         r.rec(type="assistant", message={"id": "u1", "model": "claude-future-9", "content": [],

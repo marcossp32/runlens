@@ -11,6 +11,11 @@ object per row, which keeps the embedded JSON small. A run's start is in epoch s
 (its agents, incidents, markers, errors) are whole seconds from that start. Model names are normalised
 (`claude-opus-5-5[1m]` and `...-20251001` suffixes dropped) so the transcript and Claude Code's own totals
 name a model the same way.
+
+`<synthetic>` is not a model: it is what Claude Code writes as the model of its own messages (an API error, a
+limit reached). The database keeps those rows as the transcript has them, since the API error rate and
+`runlens sql` read them; here each one is credited to the model its agent was calling, so the error still
+counts and no filter, chart, table or marker shows `<synthetic>` as a model.
 """
 import math
 import re
@@ -18,7 +23,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from . import config
-from .transcripts import model_key, price_of
+from .transcripts import FREE_MODELS, model_key, price_of
 
 TITLE = 120          # longest run title kept
 ROLE = 80            # longest agent role kept
@@ -76,6 +81,22 @@ def duration_bin(ms):
     return len(DURATION_EDGES)
 
 
+def calls_sql():
+    """api_calls with each `<synthetic>` row's model replaced by the model its agent was calling: the last real one
+    before it, else the next one, else the run's first; '?' when the run never called a real model."""
+    free = ", ".join("'" + m.replace("'", "''") + "'" for m in sorted(FREE_MODELS))
+    real = f"CASE WHEN model IN ({free}) THEN NULL ELSE model END"
+    return f"""(SELECT * REPLACE (CASE WHEN model IN ({free}) THEN coalesce(
+                  last_value({real} IGNORE NULLS) OVER (PARTITION BY session_id, agent_id ORDER BY ts, msg_id
+                                                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+                  first_value({real} IGNORE NULLS) OVER (PARTITION BY session_id, agent_id ORDER BY ts, msg_id
+                                                         ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING),
+                  first_value({real} IGNORE NULLS) OVER (PARTITION BY session_id ORDER BY ts, msg_id
+                                                         ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING),
+                  '?') ELSE model END AS model)
+               FROM api_calls)"""
+
+
 def build(con, cfg=None):
     """Every per-run fact the page uses, as compact tables. Missing tables or columns (an older database)
     leave their part empty instead of failing the dashboard."""
@@ -108,14 +129,15 @@ def build(con, cfg=None):
 
     # Token columns are the transcript's: output is a lower bound (see token_cost for Claude Code's own totals).
     call_cols = ("calls", "cost", "input", "cw5", "cw1", "cread", "output", "thinking", "think_ms", "errors", "limits", "unpriced")
+    CALLS = calls_sql()
     merged = {}
-    for c in rows("""SELECT session_id, model, coalesce(effort, '(default)') AS effort, coalesce(skill, '(none)') AS skill,
+    for c in rows(f"""SELECT session_id, model, coalesce(effort, '(default)') AS effort, coalesce(skill, '(none)') AS skill,
                             count(*) AS calls, sum(cost_usd) AS cost, sum(input_tokens) AS input,
                             sum(cache_write_5m) AS cw5, sum(cache_write_1h) AS cw1, sum(cache_read_tokens) AS cread,
                             sum(output_tokens) AS output, sum(thinking_tokens) AS thinking, sum(thinking_ms) AS think_ms,
                             count(*) FILTER (WHERE api_error) AS errors, count(*) FILTER (WHERE api_limit) AS limits,
                             count(*) FILTER (WHERE cost_usd IS NULL) AS unpriced
-                     FROM api_calls GROUP BY ALL"""):
+                     FROM {CALLS} GROUP BY ALL"""):
         if not known(c["session_id"]):
             continue
         acc = merged.setdefault((rid[c["session_id"]], model_key(c["model"]) or "?", c["effort"], c["skill"]), defaultdict(float))
@@ -132,9 +154,9 @@ def build(con, cfg=None):
             by_run[run]["skills"].add(skill)
 
     day_acc = defaultdict(lambda: [0.0, 0])
-    for d in rows("""SELECT session_id, strftime(ts, '%Y-%m-%d') AS day, model, coalesce(skill, '(none)') AS skill,
+    for d in rows(f"""SELECT session_id, strftime(ts, '%Y-%m-%d') AS day, model, coalesce(skill, '(none)') AS skill,
                             sum(cost_usd) AS cost, count(*) AS calls
-                     FROM api_calls WHERE ts IS NOT NULL GROUP BY ALL"""):
+                     FROM {CALLS} WHERE ts IS NOT NULL GROUP BY ALL"""):
         if known(d["session_id"]):
             a = day_acc[(rid[d["session_id"]], d["day"], model_key(d["model"]) or "?", d["skill"])]
             a[0] += d["cost"] or 0
@@ -179,11 +201,19 @@ def build(con, cfg=None):
             index[(a["session_id"], a["agent_id"])] = seq[a["session_id"]]
             seq[a["session_id"]] += 1
     agent_of = lambda sid, aid: index.get((sid, aid))
+    # An agent's model is the one it called most. Its meta names what it was asked for: an alias ("haiku", "inherit")
+    # or nothing, which would put families and full ids side by side in one legend.
+    called = {}
+    for m in rows(f"""SELECT session_id, agent_id, model, count(*) AS n FROM {CALLS} WHERE model <> '?'
+                      GROUP BY ALL ORDER BY n DESC, model"""):
+        called.setdefault((m["session_id"], m["agent_id"]), m["model"])
+    model_of = lambda a: model_key(called.get((a["session_id"], a["agent_id"]))
+                                   or (None if model_key(a["model"]) in FREE_MODELS else a["model"])) or None
     agents_t = table(("run", "i", "parent", "type", "role", "model", "t0", "t1", "cost", "status", "depth", "bg", "tools",
                       "errors", "stopped", "peak", "compactions", "stop"),
                      ([rid[a["session_id"]], index[(a["session_id"], a["agent_id"])],
                        index.get((a["session_id"], a["parent_agent_id"])) if a["parent_agent_id"] else None,
-                       a["agent_type"] or "?", clip(a["role"], ROLE), model_key(a["model"]) or None,
+                       a["agent_type"] or "?", clip(a["role"], ROLE), model_of(a),
                        rel(a["session_id"], a["started"]), rel(a["session_id"], a["ended"]), num(a["cost_usd"], 4), a["status"],
                        a["spawn_depth"], int(bool(a["background"])), a["tool_calls"], a["tool_errors"],
                        int(bool(a["stopped_by_user"])), a["peak_context"], a["compactions"], a["last_stop_reason"]]
@@ -218,8 +248,8 @@ def build(con, cfg=None):
                      codes=("run", "kind", "source"))
 
     stop_acc = defaultdict(int)
-    for s in rows("""SELECT session_id, model, coalesce(stop_reason, '(not recorded)') AS stop, count(*) AS n
-                     FROM api_calls GROUP BY ALL"""):
+    for s in rows(f"""SELECT session_id, model, coalesce(stop_reason, '(not recorded)') AS stop, count(*) AS n
+                     FROM {CALLS} GROUP BY ALL"""):
         if known(s["session_id"]):
             stop_acc[(rid[s["session_id"]], model_key(s["model"]) or "?", s["stop"])] += s["n"]
     stops_t = table(("run", "model", "stop", "n"), (list(k) + [v] for k, v in sorted(stop_acc.items())),
@@ -227,9 +257,9 @@ def build(con, cfg=None):
 
     apierr_t = table(("run", "model", "kind", "status", "limit", "n"),
                      ([rid[e["session_id"]], model_key(e["model"]) or "?", e["kind"], e["status"], int(bool(e["is_limit"])), e["n"]]
-                      for e in rows("""SELECT session_id, model, coalesce(api_error_kind, 'other') AS kind,
+                      for e in rows(f"""SELECT session_id, model, coalesce(api_error_kind, 'other') AS kind,
                                               api_error_status AS status, coalesce(api_limit, false) AS is_limit, count(*) AS n
-                                       FROM api_calls WHERE api_error OR api_limit GROUP BY ALL""") if known(e["session_id"])),
+                                       FROM {CALLS} WHERE api_error OR api_limit GROUP BY ALL""") if known(e["session_id"])),
                      codes=("run", "model", "kind"))
 
     comps_t = table(("run", "t", "agent", "trigger", "pre", "post", "ms", "skill"),
