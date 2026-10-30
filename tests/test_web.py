@@ -456,6 +456,24 @@ class Renders(unittest.TestCase):
         self.assertIn("Spend per eventual success", text)
         self.assertIn("a typical value (a geometric mean)", text)
 
+    def test_minor_wording(self):
+        path = TMP / "minor.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/")
+        verdicts = re.search(r'<span class="verdicts">(.*?)</span></div>', dom, re.S).group(1)
+        self.assertNotRegex(visible(verdicts), r"≈\s*2\b")  # ≈ counts "no clear change" only, not the first version too
+        self.assertIn("1 other", visible(verdicts))
+        self.assertIn("100 = the group's typical run", visible(dump(path, "#/?kind=groups")))
+        text = visible(dump(path, "#/unit/skill%3Aflow?tab=drivers"))
+        self.assertIn("Value that counts", text)  # the ratio's own operand, next to the raw values
+        text = visible(dump(path, "#/diagnostics?tab=agents", until=r'class="value'))
+        self.assertNotIn("stopped by you", text.replace("stopped by you:", ""))  # "N · M stopped by you" read as M out of N
+        self.assertIn("5 subagents", text)  # the duration chart counts subagents (those with an end), not calls
+        self.assertNotRegex(text, r"\b\d+ calls\b")
+        text = visible(dump(path, "#/diagnostics?tab=models"))
+        self.assertIn("1 model ·", text)
+        self.assertNotIn("1 models", text)
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")

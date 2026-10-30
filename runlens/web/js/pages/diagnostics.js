@@ -72,10 +72,10 @@ function diagProblems() {
     answer(`${plural(inc.length, "problem")} in these runs, ${fmt.num((100 * inc.length) / Math.max(1, callsAll), 2)} per 100 tool calls${types[0] ? `; the most common is ${human(types[0].label).toLowerCase()} (${fmt.int(types[0].n)})` : ""}. `
       + `${plural(errN, "tool error")}${classes[0] ? `, mostly ${human(classes[0].label).toLowerCase()}` : ""}.`),
     kpiRow([
-      kpi("Problems", fmt.int(inc.length), `${types.length} kinds${policy.length ? ` · ${fmt.int(policy.length)} more from permission rules, not counted` : ""}`),
+      kpi("Problems", fmt.int(inc.length), `${plural(types.length, "kind")}${policy.length ? ` · ${fmt.int(policy.length)} more from permission rules, not counted` : ""}`),
       kpi("Per 100 tool calls", fmt.num((100 * inc.length) / Math.max(1, sumOf(tools, (t) => t.calls)), 2), "across the runs in the filters"),
-      kpi("Tool errors", fmt.int(sumOf(errs, (e) => e.n)), `${classes.length} classes · denied calls not counted`),
-      kpi("Most common problem", types[0] ? human(types[0].label) : "—", types[0] ? `${fmt.int(types[0].n)} times` : ""),
+      kpi("Tool errors", fmt.int(sumOf(errs, (e) => e.n)), `${plural(classes.length, "class", "classes")} · denied calls not counted`),
+      kpi("Most common problem", types[0] ? human(types[0].label) : "—", types[0] ? `${fmt.int(types[0].n)} times${types[1] && types[1].n === types[0].n ? `, tied with ${listWords(types.slice(1).filter((t) => t.n === types[0].n).map((t) => human(t.label).toLowerCase()))}` : ""}` : ""),
       kpi("Context compactions", fmt.int(comps.length), comps.length ? `${fmt.int(comps.filter((c) => c.trigger === "auto").length)} automatic` : "none")]),
     section({ title: "When and where problems happen", intro: "Problems are patterns that went wrong in a run: error streaks, repeated calls, idle loops, interrupts, failed subagents." },
       laneChart({
@@ -223,7 +223,7 @@ function diagModels() {
   const kp = h("div", {},
     answer(`${fmt.usd(spendM)} across ${plural(ms.length, "model")}; ${ms[0].label} takes ${fmt.pct(ms[0].cost / Math.max(1e-9, spendM), 0)} of it. ${fmt.pct(sumOf(ms, (m) => m.cread) / Math.max(1, sumOf(ms, (m) => m.cread + m.input + m.cw5 + m.cw1)), 0)} of the input was read from the cache.`),
     kpiRow([
-      kpi("Model spend", fmt.usd(spendM), `${ms.length} models`),
+      kpi("Model spend", fmt.usd(spendM), `${plural(ms.length, "model")} · summed over model calls, so it can differ by cents from the run totals on Runs`),
       kpi("API calls", fmt.int(sumOf(ms, (m) => m.calls)), "model turns"),
       kpi("Cache hit", fmt.pct(sumOf(ms, (m) => m.cread) / Math.max(1, sumOf(ms, (m) => m.cread + m.input + m.cw5 + m.cw1))), "of input read from the cache"),
       kpi("API errors", fmt.int(sumOf(ms, (m) => m.errors)), `${fmt.int(sumOf(ms, (m) => m.limits))} limits hit, which are not errors`)]));
@@ -264,7 +264,7 @@ function diagModels() {
         sort: false, fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Effort" }),
       stackChart({ title: "Effort level used by each model", question: "Which models run at which effort?", sub: "share of each model's calls", mode: "share",
         series: efforts.map((e) => ({ key: e, label: human(e), css: effortCss(e) })),
-        rows: ms.map((m) => ({ label: m.label, parts: Object.fromEntries(efforts.map((e) => [e, (meOf(m.label, e) || {}).calls || 0])) })), fmt: (v) => `${fmt.int(v)} calls`, labelTitle: "Model" })));
+        rows: ms.map((m) => ({ label: m.label, parts: Object.fromEntries(efforts.map((e) => [e, (meOf(m.label, e) || {}).calls || 0])) })), fmt: (v) => plural(v, "call"), labelTitle: "Model" })));
 
   const modelSeries = ms.map((m) => ({ key: m.label, label: m.label, css: colourOf("model", m.label).css }));
   const days = slice(EX.days);
@@ -286,7 +286,7 @@ function diagModels() {
       takeaway: () => shareTakeaway(stopKinds.map((k) => ({ label: human(k), value: sumOf(stops.filter((s) => s.stop === k), (s) => s.n) })), "of the turns", "Turns stop most often on"),
       series: stopKinds.map((k, i) => ({ key: k, label: human(k), css: stopCss[k] || `var(--c${(i % 8) + 1})` })),
       rows: ms.map((m) => ({ label: m.label, parts: Object.fromEntries(stopKinds.map((k) => [k, sumOf(stops.filter((s) => s.model === m.label && s.stop === k), (s) => s.n)])) })),
-      fmt: (v) => `${fmt.int(v)} turns`, labelTitle: "Model",
+      fmt: (v) => plural(v, "turn"), labelTitle: "Model",
       notes: "Most turns have no stop reason in the transcript: Claude Code does not write the final usage record of every message." }),
     apierr.length ? stackChart({ title: "API errors and limits, by model", question: "Did the API fail, or did I hit a limit?", sub: "limits (quota, rate) are the account's, not the work's fault",
       series: errKinds.map((k, i) => ({ key: k, label: `${k.startsWith("limit") ? "limit" : "error"}: ${human(k.split("|")[1])}`, css: k.startsWith("limit") ? `var(--o${Math.min(4, i + 2)})` : TONE.worse.css })),
@@ -349,18 +349,18 @@ function diagAgents() {
   return h("div", {},
     answer(`${plural(all.length, "subagent")} of ${plural(types.length, "type")}, about ${fmt.num(all.length / Math.max(1, runsN), 1)} per run that used any; they spent ${fmt.usd(sumOf(all, (a) => a.cost))}, most of it on ${types[0].label} (${fmt.pct(types[0].cost / Math.max(1e-9, sumOf(all, (a) => a.cost)), 0)}).`),
     kpiRow([
-      kpi("Subagents started", fmt.int(all.length), `${types.length} types`),
+      kpi("Subagents started", fmt.int(all.length), plural(types.length, "type")),
       kpi("Per run", fmt.num(all.length / Math.max(1, runsN), 1), `in ${fmt.runs(runsN)} that started any`),
       kpi("In the background", fmt.pct(bg / all.length), `${fmt.int(bg)} of ${fmt.int(all.length)}`),
       kpi("Subagent spend", fmt.usd(sumOf(all, (a) => a.cost)), `${fmt.usd(sumOf(all, (a) => a.cost) / all.length)} each`),
-      kpi("Did not complete", fmt.int(notDone), `${fmt.int(all.filter((a) => a.stopped).length)} stopped by you`)]),
+      kpi("Did not complete", fmt.int(notDone), `of ${fmt.int(all.length)} · stopped by you: ${fmt.int(all.filter((a) => a.stopped).length)}, counted on their own`)]),
     section({ title: "Cost and duration by type", intro: "What each kind of subagent costs, and how long it runs." },
       h("div", { class: "grid" },
         barChart({ title: "Spend by agent type", question: "Which kind of subagent costs the most?", items: types.map((a) => ({ label: a.label, name: a.label, value: a.cost || 0, rows: [["Agents", fmt.int(a.one)]] })), ns: "agent",
           takeaway: () => shareTakeaway(types.map((a) => ({ label: a.label, value: a.cost || 0 })), "of the subagent spend"),
           fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Agent type" }),
         histRows({ title: "How long subagents run, by type", question: "Which kind of subagent runs long, and how much does it vary?", sub: "one row per type; each column is a duration band, shorter on the left · taller column = more of that type's subagents",
-          rows: durBins, edges }))),
+          rows: durBins, edges, unit: { one: "subagent", many: "subagents", row: "Type", axis: "How long it ran (log scale)" } }))),
     section({ title: "Over time and in detail", intro: "How delegation changes over time, which tasks cost most, the models they run on and how they were started." },
       dayColumns({ title: "Subagents started per day, by type", question: "Is the work delegated more over time?", sub: "counted on the day they started", days: [...daysMap.values()], series: typeSeries, fmt: countFmt, tickFmt: fmt.compact, yTitle: "Subagents", whole: true }),
       h("div", { class: "grid" },
@@ -370,7 +370,7 @@ function diagAgents() {
           takeaway: () => shareTakeaway(models.map((m) => ({ label: m, value: all.filter((a) => (a.model || "?") === m).length })), "of the subagents", "Subagents run most often on"),
           series: models.map((m) => ({ key: m, label: m, css: colourOf("model", m).css })),
           rows: types.map((t) => ({ label: t.label, parts: Object.fromEntries(models.map((m) => [m, all.filter((a) => a.type === t.label && (a.model || "?") === m).length])) })),
-          fmt: (v) => `${fmt.int(v)} agents`, labelTitle: "Agent type" })),
+          fmt: (v) => plural(v, "agent"), labelTitle: "Agent type" })),
       barChart({ title: "How they were started", question: "Are subagents nested, and do they run in the background?", items: shapes.map((x) => ({ label: x.label, value: x.one })), fmt: countFmt, valueTitle: "Subagents", labelTitle: "How", sort: false,
         notes: "Depth 1 was started by the main session, depth 2 by a subagent." }),
       sortTable({ caption: "Agent types", cols, rows: types, sort: { key: "cost", dir: -1 }, csvName: "agent-types" }).el));

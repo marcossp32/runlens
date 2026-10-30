@@ -177,8 +177,10 @@ function skillsView(sel, picker) {
     skillsAnswer(shown, tones),
     kpiRow([
       kpi("Verdicts", h("span", { class: "verdicts" },
-        toneTag("better", fmt.int(count("better"))), " ", toneTag("worse", fmt.int(count("worse"))), " ", toneTag("unclear", fmt.int(count("unclear") + count("few") + count("confounded") + count("first")))),
-      "latest version against the one before · better · worse · other"),
+        // ≈ is "no clear change" only; confounded, too few runs and a first version are counted apart, without its glyph.
+        toneTag("better", fmt.int(count("better"))), " ", toneTag("worse", fmt.int(count("worse"))), " ", toneTag("unclear", fmt.int(count("unclear"))), " ",
+        h("span", { class: "muted" }, `${fmt.int(count("few") + count("confounded") + count("first"))} other`)),
+      "latest version against the one before · better · worse · no clear change · not judged (confounded, too few runs or a first version)"),
       kpi(sel.split ? "Items" : "Skills", fmt.int(shown.length), sel.split ? `${bases.length} skills split into versions` : `of ${SKILLS.length} recorded`),
       kpi("Runs", fmt.int(sessions), slicing() ? "in the filters" : DATA.window.first ? fmt.span(DATA.window.first, DATA.window.last) : ""),
       kpi("Model spend", fmt.usd(spend), "attributed to the skills shown"),
@@ -537,6 +539,9 @@ function rolesPanel(list) {
     section({ title: "Every agent role", intro: "Sort by any column, or search above." }, t.el));
 }
 
+// What 100 means on the Groups chart: a group is read against its own typical run, not a skill's.
+const groupBase = () => baseWords().replace("the skill's", "the group's");
+
 function groupsPanel(list) {
   if (!list.length) {
     return h("div", { class: "howto" },
@@ -557,10 +562,10 @@ function groupsPanel(list) {
   return h("div", { class: "charts" },
     views.length ? answer(views.length === 1 ? `${views[0].name} (${views[0].members.length} skills): ${gt[0].sentence}` : `${plural(views.length, "group")}: ${listWords(views.map((u, i) => `${u.name} ${TONE[gt[i].tone].icon} ${gt[i].word.toLowerCase()}`))}.`, gt.length === 1 ? gt[0].tone : null) : null,
     h("p", { class: "subanswer" }, `A group is scored as one unit, next to each of its skills on its own: its runs are the union of its members' work, and its version is the combination of its members' versions, so it changes when any member's text changes. ${auto ? `${auto === 1 ? "One set was" : `${auto} sets were`} found in your runs: skills used together in most of their runs and edited at the same time (marked “auto”; [method] auto_groups = false turns this off).` : ""} Define your own with [[group]] in config.toml.`),
-    rangeChart({ title: "Latest version of each group against its own runs", question: "Is each flow, taken as a whole, better or worse than usual?", sub: `100 = ${baseWords()} · dot = score; bar = likely range · right of 100 is better`,
+    rangeChart({ title: "Latest version of each group against its own runs", question: "Is each flow, taken as a whole, better or worse than usual?", sub: `100 = ${groupBase()} · dot = score; bar = likely range · right of 100 is better`,
       takeaway: () => rangeTakeaway(views.map((u) => ({ label: u.name, score: u.score, ci: u.ci, tone: verdict(u.score, u.ci, u).tone })), "group"),
       rows: views.map((u) => ({ label: u.name, ns: "group", score: u.score, ci: u.ci, href: hrefUnit(u.id), tone: verdict(u.score, u.ci, u).tone, word: verdict(u.score, u.ci, u).word })),
-      ref: 100, refLabel: "usual level", axisTitle: `Score (100 = ${baseWords()})`, labelTitle: "Group" }),
+      ref: 100, refLabel: "usual level", axisTitle: `Score (100 = ${groupBase()})`, labelTitle: "Group" }),
     views.map((u) => h("p", { class: "note" }, h("strong", {}, `${u.name}: `), `members ${u.members.map((m) => m.replace(/^skill:/, "")).join(", ")}`)),
     sortTable({ caption: "Groups", cols, rows: views, sort: { key: "runs", dir: -1 }, csvName: "groups" }).el);
 }
