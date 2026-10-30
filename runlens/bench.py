@@ -571,11 +571,23 @@ def confounders_of(side_a, side_b, own_skills, ctx, labels=("A", "B")):
             out.append(f"Claude Code version: {la} ran on {_span(a)}, {lb} on {_span(b)}, {_shared(a, b)}; "
                        f"{_top_change(a, b, 'runs')}")
     elif ctx.get("cc_version") == "minor":
-        pa, pb = attr("cc_patch", sids_a), attr("cc_patch", sids_b)
-        if shift(pa, pb) >= limit:
-            notes.append(f"Claude Code patches also changed: {la} ran on {_span(pa, 'patch version')}, "
-                         f"{lb} on {_span(pb, 'patch version')}, {_shared(pa, pb)}. Not counted as a confounder "
-                         "(cc_version = \"minor\"), so a patch that changed behaviour would go unflagged")
+        parts = []
+        moved = shift(a, b)
+        if moved > 0:  # the minor mix moved, but by less than counts: say how much, never call it a patch
+            ta, tb = sum(a.values()), sum(b.values())
+            k = max(sorted(set(a) | set(b), key=_version_key), key=lambda x: (round(abs(b[x] / tb - a[x] / ta), 9), b[x] / tb > a[x] / ta))
+            parts.append(f"{k} in {b[k] / sum(b.values()):.0%} of {lb}'s runs and {a[k] / sum(a.values()):.0%} of {la}'s "
+                         f"(a shift of {moved:.2f}, under the {limit:.2f} that counts)")
+        # patch releases inside a minor both sides ran on
+        both = set(a) & set(b)
+        minor_of = lambda sid: ctx["run_attr"](runs.get(sid), "cc")
+        pa = attr("cc_patch", [sid for sid in sids_a if minor_of(sid) in both])
+        pb = attr("cc_patch", [sid for sid in sids_b if minor_of(sid) in both])
+        if pa and pb and shift(pa, pb) >= mix_threshold(min(sum(pa.values()), sum(pb.values()))):
+            within = f"within {next(iter(both))}" if len(both) == 1 else "within the same minor"
+            parts.append(f"{within}, {la} ran on {_span(pa, 'patch version')}, {lb} on {_span(pb, 'patch version')}, {_shared(pa, pb)}")
+        if parts:
+            notes.append("Claude Code also differed, not counted as a confounder: " + "; ".join(parts))
     a, b = attr("repo", sids_a), attr("repo", sids_b)
     if shift(a, b) >= limit:
         out.append(f"project mix: {_top_change(a, b, 'runs')}")

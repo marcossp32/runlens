@@ -376,9 +376,9 @@ class Verdicts(unittest.TestCase):
         v2 = model["versions"]["skill:flow"][1]
         self.assertEqual((v2["verdict"], v2["confounders"]), ("better", []))
         self.assertEqual(len(v2["notes"]), 1, v2["notes"])
-        self.assertTrue(v2["notes"][0].startswith(
-            "Claude Code patches also changed: v1 ran on 6 patch versions (2.1.280 to 2.1.285), "
-            "v2 on 12 patch versions (2.1.290 to 2.1.301), none shared."), v2["notes"][0])
+        self.assertEqual(v2["notes"], ["Claude Code also differed, not counted as a confounder: within 2.1, "
+                                       "v1 ran on 6 patch versions (2.1.280 to 2.1.285), v2 on 12 patch versions (2.1.290 to 2.1.301), "
+                                       "none shared"])
         unit = next(u for u in model["units"] if u["id"] == "skill:flow")
         self.assertEqual(unit["notes"], v2["notes"])
         self.assertEqual(bench.score_summary(model)["units"][0]["notes"], v2["notes"])
@@ -394,6 +394,23 @@ class Verdicts(unittest.TestCase):
         # The same patch on both sides is no note at all.
         model = bench.compute(history([("aaa", 6), ("bbb", 6)]), resamples=200)
         self.assertEqual(model["versions"]["skill:flow"][1]["notes"], [])
+
+    def test_a_minor_shift_below_the_threshold_is_said_as_a_minor_not_a_patch(self):
+        # 2.2 in 3 of v2's 20 runs: the minor mix moved by 0.15, under the 0.3 that confounds. The note names 2.2 with
+        # its share and the threshold, and the patch drift inside 2.1 apart from it; 2.2.0 is never called a patch.
+        cc = lambda v, i: "2.1.284" if v == 0 else ("2.2.0" if i < 3 else "2.1.290")
+        model = bench.compute(history([("aaa", 20), ("bbb", 20)], cc=cc), resamples=200)
+        v2 = model["versions"]["skill:flow"][1]
+        self.assertEqual(v2["confounders"], [])
+        self.assertEqual(v2["notes"], ["Claude Code also differed, not counted as a confounder: 2.2 in 15% of v2's runs and 0% "
+                                       "of v1's (a shift of 0.15, under the 0.34 that counts); within 2.1, v1 ran on 2.1.284, "
+                                       "v2 on 2.1.290, none shared"])
+        # Only the minor moved, with the same patch inside 2.1 on both sides: no patch part.
+        cc = lambda v, i: "2.1.284" if v == 0 or i >= 3 else "2.2.0"
+        v2 = bench.compute(history([("aaa", 20), ("bbb", 20)], cc=cc), resamples=200)["versions"]["skill:flow"][1]
+        self.assertEqual(v2["notes"], ["Claude Code also differed, not counted as a confounder: 2.2 in 15% of v2's runs and 0% "
+                                       "of v1's (a shift of 0.15, under the 0.34 that counts)"])
+        self.assertNotIn("patch", v2["notes"][0])
 
     def test_versions_sort_by_number(self):
         self.assertEqual(sorted(["2.1.10", "2.1.9", "unknown", "2.0.99"], key=bench._version_key),

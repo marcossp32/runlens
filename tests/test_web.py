@@ -441,7 +441,7 @@ class Renders(unittest.TestCase):
     def test_a_note_on_the_verdict_is_shown_beside_it(self):
         # A Claude Code patch shift under cc_version = "minor" is a note: said next to the verdict, not a confounder.
         m = copy.deepcopy(model())
-        note = "Claude Code patches also changed: v1 ran on 2 patch versions (2.1.1, 2.1.2), v2 on 2.1.9, none shared"
+        note = "Claude Code also differed, not counted as a confounder: within 2.1, v1 ran on 2 patch versions (2.1.1, 2.1.2), v2 on 2.1.9, none shared"
         m["units"][0]["notes"] = [note]
         m["versions"]["skill:flow"][1]["notes"] = [note]
         path = TMP / "notes.html"

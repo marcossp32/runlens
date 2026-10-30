@@ -103,7 +103,7 @@ class Proposals(unittest.TestCase):
         r = proposals.verify(self.con, m, "p-0001")[0]
         self.assertEqual((r["verdict"], r["confounders"]), ("confirmed", []))
         self.assertEqual(len(r["notes"]), 1, r["notes"])
-        self.assertTrue(r["notes"][0].startswith("Claude Code patches also changed: v1 ran on 6 patch versions"), r["notes"])
+        self.assertTrue(r["notes"][0].startswith("Claude Code also differed, not counted as a confounder: within 2.1, v1 ran on 6 patch versions"), r["notes"])
 
 
 class CommandLine(unittest.TestCase):
@@ -173,8 +173,8 @@ class CommandLine(unittest.TestCase):
         self.assertNotIn("confounded by", text)  # the verdict is not enough runs: the confounders decided nothing
         self.assertIn("confounded by", cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "confounded"}]}))
         # a note is said under any verdict, apart from the confounders
-        noted = cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "better", "notes": ["Claude Code patches also changed"]}]})
-        self.assertIn("v2: note: Claude Code patches also changed", noted)
+        noted = cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "better", "notes": ["Claude Code also differed"]}]})
+        self.assertIn("v2: note: Claude Code also differed", noted)
         self.assertNotIn("confounded by", noted)
         empty = cli._score_text({"kind": "skill", "population": {"runs": 0, "open": 0, "stub": 0}, "units": []})
         self.assertIn("runlens refresh", empty)
