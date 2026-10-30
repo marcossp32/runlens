@@ -353,6 +353,22 @@ class Renders(unittest.TestCase):
         self.assertNotIn("passed first time", text)
         self.assertNotIn("first-pass rate", text.lower())
 
+    def test_outcome_scatter_with_one_point_keeps_the_rate_axis_in_range(self):
+        # each outcome in this model covers one skill, so each outcome chart has a single point
+        path = TMP / "one-point.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost", until=r'class="axis-y"')
+        axes = re.findall(r'(?s)<g class="axis-y">(.*?)</g>', dom)
+        rates = [a for a in axes if "%" in a]
+        self.assertTrue(rates, "no outcome chart was drawn")
+        for a in rates:
+            ticks = [float(t.replace("−", "-")) for t in re.findall(r'class="tick"[^>]*>([−\-\d.]+)(?:\s|&nbsp;)*%<', a)]
+            self.assertTrue(ticks, "the rate axis has no ticks")
+            self.assertGreaterEqual(min(ticks), 0, f"a rate axis goes below 0%: {ticks}")
+            self.assertLessEqual(max(ticks), 100, f"a rate axis goes above 100%: {ticks}")
+        text = visible(dom)
+        self.assertNotIn("Pareto frontier", text, "a chart with one point still explains a frontier")
+
     def test_diagnostics_does_not_name_a_worst_skill_or_deny_error_streaks(self):
         path = TMP / "diag.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")

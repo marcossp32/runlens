@@ -230,9 +230,13 @@ function scatterChart(spec) {
         yt = logTicks(lo, hi);
         y = scaleLog(lo, hi, H - bottom, top);
       } else if (spec.y.fit) {
-        const lo = Math.min(...ys), hi = Math.max(...ys), pad = (hi - lo) * 0.12 || 5;
-        yt = ticks(lo - pad, hi + pad, 5);
-        y = scaleLinear(Math.min(lo - pad, yt[0]), Math.max(hi + pad, yt[yt.length - 1]), H - bottom, top);
+        // Pad by the data's own spread; with no spread (one point, or all equal) pad by its size, never a fixed
+        // amount, which on a 0–1 rate would mean ±500%. A value with hard limits (y.bounds) never shows past them.
+        const lo = Math.min(...ys), hi = Math.max(...ys), [b0, b1] = spec.y.bounds || [-Infinity, Infinity];
+        const pad = hi > lo ? (hi - lo) * 0.12 : isFinite(b1 - b0) ? (b1 - b0) * 0.1 : Math.abs(hi) * 0.1 || 1;
+        const y0 = Math.max(b0, lo - pad), y1 = Math.min(b1, hi + pad);
+        yt = ticks(y0, y1, 5).filter((t) => t >= b0 && t <= b1);
+        y = scaleLinear(Math.min(y0, yt[0] ?? y0), Math.max(y1, yt[yt.length - 1] ?? y1), H - bottom, top);
       } else {
         const nm = niceMax(Math.max(...ys) * 1.04, 5);
         yt = nm.ticks;
