@@ -9,7 +9,7 @@ import random
 import shutil
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
 from pathlib import Path
 from unittest import mock
@@ -70,6 +70,12 @@ class Proposals(unittest.TestCase):
         self.assertEqual(got["better overall"]["verdict"], "confirmed")
         self.assertEqual((got["cheaper"]["runs_before"], got["cheaper"]["runs_after"]), (6, 6))
         self.assertGreater(got["cheaper"]["difference"]["effect"], 1)
+        # observed is on the quality scale; moved is in the hypothesis' own terms
+        self.assertEqual((got["cheaper"]["observed"], got["cheaper"]["moved"]), ("better", "lower"))
+        self.assertEqual((got["dearer"]["direction"], got["dearer"]["moved"]), ("higher", "lower"))
+        self.assertEqual(got["better overall"]["moved"], "higher")
+        self.assertIn("ratio", got["cheaper"]["difference"]["scale"])
+        self.assertIn("100 = no change", got["better overall"]["difference"]["scale"])
 
     def test_no_clear_change_is_inconclusive_not_refuted(self):
         same = model_of(lambda v: 1.0)
@@ -184,11 +190,23 @@ class CommandLine(unittest.TestCase):
             self.run_cli("versions", "nothing")
 
     def test_proposals_and_verify(self):
-        _, out = self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
-                                 "--evidence", "x1", "x2")
+        with redirect_stderr(io.StringIO()) as err:
+            _, out = self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
+                                  "--evidence", "x1", "x2")
         self.assertRegex(out.strip(), r"^p-\d{4} recorded: flow bbb$")
+        self.assertIn("no incident with id x1, x2", err.getvalue())  # recorded, but said
+        with redirect_stderr(io.StringIO()) as err:
+            self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
+                         "--base-version", "zzzzzzzz")
+        self.assertIn("matches --base-version zzzzzzzz", err.getvalue())
+        with redirect_stderr(io.StringIO()) as err:
+            self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
+                         "--base-version", "aaa")
+        self.assertEqual(err.getvalue(), "")
+        _, out = self.run_cli("verify")
+        self.assertIn("moved", out.splitlines()[0])
         _, out = self.run_cli("proposals", "list", "--json")
-        self.assertEqual(json.loads(out)["proposals"][-1]["evidence"], ["x1", "x2"])
+        self.assertIn(["x1", "x2"], [p["evidence"] for p in json.loads(out)["proposals"]])
         _, out = self.run_cli("verify", "--json")
         r = json.loads(out)["proposals"][-1]
         self.assertEqual(r["verdict"], "not enough runs")

@@ -9,7 +9,10 @@ verdicts (bench.compare), and records one of:
   confirmed        the measure moved the predicted way, beyond noise
   inconclusive     no clear change: the interval holds 0, which is not evidence that the edit did nothing
                    (with a handful of runs a real effect usually looks like this)
-  refuted          the measure moved the other way, and the whole interval is on that side (see `observed`)
+  refuted          the measure moved the other way, and the whole interval is on that side (see `moved`)
+
+`observed` says better or worse on the quality scale (lower cost is better); `moved` says higher or lower
+in the measure's own terms, the way the hypothesis' `direction` is written.
   not enough runs  fewer than [method] min_runs runs on either side (or no newer version yet)
   confounded       something else changed between the two sides, named in `confounders`
 
@@ -102,7 +105,7 @@ def check(model, p, min_runs=None):
            "measure": p["measure"], "direction": p["direction"], "evidence": p["evidence"],
            "after_versions": [v["label"] for v in after], "runs_before": bench.n_runs(rows_a), "runs_after": bench.n_runs(rows_b),
            "invocations_before": sum(r["invocations"] for r in rows_a), "invocations_after": sum(r["invocations"] for r in rows_b),
-           "verdict": "not enough runs", "observed": None, "difference": None, "confounders": []}
+           "verdict": "not enough runs", "observed": None, "moved": None, "difference": None, "confounders": []}
     if unit is None or not rows_a or not rows_b:
         out["note"] = "no runs of the base version" if not rows_a else "no runs of a newer version since the proposal"
         return out
@@ -120,7 +123,8 @@ def check(model, p, min_runs=None):
         value = 100 * math.exp(res["d"]) if res["d"] is not None else None
         ci = [100 * math.exp(x) for x in res["ci"]] if res["ci"] else None
         moved = None if not ci else "better" if ci[0] > 100 else "worse" if ci[1] < 100 else "no clear change"
-        out["difference"] = {"measure": "score", "value": value, "ci95": ci}
+        out["difference"] = {"measure": "score", "value": value, "ci95": ci,
+                             "scale": "score: 100 = no change, above 100 = the after side is better"}
     else:
         m = res["measures"].get(p["measure"])
         if not m:
@@ -128,16 +132,22 @@ def check(model, p, min_runs=None):
             return out
         moved = None if not m["ci"] else "better" if m["ci"][0] > 1 else "worse" if m["ci"][1] < 1 else "no clear change"
         out["difference"] = {"measure": p["measure"], "before": m["a"], "after": m["b"], "effect": m["effect"], "ci95": m["ci"],
-                             "note": "effect > 1 means the after side is better on this measure"}
+                             "note": "effect > 1 means the after side is better on this measure",
+                             "scale": "quality ratio of the after side to the before side: 1 = no change, above 1 = the after "
+                                      f"side is better (for cost, cheaper), clipped to {1 / bench.MAX_RATIO:g}-{bench.MAX_RATIO:g}; "
+                                      "`before` and `after` hold the values themselves"}
         if p["measure"] == "outcome" and res["outcome"]:
             out["difference"]["value"] = res["outcome"]["value"]
             out["difference"]["value_ci95"] = res["outcome"]["ci"]
     out["confounders"] = ctx_conf
     if not enough or moved is None:
         return out
-    predicted_better = (p["direction"] == "higher") == (p["measure"] in ("score", "outcome"))
+    higher_is_better = p["measure"] in ("score", "outcome")
+    predicted_better = (p["direction"] == "higher") == higher_is_better
     hit = moved == ("better" if predicted_better else "worse")
-    out["observed"] = moved
+    out["observed"] = moved  # on the quality scale: better or worse, whatever direction the hypothesis named
+    # the same in the hypothesis' own terms: which way the measure went
+    out["moved"] = moved if moved == "no clear change" else "higher" if (moved == "better") == higher_is_better else "lower"
     out["verdict"] = "confounded" if ctx_conf else ("confirmed" if hit else "inconclusive" if moved == "no clear change" else "refuted")
     return out
 

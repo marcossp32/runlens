@@ -222,9 +222,9 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 |---|---|---|
 | `score` | Each unit's current version against its previous one: runs and invocations of every version, the current version's runs, verdict, difference, outcome and typical cost. In `--json`, `outcome` and `typical` pool every version, `current_outcome` and `current_typical` are the current version's | `--kind skill\|agent\|group` (default `skill`), `--json` |
 | `versions <skill>` | Every version of a skill (or a unit id such as `group:my-flow`): runs, invocations, score, verdict, confounders, outcome, cost per success, the diff against the previous version, and the folders the skill was loaded from | `--json` |
-| `proposals add` | Record a proposed edit; prints its id (`p-0001`, ...) | `--skill` (required), `--hypothesis` (required), `--measure` (required: `score` or a measure key), `--direction lower\|higher` (required), `--evidence ID ...`, `--base-version HASH` (default: the current version) |
+| `proposals add` | Record a proposed edit; prints its id (`p-0001`, ...). Warns, and records it anyway, when `--evidence` names no known incident or `--base-version` no recorded version | `--skill` (required), `--hypothesis` (required), `--measure` (required: `score` or a measure key), `--direction lower\|higher` (required), `--evidence ID ...`, `--base-version HASH` (default: the current version) |
 | `proposals list` | List recorded proposals | `--json` |
-| `verify [<id>]` | Check one or every proposal against the runs since: `confirmed`, `refuted`, `inconclusive`, `not enough runs`, `confounded` | `--json` |
+| `verify [<id>]` | Check one or every proposal against the runs since: `confirmed`, `refuted`, `inconclusive`, `not enough runs`, `confounded`. `moved` says which way the measure went (higher or lower, as `--direction` is written); `observed` says better or worse (a lower cost is better); `difference.scale` says what the numbers are on (a score: 100 = no change; one measure: a clipped quality ratio, 1 = no change) | `--json` |
 
 **Diagnosis**
 

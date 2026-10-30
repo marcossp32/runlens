@@ -324,13 +324,26 @@ def method_command(a, cfg):
         elif a.command == "proposals":
             p = proposals.add(con, model, a.skill, a.hypothesis, a.measure, a.direction, a.evidence, a.base_version)
             print(f"{p['id']} recorded: {p['skill']} {p['base_version']}")
+            # recorded anyway (the retro may name a version or incident runlens has not ingested yet), but said
+            known = {"+".join(x["hash"] for x in v["parts"]) for v in model["versions"].get(proposals.unit_id(a.skill)) or []}
+            if a.base_version and p["base_version"] not in known:
+                print(f"warning: no recorded version of {a.skill} matches --base-version {a.base_version}; "
+                      "`runlens versions` lists them", file=sys.stderr)
+            if a.evidence:
+                found = {r[0] for r in con.execute("SELECT incident_id FROM incidents WHERE incident_id IN (SELECT unnest(?::VARCHAR[]))",
+                                                   [list(a.evidence)]).fetchall()}
+                missing = [x for x in a.evidence if x not in found]
+                if missing:
+                    print(f"warning: no incident with id {', '.join(missing)}; `runlens incidents` lists them", file=sys.stderr)
         else:
             results = proposals.verify(con, model, a.id)
             if a.json:
                 dump({"proposals": results})
             else:
-                cols = ["id", "skill", "measure", "direction", "verdict", "observed", "runs_before", "runs_after"]
-                print(_table(cols, [[r.get(c) for c in cols] for r in results]))
+                cols = ["id", "skill", "measure", "predicted", "verdict", "moved", "runs_before", "runs_after"]
+                print(_table(cols, [[r.get({"predicted": "direction"}.get(c, c)) or "-" for c in cols] for r in results]))
+                print("predicted: the direction the hypothesis names; moved: the way the measure went (higher or lower), "
+                      "when there were enough runs to tell")
                 for r in results:
                     if r["confounders"]:
                         print(f"{r['id']} confounded by: {'; '.join(r['confounders'])}")
