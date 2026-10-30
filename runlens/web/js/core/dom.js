@@ -73,7 +73,7 @@ function csvCell(v) {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 function toCSV(cols, rows) {
-  const lines = [cols.map((c) => csvCell(c.label)).join(",")];
+  const lines = [cols.map((c) => csvCell(c.csvLabel || c.label)).join(",")];
   for (const r of rows) lines.push(cols.map((c) => csvCell(c.csv ? c.csv(r) : c.value(r))).join(","));
   return `﻿${lines.join("\r\n")}\r\n`;
 }

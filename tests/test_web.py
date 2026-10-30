@@ -138,6 +138,28 @@ def visible(dom):
     return re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style)\b.*?</\1>", " ", dom)).replace("&nbsp;", " ")
 
 
+def card(dom, question):
+    """The markup of the chart card whose heading is `question` (empty when there is none)."""
+    i = dom.find(f">{question}</figcaption>")
+    if i < 0:
+        return ""
+    return dom[dom.rfind("<figure", 0, i):dom.find("</figure>", i)]
+
+
+def x_ticks(markup):
+    """The tick labels of the first horizontal axis in some chart markup."""
+    axis = re.search(r'<g class="axis-x">(.*?)</g>', markup, re.S)
+    return re.findall(r'<text class="tick"[^>]*>([^<]*)</text>', axis.group(1)) if axis else []
+
+
+def duration_ms(label):
+    """A duration label as the page writes it ("1.5 h", "30 min", "0 ms"), in ms."""
+    m = re.fullmatch(r"(-?[\d.,]+)\s*(ms|s|min|h)", re.sub(r"\s", " ", label).strip())
+    if not m:
+        raise ValueError(label)
+    return float(m.group(1).replace(",", ".")) * {"ms": 1, "s": 1e3, "min": 6e4, "h": 36e5}[m.group(2)]
+
+
 def wording_model():
     """The model with a PR outcome on one skill, a check outcome on another, and a confounded group whose range starts at 100.2."""
     m = copy.deepcopy(model())
@@ -184,8 +206,8 @@ def find_browser():
     return None
 
 
-def dump(path, route, budget=5000, until=None, tries=4, size="1280,900"):
-    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile (size: the window, "w,h").
+def dump(path, route, budget=5000, until=None, tries=4, size=None, height=900):
+    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile (size: the window, "w,h"; else 1280 wide by height).
 
     The virtual-time budget runs timers, not frames: on a loaded machine Chrome can spend it and dump before it
     paints once, so nothing that waits on a frame (ResizeObserver, IntersectionObserver, requestAnimationFrame)
@@ -196,7 +218,7 @@ def dump(path, route, budget=5000, until=None, tries=4, size="1280,900"):
     for _ in range(tries):
         prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
         cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-               f"--virtual-time-budget={budget}", f"--window-size={size}", "--dump-dom", path.as_uri() + route]
+               f"--virtual-time-budget={budget}", f"--window-size={size or f'1280,{height}'}", "--dump-dom", path.as_uri() + route]
         try:
             dom = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
         except subprocess.TimeoutExpired:
@@ -639,6 +661,117 @@ class Renders(unittest.TestCase):
         self.assertEqual((count(dom, "2.1.0"), count(dom, "2.2.0")), (1, 1))  # the repo filter applies to the Claude Code counts
         self.assertEqual(count(dom, "other"), 2)  # a dimension's own filter does not narrow its counts
         self.assertEqual(count(dump(path, "#/runs?pop=all"), "2.2.0"), 3)
+
+    def test_a_single_point_scatter_keeps_its_x_ticks(self):
+        # One skill: the log cost axis spans about 0.9-1.6 $, which holds no 1, 2 or 5 step.
+        path = TMP / "onepoint.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost&skills=flow", until=r'<g class="axis-x">')
+        markup = card(dom, "How do the items' scores and cost sit side by side?")
+        ticks = x_ticks(markup)
+        self.assertGreaterEqual(len(ticks), 2, ticks)
+        y = re.findall(r'<text class="tick"[^>]*>([^<]*)</text>', re.search(r'<g class="axis-y">(.*?)</g>', markup, re.S).group(1))
+        self.assertEqual(len(y), len(set(y)), y)  # no two score ticks read the same (99.5 and 100 both as "100")
+
+    def test_each_outcome_chart_asks_its_own_question(self):
+        path = TMP / "questions.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost")
+        asked = re.findall(r'<figcaption class="cardtitle"[^>]*>(How do the skills[^<]*)</figcaption>', dom)
+        self.assertEqual(len(asked), 2, asked)
+        self.assertEqual(len(set(asked)), 2, asked)
+
+    def test_run_explorer_never_gives_a_skill_and_an_agent_type_one_colour(self):
+        m = model()
+        a = m["explore"]["agents"]
+        a["r"].append([a["r"][0][0], 3, 0, "general-purpose", "fix", "claude-sonnet-5-5", 200, 400, 0.2, "completed", 1, 0, 2, 0, 0, None, 0, None])
+        path = TMP / "agentcolours.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = dump(path, "#/run/s1v1aaaa")
+        keys = re.findall(r'<li><svg class="lkey"[^>]*>.*?style="fill:([^"]+)".*?</svg>((?:skill|agent): [^<]+)</li>', card(dom, "What happened in this run, and when?"))
+        self.assertEqual(len(keys), 4, keys)  # flow, once_only, Explore, general-purpose
+        self.assertEqual(len({css for css, _ in keys}), 4, keys)
+
+    def test_calendar_names_each_week_by_its_days_and_says_each_figure_once(self):
+        m = model()
+        ex = m["explore"]
+        ex["runs"]["r"][0][2] = 1_788_264_000  # Tuesday 1 September 2026: its week starts on Monday 31 August
+        ex["days"]["r"][0][1] = "2026-09-01"
+        path = TMP / "calendar.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = card(dump(path, "#/runs", until=r'class="cell"'), "When do I work, and what does a day cost?")
+        months = re.findall(r'<text class="tick" x="[^"]*" y="13">([^<]+)</text>', dom)
+        self.assertEqual(len(months), 1, months)  # every active day is in September
+        tips = re.findall(r'aria-label="([^"]*Spend[^"]*)"', dom)
+        self.assertTrue(tips)
+        self.assertTrue(all(t.count("Spend") == 1 for t in tips), tips[:2])
+
+    def test_bars_by_skill_wear_each_skill_colour(self):
+        m = model()
+        calls = m["explore"]["calls"]
+        row = list(calls["r"][0])
+        calls["d"]["skill"].append("once_only")
+        row[calls["c"].index("skill")] = len(calls["d"]["skill"]) - 1
+        calls["r"].append(row)
+        path = TMP / "barcolours.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = card(dump(path, "#/run/s1v1aaaa", height=2400, until=r'(?s)Which skills did the work\?</figcaption>.*?class="bar"'), "Which skills did the work?")
+        fills = re.findall(r'<path[^>]*class="bar"[^>]*style="fill:([^"]+)"', dom)
+        self.assertEqual(len(fills), 2, dom[-400:])  # flow and once_only
+        self.assertEqual(len(set(fills)), 2, fills)
+
+    def test_labels_say_what_they_are(self):
+        m = model()
+        ex = m["explore"]
+        tools = ex["tools"]["r"]
+        tools += [[r[0], "Bash", "flow", 20, 1, 0, 9000] for r in tools[:3]] + [[r[0], "bash", "flow", 2, 2, 0, 10] for r in tools[:3]]
+        inc = ex["incidents"]
+        inc["r"][0][inc["c"].index("detail")] = "auto, 484996 tokens before"
+        path = TMP / "labels.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics?tab=tools"))
+        self.assertIn("bash (no such tool, not Bash)", text)
+        run = dump(path, "#/run/s1v1aaaa")
+        self.assertNotIn("484996", " ".join(re.findall(r'aria-label="([^"]*)"', run)))
+        self.assertRegex(run, r'aria-label="[^"]*484\D996 tokens before')
+
+    def test_a_stub_run_says_what_it_lacks(self):
+        m = model()
+        runs = m["explore"]["runs"]
+        stub = list(runs["r"][0])
+        stub[:2] = ["s7stubaa", "session-7"]
+        stub[runs["c"].index("stub")], stub[runs["c"].index("cost")], stub[runs["c"].index("agents")] = 1, 0.01, 0
+        runs["r"].append(stub)
+        path = TMP / "stub.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/run/s7stubaa"))
+        self.assertIn("Nothing in this run has a time to draw", text)
+        self.assertNotIn("0 subagents in 0 types", text)
+        self.assertNotIn("Nothing recorded for this yet", text)  # the money is there, only not split
+        self.assertRegex(text, r"Claude Code counted (\S+ \$|\$\S+) for this run")
+        busy = visible(dump(path, "#/run/s1v1aaaa"))
+        self.assertNotIn("the twelve most expensive", busy)  # three agents with a cost
+
+    def test_axis_ticks_land_on_round_values(self):
+        m = model()
+        t = m["explore"]["tools"]
+        t["r"] += [[r[0], "Bash", r[2], 10, 0, 0, 1_000_000] for r in t["r"]]  # 6 × 1000 s in Bash
+        path = TMP / "ticks.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        # a waterfall's score axis: whole steps, never 97.5 shown as "98"
+        dom = dump(path, "#/unit/skill%3Aflow?tab=drivers", until=r'<g class="axis-x">')
+        vals = [float(x.replace(",", "")) for x in x_ticks(card(dom, "Which measure moves the score of v2, and by how much?"))]
+        self.assertGreaterEqual(len(vals), 3, vals)
+        step = vals[1] - vals[0]
+        self.assertIn(step, (1, 2, 5, 10, 20, 50), vals)
+        self.assertTrue(all(v % step == 0 for v in vals), vals)
+        # durations: clock steps (30 min, 1 h), never 33.3 min or 1.1 h
+        dom = dump(path, "#/diagnostics?tab=tools", until=r'<g class="axis-x">')
+        ms = [duration_ms(x) for x in x_ticks(card(dom, "Which tools does the waiting come from?"))]
+        self.assertGreaterEqual(len(ms), 3, ms)
+        step = ms[1] - ms[0]
+        self.assertIn(step, (6e4, 5 * 6e4, 10 * 6e4, 15 * 6e4, 30 * 6e4, 36e5), ms)
+        self.assertTrue(all(abs(v / step - round(v / step)) < 1e-6 for v in ms), ms)
 
 
 def build_demo():

@@ -89,7 +89,7 @@ function diagProblems() {
         sub: "one dot per problem, one lane per kind · colour = the skill it happened in · dotted lines: Claude Code updates and new models",
         lanes: typeList.map((t) => ({ label: human(t), items: inc.filter((i) => i.type === t).map((i) => ({ t: absTime(i), css: i.skill === "(none)" ? "var(--other)" : colourOf("skill", i.skill).css,
           shape: colourOf("skill", i.skill).shape, href: hrefRun(i.run),
-          tip: { title: human(i.type), sub: i.detail || null, rows: [["Run", i.run], ["Skill", human(i.skill)], ["When", fmt.when(isoOf(absTime(i)))], ...(i.label ? [["Label", human(i.label)]] : [])] } })) })),
+          tip: { title: human(i.type), sub: readableDetail(i.detail), rows: [["Run", i.run], ["Skill", human(i.skill)], ["When", fmt.when(isoOf(absTime(i)))], ...(i.label ? [["Label", human(i.label)]] : [])] } })) })),
         vlines: changeMarks(["cc", "model"]),
         legendItems: [...new Set(inc.map((i) => i.skill))].slice(0, 12).map((s) => ({ label: human(s), css: s === "(none)" ? "var(--other)" : colourOf("skill", s).css, shape: colourOf("skill", s).shape })),
         extraCols: [{ label: "Run", value: (r) => (r.tip ? r.tip.rows[0][1] : "") }],
@@ -156,6 +156,14 @@ function diagProblems() {
 function diagTools() {
   const tools = rollup(slice(EX.tools), (t) => t.tool, ["calls", "errors", "denied", "ms"]).sort((a, b) => b.calls - a.calls);
   if (!tools.length) return empty("No tool call in these runs.");
+  // Tool names are case-sensitive: "bash" is not Bash but a call to a tool that does not exist, and every such call
+  // fails. It stays its own row (merging would put its failures on Bash) and says what it is.
+  const names = new Set(tools.map((t) => t.label));
+  for (const t of tools) {
+    t.tool = t.label;
+    const real = [...names].find((n) => n !== t.label && n.toLowerCase() === t.label.toLowerCase());
+    if (real && t.errors === t.calls) t.label = `${t.label} (no such tool, not ${real})`;
+  }
   const bins = new Map();
   for (const d of EX.durations.filter((x) => RUNSET.has(x.run))) {
     const b = bins.get(d.tool) || new Array(EX.duration_edges.length + 1).fill(0);
@@ -168,8 +176,9 @@ function diagTools() {
     { key: "errors", label: "Errors", num: true, value: (t) => t.errors, cell: (t) => fmt.int(t.errors) },
     { key: "rate", label: "Error rate", num: true, value: (t) => (t.calls ? t.errors / t.calls : null), cell: (t) => fmt.pct(t.calls ? t.errors / t.calls : null) },
     { key: "denied", label: "Denied", num: true, value: (t) => t.denied, more: true },
-    { key: "avg", label: "Average call", num: true, value: (t) => (t.calls ? t.ms / t.calls : null), cell: (t) => fmt.ms(t.calls ? t.ms / t.calls : null) },
-    { key: "total", label: "Total time", num: true, value: (t) => t.ms, cell: (t) => fmt.ms(t.ms) },
+    { key: "avg", label: "Average call", num: true, value: (t) => (t.calls ? t.ms / t.calls : null), cell: (t) => fmt.ms(t.calls ? t.ms / t.calls : null),
+      csv: (t) => (t.calls ? t.ms / t.calls / 1000 : null), csvLabel: "Average call (seconds)" },
+    { key: "total", label: "Total time", num: true, value: (t) => t.ms, cell: (t) => fmt.ms(t.ms), csv: (t) => t.ms / 1000, csvLabel: "Total time (seconds)" },
   ];
   const top = tools.slice(0, 12);
   const byTime = tools.filter((t) => t.ms > 0).sort((a, b) => b.ms - a.ms);
@@ -191,7 +200,7 @@ function diagTools() {
       histRows({ title: "How long a call takes, by tool", question: "Which tool is slow, and how much does it vary?",
         takeaway: slowest ? `${slow.length > 1 ? `${listWords(slow)} take` : `${slowest.label} takes`} ${avg(slowest)} a call on average, the longest; the black tick on each row is its median band.` : null,
         sub: "one row per tool; each column is a duration band, faster on the left · taller column = more of that tool's calls · the twelve most used tools",
-        rows: top.filter((t) => bins.has(t.label)).map((t) => ({ label: t.label, bins: bins.get(t.label), n: bins.get(t.label).reduce((a, b) => a + b, 0) })), edges: EX.duration_edges,
+        rows: top.filter((t) => bins.has(t.tool)).map((t) => ({ label: t.label, bins: bins.get(t.tool), n: bins.get(t.tool).reduce((a, b) => a + b, 0) })), edges: EX.duration_edges,
         notes: "Bands are half a decade wide (10 ms, 32 ms, 100 ms, …), so a slow tail shows even when most calls are fast." }),
       h("div", { class: "grid" },
         barChart({ title: "Calls by tool", question: "Which tools does the work lean on?", sub: `the twelve most used${tools.length > 12 ? " · shares are of all calls" : ""}`, items: top.map((t) => ({ label: t.label, value: t.calls })), fmt: countFmt, tickFmt: fmt.compact, valueTitle: "Calls", share: true, total: callsAll, labelTitle: "Tool",
@@ -199,7 +208,7 @@ function diagTools() {
         barChart({ title: "Where tool time goes", question: "Which tools does the waiting come from?", sub: `total time spent in each tool${byTime.length > 12 ? " · the twelve with the most time; shares are of all time in tools" : ""}`,
           items: byTime.slice(0, 12).map((t) => ({ label: t.label, value: t.ms })),
           takeaway: () => shareTakeaway(byTime.map((t) => ({ label: t.label, value: t.ms })), "of the time in tools"),
-          fmt: fmt.ms, valueTitle: "Total time", share: true, total: msAll, labelTitle: "Tool" })),
+          fmt: fmt.ms, ms: true, valueTitle: "Total time", share: true, total: msAll, labelTitle: "Tool" })),
       section({ title: "Every tool", count: plural(tools.length, "tool") }, sortTable({ caption: "Tools", cols, rows: tools, sort: { key: "calls", dir: -1 }, csvName: "tools" }).el)));
 }
 

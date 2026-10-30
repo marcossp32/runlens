@@ -40,7 +40,8 @@ const emptyCard = (title, text, notes) => h("figure", { class: "card" }, h("figc
   [notes].flat().filter(Boolean).map((n) => (n instanceof Node ? n : note(n))));
 
 /* ---- horizontal bars: one value per category ----
-   spec: {title, sub, notes, items: [{label, value, ns, href, sub}], fmt, valueTitle, share, total, sort = true, colour, single} */
+   spec: {title, sub, notes, items: [{label, value, ns, href, sub}], fmt, valueTitle, share, total, sort = true, colour, single,
+          ms (values are durations in ms: ticks on clock steps, the CSV in seconds)} */
 function barChart(spec) {
   const fmtv = spec.fmt || fmt.num;
   let items = spec.items.filter((i) => valid(i.value));
@@ -51,10 +52,12 @@ function barChart(spec) {
   const shareOf = (v) => (spec.share && total ? ` · ${fmt.pct(v / total, v / total < 0.1 ? 1 : 0)}` : "");
   if (items.length === 1 && spec.single !== false) {
     const it = items[0];
-    return statCard(spec.title, it.label, fmtv(it.value), spec.singleSub || spec.sub || "the only one recorded", spec.notes);
+    // spec.sub describes the bars (how many, how they are chosen), so it does not describe a lone value
+    return statCard(spec.title, it.label, fmtv(it.value), spec.singleSub || "the only one recorded", spec.notes);
   }
   const tableCols = [{ label: spec.labelTitle || "Item", value: (i) => i.label },
-    { label: spec.valueTitle || "Value", num: true, value: (i) => i.value, cell: (i) => fmtv(i.value) }];
+    { label: spec.valueTitle || "Value", num: true, value: (i) => i.value, cell: (i) => fmtv(i.value),
+      ...(spec.ms ? { csv: (i) => i.value / 1000, csvLabel: `${spec.valueTitle || "Value"} (seconds)` } : {}) }];
   if (spec.share) tableCols.push({ label: "Share", num: true, value: (i) => (total ? i.value / total : null), cell: (i) => fmt.pct(total ? i.value / total : null) });
   return chartCard({
     title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, controls: spec.controls, sub: spec.sub, notes: spec.notes, height: items.length * rowH() + 50,
@@ -66,7 +69,8 @@ function barChart(spec) {
       const valW = Math.min(maxLabel(items.map(textOf), FONT.axis) + 10, w * 0.4);
       const x0 = labelW, x1 = Math.max(x0 + 40, w - valW - 4);
       const top = 6, H = top + items.length * R + 40;
-      const { max, ticks: tk } = niceMax(Math.max(...items.map((i) => i.value)), Math.max(2, Math.floor((x1 - x0) / 90)), items.every((i) => Number.isInteger(i.value)));
+      const count = Math.max(2, Math.floor((x1 - x0) / 90)), top0 = Math.max(...items.map((i) => i.value));
+      const { max, ticks: tk } = spec.ms ? durationMax(top0, count) : niceMax(top0, count, items.every((i) => Number.isInteger(i.value)));
       const x = scaleLinear(0, max, x0, x1);
       const root = svgRoot(w, H, `${spec.title}: ${items.length} bars, largest ${items[0].label} ${fmtv(items[0].value)}`);
       axisX(root, { scale: x, ticks: tk, fmt: spec.tickFmt || fmtv, x0, x1, y: top + items.length * R, grid: true, gridTop: top, title: spec.valueTitle });
@@ -77,7 +81,9 @@ function barChart(spec) {
         if (spec.ns) root.append(entityDot(spec.ns, it.name ?? it.label, labelW - 10 - textWidth(label, FONT.label) - 10, y + R / 2));
         const bar = barPath(x0, x(it.value), y + (R - bh) / 2, bh);
         bar.setAttribute("class", "bar");
-        if (spec.colour || it.css) bar.setAttribute("style", `fill:${it.css || spec.colour}`);
+        // bars of skills or models wear their identity colour, as in the stacked charts
+        const fill = it.css || spec.colour || (spec.ns ? colourOf(spec.ns, it.name ?? it.label).css : null);
+        if (fill) bar.setAttribute("style", `fill:${fill}`);
         root.append(markGroup({ title: it.label, rows: [[spec.valueTitle || "Value", fmtv(it.value)], ...(spec.share && total ? [["Share", fmt.pct(it.value / total)]] : []), ...(it.rows || [])], sub: it.sub, href: it.href },
           bar, svg("rect", { class: "hit", x: 0, y, width: w, height: R })));
         root.append(svg("text", { class: "value", x: x(it.value) + 6, y: y + R / 2 + 4 }, fitText(textOf(it), w - x(it.value) - 8, FONT.axis)));
@@ -206,7 +212,8 @@ function dayColumns(spec) {
 
 /* ---- scatter: two measures, one dot per item; numbers, logs or time across ----
    spec: {title, points: [{x, y, ns, name, css, shape, r, label, tip: {title, rows}, href}],
-          x: {title, fmt, log, time}, y: {title, fmt, log, ref, refLabel}, labels, vlines: [{t, label}], legendItems, sizeNote} */
+          x: {title, fmt, log, time}, y: {title, fmt, log, ref, refLabel, fit, whole}, labels, vlines: [{t, label}], legendItems, sizeNote}
+   y.whole: ticks on whole numbers, for values shown without decimals (scores) */
 function scatterChart(spec) {
   const pts = spec.points.filter((p) => valid(p.x) && valid(p.y) && (!spec.x.log || p.x > 0) && (!spec.y.log || p.y > 0));
   if (!pts.length) return emptyCard(spec.title, spec.emptyText || "Not enough data for this chart yet.", spec.notes);
@@ -234,9 +241,10 @@ function scatterChart(spec) {
         // Pad by the data's own spread; with no spread (one point, or all equal) pad by its size, never a fixed
         // amount, which on a 0–1 rate would mean ±500%. A value with hard limits (y.bounds) never shows past them.
         const lo = Math.min(...ys), hi = Math.max(...ys), [b0, b1] = spec.y.bounds || [-Infinity, Infinity];
-        const pad = hi > lo ? (hi - lo) * 0.12 : isFinite(b1 - b0) ? (b1 - b0) * 0.1 : Math.abs(hi) * 0.1 || 1;
+        const pad0 = hi > lo ? (hi - lo) * 0.12 : isFinite(b1 - b0) ? (b1 - b0) * 0.1 : Math.abs(hi) * 0.1 || 1;
+        const pad = spec.y.whole ? Math.max(pad0, 2) : pad0;  // a whole-number axis needs room for two whole ticks
         const y0 = Math.max(b0, lo - pad), y1 = Math.min(b1, hi + pad);
-        yt = ticks(y0, y1, 5).filter((t) => t >= b0 && t <= b1);
+        yt = ticks(y0, y1, 5, spec.y.whole).filter((t) => t >= b0 && t <= b1);
         y = scaleLinear(Math.min(y0, yt[0] ?? y0), Math.max(y1, yt[yt.length - 1] ?? y1), H - bottom, top);
       } else {
         const nm = niceMax(Math.max(...ys) * 1.04, 5);
@@ -549,7 +557,8 @@ function versionTimeline(spec) {
           g.append(svg("path", { class: "vstep", d: `M${x(vs[i - 1].t1) + 3},${y(vs[i - 1].score)}L${x(vs[i].t0)},${y(vs[i].score)}` }));
         }
         vs.forEach((v) => {
-          const a = x(v.t0), b = Math.max(a + 8, x(v.t1));
+          // a short version keeps a visible 8 px, but never past the end of the axis
+          const b = Math.min(x1 - 4, Math.max(x(v.t0) + 8, x(v.t1))), a = Math.min(x(v.t0), b - 8);
           const t = TONE[v.tone] || TONE.unclear;
           const kids = [];
           if (v.ci) kids.push(svg("rect", { class: "band", x: a, y: y(v.ci[1]), width: b - a, height: Math.max(1, y(v.ci[0]) - y(v.ci[1])), style: `fill:${t.css}` }));

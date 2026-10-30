@@ -241,6 +241,9 @@ td a,th a{font-weight:500}
 code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
 .score strong{font-size:14px;font-variant-numeric:tabular-nums;margin-right:6px}
 .score .sub{white-space:nowrap}
+/* in a numeric column the score sits at the right edge, so scores line up whatever their verdict says */
+td.num .score{display:inline-flex;align-items:baseline;gap:8px}
+td.num .score strong{order:2;margin-right:0;min-width:3ch;text-align:right}
 
 /* toolbars and controls */
 .toolbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0}

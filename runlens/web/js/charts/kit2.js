@@ -55,7 +55,8 @@ function waterfallChart(spec) {
       const vals = steps.flatMap((s) => [s.from, s.to]).concat([100, total]);
       const lo = Math.min(...vals) / 1.06, hi = Math.max(...vals) * 1.06;
       const x = scaleLog(lo, hi, x0, x1);
-      const tk = ticks(lo, hi, Math.max(3, Math.floor((x1 - x0) / 70))).filter((t) => t > 0);
+      // whole-number steps: a 2.5 step labelled without decimals reads as 93, 98, 103
+      const tk = ticks(lo, hi, Math.max(3, Math.floor((x1 - x0) / 70)), true).filter((t) => t > 0);
       const H = top + (steps.length + 1) * R + 46;
       const root = svgRoot(w, H, `${spec.title}: from 100 to ${fmt.score(total)} in ${steps.length} steps`);
       axisX(root, { scale: x, ticks: tk.map((v) => ({ v, label: fmt.num(v, v < 10 ? 1 : 0) })), x0, x1, y: top + (steps.length + 1) * R, grid: true, gridTop: top - 6,
@@ -250,9 +251,12 @@ function calendarChart(spec) {
         const wk = Math.floor(i / 7), dow = i % 7;
         const x = labelW + wk * (cell + 3), y = top + dow * (cell + 3);
         const day = localDay(t);
-        const m = new Date(t).getMonth();
+        // a week column is named by the month its Sunday is in, so a week that starts on 31 Aug but holds
+        // September's days says Sep
+        const sunday = all[Math.min(all.length - 1, i + 6)];
+        const m = new Date(sunday).getMonth();
         if (dow === 0 && m !== lastMonth && x - lastX > 30) {
-          root.append(svg("text", { class: "tick", x, y: top - 7 }, df({ month: "short" }).format(new Date(t))));
+          root.append(svg("text", { class: "tick", x, y: top - 7 }, df({ month: "short" }).format(new Date(sunday))));
           lastMonth = m;
           lastX = x;
         }
