@@ -892,6 +892,30 @@ class Cli(Sandbox):
         csv_out = self.run_cli("incidents", "--csv", "--all")
         self.assertTrue(csv_out.stdout.startswith("incident_id,run,type"), csv_out.stdout + csv_out.stderr)
 
+    def test_sql_cannot_write_files_and_errors_say_what_failed(self):
+        simple_run(self.projects, "eaeaeaea-0000-0000-0000-000000000002")
+        self.refresh()
+        target = self.tmp / "out.csv"
+        for q in (f"COPY (SELECT 1) TO '{target.as_posix()}'",
+                  f"SET enable_external_access = true; COPY (SELECT 1) TO '{target.as_posix()}'",
+                  f"ATTACH '{(self.tmp / 'other.db').as_posix()}'"):
+            res = self.run_cli("sql", q)
+            self.assertEqual(res.returncode, 1, q)
+            self.assertNotIn("Traceback", res.stderr)
+        self.assertFalse(target.exists())
+        self.assertFalse((self.tmp / "other.db").exists())
+        empty = self.run_cli("sql", "")
+        self.assertEqual(empty.returncode, 1)
+        self.assertIn("give a query", empty.stderr)
+        self.assertNotIn("Traceback", empty.stderr)
+        bad = self.run_cli("sql", "selec 1")
+        self.assertIn('runlens: Parser error: syntax error at or near "selec"', bad.stderr)
+        import duckdb
+        with redirect_stderr(io.StringIO()) as err:
+            cli.friendly(duckdb.IOException('IO Error: Could not set lock on file "x": El proceso no tiene acceso porque est� siendo utilizado'))
+        self.assertIn("in use by another runlens process", err.getvalue())
+        self.assertNotIn("�", err.getvalue())
+
     def test_report_with_a_quote_in_the_path(self):
         odd = self.tmp / "o'brien"
         odd.mkdir()

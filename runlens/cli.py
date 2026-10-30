@@ -253,9 +253,17 @@ def main(argv=None):
         uninstall()
     elif a.command == "sql":
         from .store import connect
+        if not a.query.strip():
+            raise ValueError('sql: give a query, e.g. runlens sql "SELECT * FROM v_runs"')
         con = connect(read_only=True)
         try:
-            emit(con.execute(a.query), a)
+            # read_only keeps the database as it is, not the disk: COPY ... TO, ATTACH and INSTALL write files.
+            # Locked, so the query itself cannot switch it back on.
+            con.execute("SET enable_external_access = false")
+            con.execute("SET lock_configuration = true")
+            cur = con.execute(a.query)
+            if cur is not None:
+                emit(cur, a)
         finally:
             con.close()
     return 0
@@ -420,10 +428,17 @@ def friendly(e):
         print(f"runlens: config error: {e}", file=sys.stderr)
     elif db_error:
         from .store import is_locked
+        label = type(e).__name__.removesuffix("Exception")
         msg = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        # DuckDB starts its messages with the same label ("Parser Error: syntax error at ..."): say it once
+        prefix = f"{label} Error: "
+        if msg.lower().startswith(prefix.lower()):
+            msg = msg[len(prefix):]
         if is_locked(e):
-            msg = f"the database is in use by another runlens process; try again in a moment ({msg})"
-        print(f"runlens: {type(e).__name__.removesuffix('Exception')} error: {msg}", file=sys.stderr)
+            # On Windows the OS part of the text is localized and DuckDB decodes it wrongly ("est�"): leave it out then
+            raw = "" if "�" in msg else f" ({msg})"
+            msg = f"the database is in use by another runlens process; try again in a moment{raw}"
+        print(f"runlens: {label} error: {msg}", file=sys.stderr)
     elif isinstance(e, (ValueError, OSError)):
         print(f"runlens: {e}", file=sys.stderr)
     else:
