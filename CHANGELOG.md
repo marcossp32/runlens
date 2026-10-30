@@ -76,6 +76,7 @@
 
 ### export-eval
 - A case with no grader that checks the failure is skipped and listed as skipped, instead of exported with only `skill-fired` (repeated calls and permission denials whose failing call is missing from the store). `tool_used` with `max` is never written without `input_match`, which would have meant "never use this tool". The skill-creator `evals.json` no longer carries the undocumented `name` field. The export README now says the one-arm default needs a path target and that `context.scaffold_script` runs only with `--scaffold` (#15).
+- The error-streak grader fails at `[analysis] error_streak_min` failing calls in a row (2 by default), the streak that counts as the failure, instead of at the length the exported run happened to reach ("3 or more") (#34).
 
 ### Fixed
 - A drain now re-ingests runs last parsed by an older parser, so a parser bump no longer leaves the dashboard on old numbers until a manual `runlens ingest` (#5).
@@ -100,6 +101,7 @@
 - CI tests Python 3.11 and 3.14 on Linux and 3.14 on Windows and macOS: four jobs instead of six, with one Windows job instead of two.
 
 ### Docs
+- The demo history (`scripts/make_demo.py`) keeps the promises of its docstring (#34): Claude Code stays on one version for weeks, with one patch release and one minor update on the day write-tests v2 appeared, so review-pr v2 is a clear `better` (with a patch note) and write-tests v2 a real `confounded`. Labels use taxonomy categories and the judge's faults; the stub run has the agent, model-turn, tool-call and skill rows a real stub has and an active time within its minute; nested subagents have the tool-call rows their counts say; no run is active longer than its wall time. The README images are taken again from it.
 - Fixed false or misleading claims in the README and changelog: skills loaded only in subagents, which `check` lines are `WARN`, what comes from `cost-state`, the measures sentence, the demo commands, the unverifiable token-coverage figure, the Evals link title, the CI browser platform and the pinned ruff version (#16).
 
 ## 0.2.0 - 2026-10-13
