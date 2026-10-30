@@ -206,7 +206,7 @@ def find_browser():
     return None
 
 
-def dump(path, route, budget=5000, until=None, tries=4):
+def dump(path, route, budget=5000, until=None, tries=4, height=900):
     """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile.
 
     The virtual-time budget runs timers, not frames: on a loaded machine Chrome can spend it and dump before it
@@ -218,7 +218,7 @@ def dump(path, route, budget=5000, until=None, tries=4):
     for _ in range(tries):
         prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
         cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-               f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
+               f"--virtual-time-budget={budget}", f"--window-size=1280,{height}", "--dump-dom", path.as_uri() + route]
         try:
             dom = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
         except subprocess.TimeoutExpired:
@@ -518,6 +518,20 @@ class Renders(unittest.TestCase):
         tips = re.findall(r'aria-label="([^"]*Spend[^"]*)"', dom)
         self.assertTrue(tips)
         self.assertTrue(all(t.count("Spend") == 1 for t in tips), tips[:2])
+
+    def test_bars_by_skill_wear_each_skill_colour(self):
+        m = model()
+        calls = m["explore"]["calls"]
+        row = list(calls["r"][0])
+        calls["d"]["skill"].append("once_only")
+        row[calls["c"].index("skill")] = len(calls["d"]["skill"]) - 1
+        calls["r"].append(row)
+        path = TMP / "barcolours.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = card(dump(path, "#/run/s1v1aaaa", height=2400, until=r'(?s)Which skills did the work\?</figcaption>.*?class="bar"'), "Which skills did the work?")
+        fills = re.findall(r'<path[^>]*class="bar"[^>]*style="fill:([^"]+)"', dom)
+        self.assertEqual(len(fills), 2, dom[-400:])  # flow and once_only
+        self.assertEqual(len(set(fills)), 2, fills)
 
     def test_a_stub_run_says_what_it_lacks(self):
         m = model()

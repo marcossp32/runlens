@@ -80,7 +80,9 @@ function barChart(spec) {
         if (spec.ns) root.append(entityDot(spec.ns, it.name ?? it.label, labelW - 10 - textWidth(label, FONT.label) - 10, y + R / 2));
         const bar = barPath(x0, x(it.value), y + (R - bh) / 2, bh);
         bar.setAttribute("class", "bar");
-        if (spec.colour || it.css) bar.setAttribute("style", `fill:${it.css || spec.colour}`);
+        // bars of skills or models wear their identity colour, as in the stacked charts
+        const fill = it.css || spec.colour || (spec.ns ? colourOf(spec.ns, it.name ?? it.label).css : null);
+        if (fill) bar.setAttribute("style", `fill:${fill}`);
         root.append(markGroup({ title: it.label, rows: [[spec.valueTitle || "Value", fmtv(it.value)], ...(spec.share && total ? [["Share", fmt.pct(it.value / total)]] : []), ...(it.rows || [])], sub: it.sub, href: it.href },
           bar, svg("rect", { class: "hit", x: 0, y, width: w, height: R })));
         root.append(svg("text", { class: "value", x: x(it.value) + 6, y: y + R / 2 + 4 }, fitText(textOf(it), w - x(it.value) - 8, FONT.axis)));
@@ -548,7 +550,8 @@ function versionTimeline(spec) {
           g.append(svg("path", { class: "vstep", d: `M${x(vs[i - 1].t1) + 3},${y(vs[i - 1].score)}L${x(vs[i].t0)},${y(vs[i].score)}` }));
         }
         vs.forEach((v) => {
-          const a = x(v.t0), b = Math.max(a + 8, x(v.t1));
+          // a short version keeps a visible 8 px, but never past the end of the axis
+          const b = Math.min(x1 - 4, Math.max(x(v.t0) + 8, x(v.t1))), a = Math.min(x(v.t0), b - 8);
           const t = TONE[v.tone] || TONE.unclear;
           const kids = [];
           if (v.ci) kids.push(svg("rect", { class: "band", x: a, y: y(v.ci[1]), width: b - a, height: Math.max(1, y(v.ci[0]) - y(v.ci[1])), style: `fill:${t.css}` }));
