@@ -597,7 +597,12 @@ function rangeTakeaway(rows, noun) {
       below.length ? `${listWords(below)} ${below.length === 1 ? "is" : "are"} clearly below` : null].filter(Boolean).join("; ") + "." + tail;
   }
   if (!ranged.length) return conf.length ? `No ${noun} can be judged against its usual level: ${fmt.int(conf.length)} confounded${rows.length > conf.length ? ", the rest without a range" : ""}.` : `No ${noun} has enough runs for a range yet: the scores are points only.`;
-  return `No ${noun} is clearly above or below its usual level: every range crosses 100.${rows.length - conf.length > ranged.length ? ` ${fmt.int(rows.length - conf.length - ranged.length)} more have too few runs for a range.` : ""}${tail}`;
+  // A confounded row is left out above, and its range may well sit on one side of 100: the sentence speaks only of the rows it judged.
+  const short = rows.length - conf.length - ranged.length;
+  const head = !conf.length ? `No ${noun} is clearly above or below its usual level: every range crosses 100.`
+    : ranged.length === 1 ? `The one ${noun} that can be judged is not clearly above or below its usual level: its range crosses 100.`
+      : `None of the ${fmt.int(ranged.length)} ${noun}s that can be judged is clearly above or below its usual level: each of their ranges crosses 100.`;
+  return `${head}${short ? ` ${fmt.int(short)} more ${short === 1 ? "has" : "have"} too few runs for a range.` : ""}${tail}`;
 }
 
 function timelineTakeaway(bases) {

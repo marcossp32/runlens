@@ -381,6 +381,19 @@ class Renders(unittest.TestCase):
         text = visible(dump(path, "#/?kind=groups"))
         self.assertIn("1 confounded", text)
 
+    def test_range_takeaway_speaks_only_of_the_rows_it_judged(self):
+        # A confounded skill whose whole range is above 100 sits next to a skill whose range crosses 100:
+        # the takeaway may not say that every range crosses 100.
+        m = wording_model()
+        flow, once = m["units"][0], m["units"][1]
+        flow["ci"] = m["versions"]["skill:flow"][-1]["ci"] = [95.0, 125.0]
+        once.update(verdict="confounded", direction="better", vs="v0", confounders=["Claude Code 2.1 → 2.2"], ci=[106.0, 139.0], score=120.0, runs=6, low_sample=False)
+        path = TMP / "ranges.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/"))
+        self.assertNotIn("every range crosses 100", text)
+        self.assertIn("The one skill that can be judged is not clearly above or below its usual level: its range crosses 100.", text)
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")
