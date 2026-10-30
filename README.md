@@ -317,6 +317,7 @@ Views (in [`views.sql`](runlens/views.sql)): `v_runs`, `v_skill`, `v_role`, `v_m
 | A skill is missing from `score` | It may not match `[select]`, have no finished non-stub runs, or has no finished non-stub run once subagent work before the load is left out |
 | A verdict says `not enough runs` or `confounded` | See [how many runs you need](#improve-a-skill-step-by-step) and why batch edits are confounded |
 | The dashboard is out of date | `runlens dashboard` rebuilds it. Hook and drain errors are in `~/.runlens/hooks.log` |
+| `hooks.log` says `config error` | The hook queued the session but no drain ran, because `config.toml` does not load. Fix the key it names, then `runlens refresh` ingests the queue |
 | Deleting `~/.runlens` fails on Windows | Archived paths can exceed 260 characters. Use the long-path form (see [Uninstall](#uninstall)) |
 
 ## Uninstall

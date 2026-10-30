@@ -497,6 +497,6 @@ def prune(before=None, sessions=None, keep_archive=False, yes=False):
         for sid, project, _ in rows:
             arch.remove_run(project, sid)
         arch.collect_garbage()
-    print(f"{len(rows)} run(s) deleted" + (f"; they stay out of archive and ingest until "
-                                             f"`runlens refresh --session <id>`" if rows else ""))
+    print(f"{len(rows)} run(s) deleted" + ("; they stay out of archive and ingest until "
+                                             "`runlens refresh --session <id>`" if rows else ""))
     return len(rows)

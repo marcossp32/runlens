@@ -1,7 +1,6 @@
 """Print the timeline around an incident or a tool call: what the agent said and did, in order."""
 import sys
 
-
 from . import config, store
 from .fs import fs_path, plain
 
