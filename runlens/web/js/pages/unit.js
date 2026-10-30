@@ -105,7 +105,7 @@ function unitPage(id) {
 }
 
 function versionsPanel(u, versions) {
-  if (u.kind === "agent") return note("Agent roles have no versions. Their runs are scored as one group.");
+  if (u.kind === "agent") return note("Agent roles have no versions and are not scored: their runs are described together, as one set.");
   if (!versions.length) return empty("No runs yet.");
   if (!versions.some((v) => v.recorded)) {
     return note("Claude Code did not record this skill's text in these runs, so there are no versions to compare.");
@@ -167,6 +167,7 @@ function diffBlock(c) {
 const effect = (share) => Math.exp(share) - 1;
 
 function driversPanel(u, versions) {
+  if (u.kind === "agent") return note("Agent roles are not scored, so no measure moves a score. Their figures are in the table above.");
   const withData = versions.filter((x) => Object.keys(x.metrics || {}).length);
   if (!withData.length) return empty("No measure has data for this unit yet.");
   const wanted = param("ver");

@@ -431,6 +431,22 @@ class Renders(unittest.TestCase):
         self.assertNotIn("that are not problems", text)
         self.assertIn("Also counted among the problems above: context compactions.", text)
 
+    def test_help_texts_agree_with_the_readme(self):
+        path = TMP / "help.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/method"))
+        self.assertNotIn("keeps false", text)  # the README's null simulation: 8% at the final look, 14% at some look
+        self.assertRegex(text, r"14 ?% of the time at some look and 8 ?% at the final one")
+        text = visible(dump(path, "#/method?tab=limits"))
+        self.assertNotIn("little or no work of its own", text)  # a skill a subagent loads gets its own unit and versions
+        self.assertIn("is scored like any other", text)
+        text = visible(dump(path, "#/unit/agent%3AExplore%7Cscan"))
+        self.assertNotIn("scored as one group", text)  # agent roles are described, not scored
+        self.assertIn("are not scored", text)
+        text = visible(dump(path, "#/unit/agent%3AExplore%7Cscan?tab=drivers"))
+        self.assertNotIn("No measure has data", text)
+        self.assertIn("Agent roles are not scored", text)
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")
