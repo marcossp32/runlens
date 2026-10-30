@@ -74,7 +74,6 @@
 - A drain now re-ingests runs last parsed by an older parser, so a parser bump no longer leaves the dashboard on old numbers until a manual `runlens ingest` (#5).
 - `CLAUDE_CONFIG_DIR` is honoured for settings, skills and the transcripts folder, and the hook passes its `transcript_path` to the drain, so sessions outside `~/.claude/projects` are no longer dropped as "not selected" (#5).
 - `runlens refresh` takes the drain lock while it archives and ingests; the drain looks at the queue once more after releasing the lock; the log no longer says "archived and ingested" for a run whose ingest failed (#5).
-
 - A `config.toml` that does not load no longer makes the SessionEnd hook lose the session: the hook queues it first and writes the config error to `hooks.log`, and the detached drain logs its config error there too instead of to nowhere. `runlens refresh` drains the queue once the config is fixed (#33).
 - `ingest --skill` and `--project` (and the ingest step of `refresh`) are applied; they were accepted and ignored (#33).
 - Pruned runs stay pruned. `prune` records what it deleted, so `refresh` no longer copies a run back from `~/.claude/projects`, `ingest` no longer reloads one pruned with `--keep-archive`, and `check` no longer asks for either. Naming a run with `--session` in `archive`, `ingest` or `refresh` brings it back (#33).
@@ -82,6 +81,7 @@
 - `runlens sql` can no longer write files: `COPY ... TO`, `ATTACH` and `INSTALL` are refused (external access is turned off and locked for the query). `sql ""` gives a one-line error instead of a traceback, and a SQL error no longer repeats its label ("Parser error: syntax error at ..."). The "database in use" message leaves out the Windows error text DuckDB mis-decodes (#33).
 - Config typos that were accepted silently are refused: an `[outcome] marker` that names no `[[marker]]` (it was accepted when the config had no markers at all, and skills were scored without an outcome), and a `--config` file that does not exist (it fell back to the defaults). `[outcome]`, `[[group]]`, `[weights]` and `[method]` values are checked when the config loads, not first at `score` (#33).
 - The drain's log says why a queued session was skipped: pruned, no transcript, or not selected by `[select]` (#33).
+- `score` text: the outcome and cost/inv columns are the current version's own (they pooled every version, so a version with 1 run showed the skill's "88 % of 17"), a `current runs` column and a legend say which numbers are whose, a difference without an interval says so, a unit with one version says so instead of `-`, and an empty result says what to do. `score --json` adds `current_runs`, `current_outcome` and `current_typical`. `versions` prints "confounded by" only under a `confounded` verdict, as `score` does, and `versions <group name>` without `group:` suggests the unit id (#33).
 
 ### Config, packaging and CI
 - `config.toml` is checked for typos and wrong types: an unknown section or key (`[runs] idle_hourz`, `[selectt]`) and a value of the wrong type (`[method] min_runs = "x"`, `resamples = 4000.5`) stop the command with a one-line error that names the key (#17).

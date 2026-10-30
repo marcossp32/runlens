@@ -220,7 +220,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 
 | Command | What it does | Flags |
 |---|---|---|
-| `score` | Each unit's current version against its previous one: runs, invocations, verdict, difference, outcome, typical cost | `--kind skill\|agent\|group` (default `skill`), `--json` |
+| `score` | Each unit's current version against its previous one: runs and invocations of every version, the current version's runs, verdict, difference, outcome and typical cost. In `--json`, `outcome` and `typical` pool every version, `current_outcome` and `current_typical` are the current version's | `--kind skill\|agent\|group` (default `skill`), `--json` |
 | `versions <skill>` | Every version of a skill (or a unit id such as `group:my-flow`): runs, invocations, score, verdict, confounders, outcome, cost per success, the diff against the previous version, and the folders the skill was loaded from | `--json` |
 | `proposals add` | Record a proposed edit; prints its id (`p-0001`, ...) | `--skill` (required), `--hypothesis` (required), `--measure` (required: `score` or a measure key), `--direction lower\|higher` (required), `--evidence ID ...`, `--base-version HASH` (default: the current version) |
 | `proposals list` | List recorded proposals | `--json` |

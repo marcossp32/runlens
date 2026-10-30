@@ -138,6 +138,36 @@ class CommandLine(unittest.TestCase):
             self.assertIn(key, u)
         self.assertLess(u["difference"]["ci95"][1], 100)
 
+    def test_score_columns_say_whose_numbers_they_are(self):
+        _, out = self.run_cli("score", "--json")
+        u = json.loads(out)["units"][0]
+        self.assertEqual((u["runs"], u["current_runs"]), (12, 6))  # runs pool every version; current_runs is v2's
+        self.assertGreater(u["typical"]["cost"], 1.5)  # v1 at 1.0 and v2 at 3.0 pooled ...
+        self.assertGreater(u["current_typical"]["cost"], 2.5)  # ... against v2 alone
+        _, out = self.run_cli("score")
+        self.assertIn("current runs", out)
+        self.assertIn("are the current version's own", out)
+        row = next(line for line in out.splitlines() if line.startswith("skill:flow"))
+        self.assertIn(f"{u['current_typical']['cost']:.2f}", row)
+
+    def test_difference_and_confounders_are_explained_in_text(self):
+        diff = {"score": 61.0, "ci95": None}
+        self.assertEqual(cli._diff_text(diff), "61.0 (no interval)")
+        v = {"label": "v2", "hash": "bbb", "runs": 2, "invocations": 2, "score": 90.0, "verdict": "not enough runs", "vs": "v1",
+             "difference": diff, "outcome": None, "cost_per_success_usd": None, "confounders": ["model changed"]}
+        text = cli._versions_text({"skill": "flow", "versions": [v]})
+        self.assertNotIn("confounded by", text)  # the verdict is not enough runs: the confounders decided nothing
+        self.assertIn("confounded by", cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "confounded"}]}))
+        empty = cli._score_text({"kind": "skill", "population": {"runs": 0, "open": 0, "stub": 0}, "units": []})
+        self.assertIn("runlens refresh", empty)
+
+    def test_versions_of_a_group_name_without_its_prefix_suggests_it(self):
+        cfg = self.home / "group.toml"
+        cfg.write_text('[[group]]\nname = "release-flow"\nmembers = ["skill:flow"]\n', encoding="utf-8")
+        with redirect_stdout(io.StringIO()), self.assertRaises(ValueError) as ctx:
+            cli.main(["--config", str(cfg), "versions", "release-flow"])
+        self.assertIn("runlens versions group:release-flow", str(ctx.exception))
+
     def test_versions_json_and_text(self):
         _, out = self.run_cli("versions", "flow", "--json")
         doc = json.loads(out)

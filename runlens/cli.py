@@ -311,7 +311,11 @@ def method_command(a, cfg):
         elif a.command == "versions":
             out = bench.versions_summary(model, proposals.unit_id(a.skill))
             if out is None:
-                raise ValueError(f"no finished, non-stub runs of {a.skill!r}; `runlens score` lists the units")
+                other = [u["id"] for u in model["units"] if ":" not in a.skill and u["id"] in (f"group:{a.skill}", f"agent:{a.skill}")]
+                if other:
+                    raise ValueError(f"{a.skill!r} is not a skill; did you mean `runlens versions {other[0]}`?")
+                raise ValueError(f"no finished, non-stub runs of {a.skill!r}; `runlens score` lists the units "
+                                 "(`--kind group` and `--kind agent` for the others)")
             # where the skill's files live, most recently loaded first, so its text can be read and cited
             out["skill_dirs"] = [r[0] for r in con.execute(
                 """SELECT skill_dir FROM skill_loads WHERE skill = ? AND skill_dir IS NOT NULL
@@ -342,7 +346,9 @@ def _num(x, d=1):
 def _diff_text(d):
     if not d:
         return "-"
-    return f"{_num(d['score'])} [{_num(d['ci95'][0])}, {_num(d['ci95'][1])}]" if d["ci95"] else _num(d["score"])
+    if d["ci95"]:
+        return f"{_num(d['score'])} [{_num(d['ci95'][0])}, {_num(d['ci95'][1])}]"
+    return f"{_num(d['score'])} (no interval)" if d["score"] is not None else "-"
 
 
 def _outcome_text(o):
@@ -353,18 +359,27 @@ def _score_text(out):
     pop = out["population"]
     head = (f"{pop['runs']} finished runs ({pop['open']} open and {pop['stub']} stub runs left out). Each unit's current "
             "version against its previous one (difference: 100 = no change); units are not ranked against each other.")
-    cols = ["unit", "runs", "invocations", "current", "verdict", "vs", "difference", "outcome", "cost/inv"]
-    rows = [[u["unit"], u["runs"], u["invocations"], u["current"] or "-", u["verdict"] or "-", u["vs"] or "-",
-             _diff_text(u["difference"]), _outcome_text(u["outcome"]), _num(u["typical"].get("cost"), 2)] for u in out["units"]]
+    if not out["units"]:
+        hint = ("run `runlens refresh` to load your runs" if not pop["runs"] else
+                f"no {out['kind']} has a finished, non-stub run (try another --kind)")
+        return f"{head}\nNothing to score: {hint}."
+    cols = ["unit", "runs", "invocations", "current", "current runs", "verdict", "vs", "difference", "outcome", "cost/inv"]
+    rows = [[u["unit"], u["runs"], u["invocations"], u["current"] or "-", _num(u.get("current_runs"), 0),
+             u["verdict"] or ("only one version" if u["versions"] == 1 else "-"), u["vs"] or "-",
+             _diff_text(u["difference"]), _outcome_text(u.get("current_outcome")),
+             _num((u.get("current_typical") or {}).get("cost"), 2)] for u in out["units"]]
     notes = [f"{u['unit']}: confounded by {'; '.join(u['confounders'])}" for u in out["units"] if u["verdict"] == "confounded"]
-    return "\n".join([head, _table(cols, rows)] + notes)
+    legend = ("runs and invocations count every version; current runs, outcome and cost/inv are the current version's "
+              "own. difference: the current version against `vs`, with its 95% interval (no interval: too few runs a side)")
+    return "\n".join([head, _table(cols, rows), legend] + notes)
 
 
 def _versions_text(out):
     cols = ["version", "hash", "runs", "invocations", "score", "verdict", "vs", "difference", "outcome", "cost/success"]
     rows = [[v["label"], v["hash"], v["runs"], v["invocations"], _num(v["score"]), v["verdict"] or "first", v["vs"] or "-",
              _diff_text(v["difference"]), _outcome_text(v["outcome"]), _num(v["cost_per_success_usd"], 2)] for v in out["versions"]]
-    notes = [f"{v['label']}: confounded by {'; '.join(v['confounders'])}" for v in out["versions"] if v["confounders"]]
+    # only under a `confounded` verdict, as in `score`: under `not enough runs` the confounders decided nothing
+    notes = [f"{v['label']}: confounded by {'; '.join(v['confounders'])}" for v in out["versions"] if v["verdict"] == "confounded"]
     dirs = [f"files: {'; '.join(out['skill_dirs'])}"] if out.get("skill_dirs") else []
     return "\n".join([f"{out['skill']}: score 100 = its own typical run; difference = the version against the one before "
                       "(100 = no change)", _table(cols, rows)] + notes + dirs)
