@@ -10,7 +10,7 @@ let barOpen = null; // the dimension whose menu was open, kept open across the r
 let barExpanded = false; // the controls are shown (the reader opened them); kept across redraws
 
 function refreshAfter(changes) {
-  setParams(changes);
+  setParams(changes, true); // a new history entry: Back undoes the change
   route();
 }
 

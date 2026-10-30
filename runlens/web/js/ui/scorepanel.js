@@ -7,7 +7,7 @@ const SCORE_EL = document.getElementById("scorepanel");
 function writeScore(next) {
   Object.assign(S, next);
   saveScoreSettings();
-  setParams(scoreParams(S));
+  setParams(scoreParams(S), true);
   route();
 }
 

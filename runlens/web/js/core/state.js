@@ -1,7 +1,9 @@
 /* core/state.js: what the page shows lives in the URL hash, so a link reproduces the exact view.
 
    Shape: #/<page>/<sub>?<params>. Pages read their params with param() and write them with setParams(),
-   which replaces the history entry (no new entry, no re-render). Moving to another page pushes a new one.
+   which does not re-render. It replaces the history entry, or with push adds one: a tab, a filter, a score
+   setting and an option that redraws the page push, so Back undoes them; the rest (a sort, a search, "More
+   columns", a picker inside a page) replaces. Moving to another page pushes a new one.
    The global keys belong to the filter bar (core/filters.js) and the score settings (core/scoring.js): they
    are kept across pages and written into every link, so a filtered, re-weighted view survives navigation. */
 
@@ -38,15 +40,15 @@ function hashFor(path, params = {}) {
   return `#/${path.map(encodeURIComponent).join("/")}${q ? `?${q}` : ""}`;
 }
 
-// Change some params of the current view in place. A null value removes the param.
-function setParams(changes) {
+// Change some params of the current view. A null value removes the param; push adds a history entry.
+function setParams(changes, push = false) {
   for (const [k, v] of Object.entries(changes)) {
     if (v === null || v === undefined || v === "") ROUTE.params.delete(k);
     else ROUTE.params.set(k, String(v));
   }
   const q = ROUTE.params.toString();
   const hash = `#/${ROUTE.path.map(encodeURIComponent).join("/")}${q ? `?${q}` : ""}`;
-  if (hash !== location.hash) history.replaceState(null, "", hash);
+  if (hash !== location.hash) history[push ? "pushState" : "replaceState"](null, "", hash);
   LAST_HASH.set(pageOf(ROUTE.path), hash);
   syncNav();
 }

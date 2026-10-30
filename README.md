@@ -107,7 +107,7 @@ Every page starts with its answer in a sentence, worked out from your data, then
   </tr>
 </table>
 
-**Filters, links and views.** A "Filters" button narrows every page to some dates, repos, branches, models, effort levels, skills or Claude Code versions; active filters show as chips and the count of runs left is always on screen. The page state is in the URL, so a link reproduces a view. **Views** keeps named views in the browser, and `[[dashboard.view]]` tables in config.toml (a `name` and a `hash`, the part of a dashboard link after `#`) add shared ones. Each chart's "⋯" menu shows its data as a table and downloads it as CSV, SVG or PNG.
+**Filters, links and views.** A "Filters" button narrows every page to some dates, repos, branches, models, effort levels, skills or Claude Code versions; active filters show as chips and the count of runs left is always on screen. The page state is in the URL, so a link reproduces a view, and Back undoes a change of tab, filter or score setting. **Views** keeps named views in the browser, and `[[dashboard.view]]` tables in config.toml (a `name` and a `hash`, the part of a dashboard link after `#`) add shared ones. Each chart's "⋯" menu shows its data as a table and downloads it as CSV, SVG or PNG.
 
 > [!WARNING]
 > **The dashboard contains transcript text**: each skill version's text, run arguments and task titles. Keep it on your machine and check it before you share it.
