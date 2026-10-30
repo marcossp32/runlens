@@ -289,6 +289,10 @@ select{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background
 .tool[aria-pressed="true"]{color:var(--text);border-color:var(--accent)}
 .tool:disabled{opacity:.4;cursor:default}
 .plot{overflow-x:auto;overflow-y:hidden}
+/* a plot that scrolls sideways fades on the side that has more (charts/frame.js scrollCue) */
+.plot.more-right{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 48px),transparent)}
+.plot.more-left{-webkit-mask-image:linear-gradient(to right,transparent,#000 48px);mask-image:linear-gradient(to right,transparent,#000 48px)}
+.plot.more-left.more-right{-webkit-mask-image:linear-gradient(to right,transparent,#000 48px,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(to right,transparent,#000 48px,#000 calc(100% - 48px),transparent)}
 .tableview{margin-top:12px}
 .tableview .tablebox{margin:0}
 .smalln{font-size:12.5px;color:var(--warn);margin:0 0 6px}
@@ -505,7 +509,7 @@ details.more > summary{font-weight:600;color:var(--text);padding:6px 0}
   .tablist{display:none}
   .tw{overflow:visible;border-color:#bbb}
   tbody th{position:static}
-  .plot{overflow:visible}
+  .plot{overflow:visible;-webkit-mask-image:none!important;mask-image:none!important}
   a{color:#000;text-decoration:none}
   .tip{display:none!important}
 }

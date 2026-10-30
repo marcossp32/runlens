@@ -184,8 +184,8 @@ def find_browser():
     return None
 
 
-def dump(path, route, budget=5000, until=None, tries=4):
-    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile.
+def dump(path, route, budget=5000, until=None, tries=4, size="1280,900"):
+    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile (size: the window, "w,h").
 
     The virtual-time budget runs timers, not frames: on a loaded machine Chrome can spend it and dump before it
     paints once, so nothing that waits on a frame (ResizeObserver, IntersectionObserver, requestAnimationFrame)
@@ -196,7 +196,7 @@ def dump(path, route, budget=5000, until=None, tries=4):
     for _ in range(tries):
         prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
         cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-               f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
+               f"--virtual-time-budget={budget}", f"--window-size={size}", "--dump-dom", path.as_uri() + route]
         try:
             dom = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
         except subprocess.TimeoutExpired:
@@ -600,6 +600,17 @@ class Recompute(unittest.TestCase):
         self.assertEqual(int(kpis["Runs"].replace(",", "")), runs)
         self.assertEqual(int(kpis["Pull requests"].replace(",", "")), prs)
         self.assertEqual(re.sub(r"\D", "", kpis["Spend"]), f"{round(spend * 100)}")  # digits only: the separators follow the browser's locale
+
+    def test_a_phone_keeps_captions_inside_and_marks_what_scrolls(self):
+        # issue #31: at 390 px the run explorer's caption fits its chart, and a heatmap wider than its card says so.
+        rid = self.model["explore"]["runs"]["r"][0][0]
+        dom = dump(self.path, f"#/run/{rid}", size="390,860", until=r'class="sectionlabel"')
+        caption = re.search(r'<text class="sectionlabel"[^>]*>([^<]+)</text>', dom).group(1)
+        self.assertNotIn("indented under the agent that started it", caption)  # the long wording does not fit 390 px
+        self.assertTrue(caption.startswith("Agents"), caption)
+        dom = dump(self.path, "#/?tab=measures", size="390,860", until=r'class="plot more-right"')  # the measures heatmap
+        self.assertIn('class="plot more-right"', dom)
+        self.assertNotIn('class="plot more-right"', dump(self.path, "#/?tab=measures", until=r'class="rowlabel"'))  # it fits at 1280 px
 
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")
