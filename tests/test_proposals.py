@@ -9,7 +9,7 @@ import random
 import shutil
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
 from pathlib import Path
 from unittest import mock
@@ -70,6 +70,12 @@ class Proposals(unittest.TestCase):
         self.assertEqual(got["better overall"]["verdict"], "confirmed")
         self.assertEqual((got["cheaper"]["runs_before"], got["cheaper"]["runs_after"]), (6, 6))
         self.assertGreater(got["cheaper"]["difference"]["effect"], 1)
+        # observed is on the quality scale; moved is in the hypothesis' own terms
+        self.assertEqual((got["cheaper"]["observed"], got["cheaper"]["moved"]), ("better", "lower"))
+        self.assertEqual((got["dearer"]["direction"], got["dearer"]["moved"]), ("higher", "lower"))
+        self.assertEqual(got["better overall"]["moved"], "higher")
+        self.assertIn("ratio", got["cheaper"]["difference"]["scale"])
+        self.assertIn("100 = no change", got["better overall"]["difference"]["scale"])
 
     def test_no_clear_change_is_inconclusive_not_refuted(self):
         same = model_of(lambda v: 1.0)
@@ -100,6 +106,7 @@ class CommandLine(unittest.TestCase):
         cls.home = Path(tempfile.mkdtemp(prefix="runlens-cli-"))
         cls.patch = mock.patch.multiple(config, HOME=cls.home, DB=cls.home / "runlens.duckdb", ARCHIVE=cls.home / "archive")
         cls.patch.start()
+        (cls.home / "none.toml").write_text("", encoding="utf-8")  # an empty config: every default
         d = history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: (1.0 if v == 0 else 3.0) * (1 + i / 50))
         con = store.connect()
         for r in d["runs"]:
@@ -137,6 +144,36 @@ class CommandLine(unittest.TestCase):
             self.assertIn(key, u)
         self.assertLess(u["difference"]["ci95"][1], 100)
 
+    def test_score_columns_say_whose_numbers_they_are(self):
+        _, out = self.run_cli("score", "--json")
+        u = json.loads(out)["units"][0]
+        self.assertEqual((u["runs"], u["current_runs"]), (12, 6))  # runs pool every version; current_runs is v2's
+        self.assertGreater(u["typical"]["cost"], 1.5)  # v1 at 1.0 and v2 at 3.0 pooled ...
+        self.assertGreater(u["current_typical"]["cost"], 2.5)  # ... against v2 alone
+        _, out = self.run_cli("score")
+        self.assertIn("current runs", out)
+        self.assertIn("are the current version's own", out)
+        row = next(line for line in out.splitlines() if line.startswith("skill:flow"))
+        self.assertIn(f"{u['current_typical']['cost']:.2f}", row)
+
+    def test_difference_and_confounders_are_explained_in_text(self):
+        diff = {"score": 61.0, "ci95": None}
+        self.assertEqual(cli._diff_text(diff), "61.0 (no interval)")
+        v = {"label": "v2", "hash": "bbb", "runs": 2, "invocations": 2, "score": 90.0, "verdict": "not enough runs", "vs": "v1",
+             "difference": diff, "outcome": None, "cost_per_success_usd": None, "confounders": ["model changed"]}
+        text = cli._versions_text({"skill": "flow", "versions": [v]})
+        self.assertNotIn("confounded by", text)  # the verdict is not enough runs: the confounders decided nothing
+        self.assertIn("confounded by", cli._versions_text({"skill": "flow", "versions": [{**v, "verdict": "confounded"}]}))
+        empty = cli._score_text({"kind": "skill", "population": {"runs": 0, "open": 0, "stub": 0}, "units": []})
+        self.assertIn("runlens refresh", empty)
+
+    def test_versions_of_a_group_name_without_its_prefix_suggests_it(self):
+        cfg = self.home / "group.toml"
+        cfg.write_text('[[group]]\nname = "release-flow"\nmembers = ["skill:flow"]\n', encoding="utf-8")
+        with redirect_stdout(io.StringIO()), self.assertRaises(ValueError) as ctx:
+            cli.main(["--config", str(cfg), "versions", "release-flow"])
+        self.assertIn("runlens versions group:release-flow", str(ctx.exception))
+
     def test_versions_json_and_text(self):
         _, out = self.run_cli("versions", "flow", "--json")
         doc = json.loads(out)
@@ -153,11 +190,23 @@ class CommandLine(unittest.TestCase):
             self.run_cli("versions", "nothing")
 
     def test_proposals_and_verify(self):
-        _, out = self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
-                                 "--evidence", "x1", "x2")
+        with redirect_stderr(io.StringIO()) as err:
+            _, out = self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
+                                  "--evidence", "x1", "x2")
         self.assertRegex(out.strip(), r"^p-\d{4} recorded: flow bbb$")
+        self.assertIn("no incident with id x1, x2", err.getvalue())  # recorded, but said
+        with redirect_stderr(io.StringIO()) as err:
+            self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
+                         "--base-version", "zzzzzzzz")
+        self.assertIn("matches --base-version zzzzzzzz", err.getvalue())
+        with redirect_stderr(io.StringIO()) as err:
+            self.run_cli("proposals", "add", "--skill", "flow", "--hypothesis", "h", "--measure", "cost", "--direction", "lower",
+                         "--base-version", "aaa")
+        self.assertEqual(err.getvalue(), "")
+        _, out = self.run_cli("verify")
+        self.assertIn("moved", out.splitlines()[0])
         _, out = self.run_cli("proposals", "list", "--json")
-        self.assertEqual(json.loads(out)["proposals"][-1]["evidence"], ["x1", "x2"])
+        self.assertIn(["x1", "x2"], [p["evidence"] for p in json.loads(out)["proposals"]])
         _, out = self.run_cli("verify", "--json")
         r = json.loads(out)["proposals"][-1]
         self.assertEqual(r["verdict"], "not enough runs")

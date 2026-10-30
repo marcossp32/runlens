@@ -1,4 +1,6 @@
 """Print the timeline around an incident or a tool call: what the agent said and did, in order."""
+import sys
+
 from . import config, store
 from .fs import fs_path, plain
 
@@ -24,7 +26,7 @@ def show(ident, steps=12, after=4):
 def _show(con, ident, steps, after):
     found = locate(con, ident)
     if not found:
-        print(f"no incident or tool call with id {ident}")
+        print(f"no incident or tool call with id {ident}; `runlens incidents` lists incident ids", file=sys.stderr)
         return 1
     sid, agent_id, seq, what = found
     agent = con.execute("""SELECT agent_type, role, model, skills, parent_agent_id, description, prompt FROM agents

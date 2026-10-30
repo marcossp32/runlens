@@ -148,7 +148,10 @@ def write_report(cfg, out=None, sessions=None):
     con = load(sessions)
     runs = q(con, "SELECT * FROM v_runs ORDER BY started")
     if not runs:
-        raise SystemExit("no runs in the database: run `runlens refresh` first")
+        if sessions:
+            raise ValueError(f"no run matches --session {', '.join(sessions)} (a full session id or its first 8 characters); "
+                             "`runlens summary` lists the runs")
+        raise ValueError("no runs in the database: run `runlens refresh` first")
     tot = q(con, """SELECT sum(cost_usd) AS cost, bool_or(cost_estimated) AS est, sum(active_ms) AS active,
                            sum(n_agents) AS agents, sum(tool_calls) AS tools, sum(tool_errors) AS errors,
                            sum(incidents) AS incidents, sum(idle_calls) AS idle FROM v_runs""")[0]

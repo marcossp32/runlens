@@ -39,7 +39,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="command", required=True)
 
     def filters(p):
-        p.add_argument("--since", help="runs started on or after this ISO date")
+        p.add_argument("--since", type=iso_date, help="runs started on or after this ISO date")
         p.add_argument("--skill", action="append", help="only runs that used this skill (repeatable)")
         p.add_argument("--project", action="append", help="only runs whose cwd contains this text (repeatable)")
         p.add_argument("--session", action="append", help="only this session id (repeatable)")
@@ -54,7 +54,7 @@ def main(argv=None):
     p.add_argument("--session", action="append")
     p.add_argument("--no-sources", action="store_true", help="skip comparing the archive with ~/.claude/projects")
     p = sub.add_parser("prune")
-    p.add_argument("--before", help="runs started before this ISO date")
+    p.add_argument("--before", type=iso_date, help="runs started before this ISO date")
     p.add_argument("--session", action="append", help="this session id or 8-character prefix (repeatable)")
     p.add_argument("--keep-archive", action="store_true", help="delete database rows only, keep the archived transcripts")
     p.add_argument("--yes", action="store_true", help="delete; without it, only list what would be deleted")
@@ -140,9 +140,16 @@ def main(argv=None):
     # argparse prints help=SUPPRESS subcommands as "==SUPPRESS==", so hidden ones are left out of the metavar instead.
     sub.metavar = "{" + ",".join(c for c in sub.choices if c not in HIDDEN) + "}"
     a = ap.parse_args(argv)
+    if a.command in ("hook", "drain"):
+        return hook_command(a)
     cfg = config.load(a.config)
     flt = lambda: {"since": a.since, "skills": a.skill, "projects": a.project, "sessions": a.session}
 
+    if a.command in ("archive", "ingest", "refresh") and a.session:
+        from .archive import unprune
+        for sid in unprune(a.session):  # naming a pruned run is how it is brought back
+            if not a.quiet:
+                print(f"{sid[:8]}  was pruned: taken off the pruned list")
     if a.command == "refresh":
         from .hooks import drain, pending
         if pending():  # sessions the hook queued: archive and ingest them first, then the rest
@@ -159,7 +166,7 @@ def main(argv=None):
             archive(cfg, quiet=a.quiet, **flt())
         if a.command in ("ingest", "refresh"):
             from .store import ingest
-            ingest(cfg, since=a.since, sessions=a.session, quiet=a.quiet, force=a.force)
+            ingest(cfg, quiet=a.quiet, force=a.force, **flt())
     finally:
         if lock:
             lock.release()
@@ -176,25 +183,35 @@ def main(argv=None):
         print(f"{s['runs']} run folder(s), {s['files']} file(s), {gb(s['bytes'])}; excluded {s['excluded_files']} file(s) "
               f"({gb(s['excluded_bytes'])}); {'at most ' if not a.yes else ''}{s['blobs_new']} distinct file(s) to keep, {gb(s['blob_bytes_new'])}")
         print(f"deleted {s['folders_deleted']} old evidence folder(s)" if a.yes else "dry run: add --yes to convert and delete the old folders")
-    elif a.command == "drain":
-        from .hooks import drain
-        drain(cfg)
     elif a.command == "summary":
         from .store import connect
         con = connect(read_only=True)
-        print(con.sql("""SELECT session_id[:8] AS run, started::DATE AS day, regexp_extract(cwd, '[^\\\\/]+$') AS repo,
-                                round(cost_usd, 2) AS usd, cost_estimated AS est, round(active_ms / 3.6e6, 1) AS active_h,
-                                n_agents AS agents, tool_calls, tool_errors, idle_calls, incidents, bad_markers
-                         FROM v_runs ORDER BY started"""))
-        print(con.sql("""SELECT skill, runs, api_calls, round(cost_usd, 2) AS usd, cost_pct AS pct, tool_calls,
-                                tool_errors, idle_calls, incidents, bad_markers
-                         FROM v_skill ORDER BY cost_usd DESC NULLS LAST"""))
+        try:  # every row, piped or not (DuckDB's own printer cuts long results to 20 rows)
+            emit(con.execute("""SELECT session_id[:8] AS run, started::DATE AS day, regexp_extract(cwd, '[^\\\\/]+$') AS repo,
+                                       round(cost_usd, 2) AS usd, cost_estimated AS est, round(active_ms / 3.6e6, 1) AS active_h,
+                                       n_agents AS agents, tool_calls, tool_errors, idle_calls, incidents, bad_markers
+                                FROM v_runs ORDER BY started"""), a)
+            print()
+            emit(con.execute("""SELECT skill, runs, api_calls, round(cost_usd, 2) AS usd, cost_pct AS pct, tool_calls,
+                                       tool_errors, idle_calls, incidents, bad_markers
+                                FROM v_skill ORDER BY cost_usd DESC NULLS LAST"""), a)
+            if not con.execute("SELECT count(*) FROM runs").fetchone()[0]:
+                print("no runs in the database yet: run `runlens refresh`")
+        finally:
+            con.close()
     elif a.command == "report":
         from .report import write_report
         print(write_report(cfg, a.out, a.session))
     elif a.command == "dashboard":
         from .dashboard import write_dashboard
         print(write_dashboard(cfg, a.out))
+        from .store import connect
+        con = connect(read_only=True)
+        try:
+            if not con.execute("SELECT count(*) FROM runs").fetchone()[0]:
+                print("note: no runs in the database yet, so the page is empty: run `runlens refresh`", file=sys.stderr)
+        finally:
+            con.close()
     elif a.command in ("score", "versions", "proposals", "verify"):
         return method_command(a, cfg)
     elif a.command == "show":
@@ -241,9 +258,6 @@ def main(argv=None):
         from .evals import export
         return 0 if export(cfg, ids=a.incident, skills=a.skill, labels=a.label, types=a.type, fmt=a.format, out=a.out,
                            limit=a.limit, use_history=a.history) else 1
-    elif a.command == "hook":
-        from .hooks import handle
-        return handle(cfg, sys.stdin.read())
     elif a.command == "install":
         from .hooks import install
         install(skill=not a.no_skill)
@@ -252,11 +266,36 @@ def main(argv=None):
         uninstall()
     elif a.command == "sql":
         from .store import connect
+        if not a.query.strip():
+            raise ValueError('sql: give a query, e.g. runlens sql "SELECT * FROM v_runs"')
         con = connect(read_only=True)
         try:
-            emit(con.execute(a.query), a)
+            # read_only keeps the database as it is, not the disk: COPY ... TO, ATTACH and INSTALL write files.
+            # Locked, so the query itself cannot switch it back on.
+            con.execute("SET enable_external_access = false")
+            con.execute("SET lock_configuration = true")
+            cur = con.execute(a.query)
+            if cur is not None:
+                emit(cur, a)
         finally:
             con.close()
+    return 0
+
+
+def hook_command(a):
+    """The hook and its detached drain. Neither has a terminal to print to (the drain's stderr goes nowhere), so a
+    config that cannot load is written to hooks.log, and the hook still queues the session before anything else."""
+    from . import hooks
+    try:
+        cfg, error = config.load(a.config), None
+    except Exception as e:
+        cfg, error = None, e
+    if a.command == "hook":
+        return hooks.handle(cfg, sys.stdin.read(), config_error=error)
+    if error:
+        hooks.log(f"drain: {hooks.config_error_text(error)}")
+        return 1
+    hooks.drain(cfg)
     return 0
 
 
@@ -285,7 +324,11 @@ def method_command(a, cfg):
         elif a.command == "versions":
             out = bench.versions_summary(model, proposals.unit_id(a.skill))
             if out is None:
-                raise ValueError(f"no finished, non-stub runs of {a.skill!r}; `runlens score` lists the units")
+                other = [u["id"] for u in model["units"] if ":" not in a.skill and u["id"] in (f"group:{a.skill}", f"agent:{a.skill}")]
+                if other:
+                    raise ValueError(f"{a.skill!r} is not a skill; did you mean `runlens versions {other[0]}`?")
+                raise ValueError(f"no finished, non-stub runs of {a.skill!r}; `runlens score` lists the units "
+                                 "(`--kind group` and `--kind agent` for the others)")
             # where the skill's files live, most recently loaded first, so its text can be read and cited
             out["skill_dirs"] = [r[0] for r in con.execute(
                 """SELECT skill_dir FROM skill_loads WHERE skill = ? AND skill_dir IS NOT NULL
@@ -294,13 +337,26 @@ def method_command(a, cfg):
         elif a.command == "proposals":
             p = proposals.add(con, model, a.skill, a.hypothesis, a.measure, a.direction, a.evidence, a.base_version)
             print(f"{p['id']} recorded: {p['skill']} {p['base_version']}")
+            # recorded anyway (the retro may name a version or incident runlens has not ingested yet), but said
+            known = {"+".join(x["hash"] for x in v["parts"]) for v in model["versions"].get(proposals.unit_id(a.skill)) or []}
+            if a.base_version and p["base_version"] not in known:
+                print(f"warning: no recorded version of {a.skill} matches --base-version {a.base_version}; "
+                      "`runlens versions` lists them", file=sys.stderr)
+            if a.evidence:
+                found = {r[0] for r in con.execute("SELECT incident_id FROM incidents WHERE incident_id IN (SELECT unnest(?::VARCHAR[]))",
+                                                   [list(a.evidence)]).fetchall()}
+                missing = [x for x in a.evidence if x not in found]
+                if missing:
+                    print(f"warning: no incident with id {', '.join(missing)}; `runlens incidents` lists them", file=sys.stderr)
         else:
             results = proposals.verify(con, model, a.id)
             if a.json:
                 dump({"proposals": results})
             else:
-                cols = ["id", "skill", "measure", "direction", "verdict", "observed", "runs_before", "runs_after"]
-                print(_table(cols, [[r.get(c) for c in cols] for r in results]))
+                cols = ["id", "skill", "measure", "predicted", "verdict", "moved", "runs_before", "runs_after"]
+                print(_table(cols, [[r.get({"predicted": "direction"}.get(c, c)) or "-" for c in cols] for r in results]))
+                print("predicted: the direction the hypothesis names; moved: the way the measure went (higher or lower), "
+                      "when there were enough runs to tell")
                 for r in results:
                     if r["confounders"]:
                         print(f"{r['id']} confounded by: {'; '.join(r['confounders'])}")
@@ -316,7 +372,9 @@ def _num(x, d=1):
 def _diff_text(d):
     if not d:
         return "-"
-    return f"{_num(d['score'])} [{_num(d['ci95'][0])}, {_num(d['ci95'][1])}]" if d["ci95"] else _num(d["score"])
+    if d["ci95"]:
+        return f"{_num(d['score'])} [{_num(d['ci95'][0])}, {_num(d['ci95'][1])}]"
+    return f"{_num(d['score'])} (no interval)" if d["score"] is not None else "-"
 
 
 def _outcome_text(o):
@@ -327,24 +385,43 @@ def _score_text(out):
     pop = out["population"]
     head = (f"{pop['runs']} finished runs ({pop['open']} open and {pop['stub']} stub runs left out). Each unit's current "
             "version against its previous one (difference: 100 = no change); units are not ranked against each other.")
-    cols = ["unit", "runs", "invocations", "current", "verdict", "vs", "difference", "outcome", "cost/inv"]
-    rows = [[u["unit"], u["runs"], u["invocations"], u["current"] or "-", u["verdict"] or "-", u["vs"] or "-",
-             _diff_text(u["difference"]), _outcome_text(u["outcome"]), _num(u["typical"].get("cost"), 2)] for u in out["units"]]
+    if not out["units"]:
+        hint = ("run `runlens refresh` to load your runs" if not pop["runs"] else
+                f"no {out['kind']} has a finished, non-stub run (try another --kind)")
+        return f"{head}\nNothing to score: {hint}."
+    cols = ["unit", "runs", "invocations", "current", "current runs", "verdict", "vs", "difference", "outcome", "cost/inv"]
+    rows = [[u["unit"], u["runs"], u["invocations"], u["current"] or "-", _num(u.get("current_runs"), 0),
+             u["verdict"] or ("only one version" if u["versions"] == 1 else "-"), u["vs"] or "-",
+             _diff_text(u["difference"]), _outcome_text(u.get("current_outcome")),
+             _num((u.get("current_typical") or {}).get("cost"), 2)] for u in out["units"]]
     notes = [f"{u['unit']}: confounded by {'; '.join(u['confounders'])}" for u in out["units"] if u["verdict"] == "confounded"]
-    return "\n".join([head, _table(cols, rows)] + notes)
+    legend = ("runs and invocations count every version; current runs, outcome and cost/inv are the current version's "
+              "own. difference: the current version against `vs`, with its 95% interval (no interval: too few runs a side)")
+    return "\n".join([head, _table(cols, rows), legend] + notes)
 
 
 def _versions_text(out):
     cols = ["version", "hash", "runs", "invocations", "score", "verdict", "vs", "difference", "outcome", "cost/success"]
     rows = [[v["label"], v["hash"], v["runs"], v["invocations"], _num(v["score"]), v["verdict"] or "first", v["vs"] or "-",
              _diff_text(v["difference"]), _outcome_text(v["outcome"]), _num(v["cost_per_success_usd"], 2)] for v in out["versions"]]
-    notes = [f"{v['label']}: confounded by {'; '.join(v['confounders'])}" for v in out["versions"] if v["confounders"]]
+    # only under a `confounded` verdict, as in `score`: under `not enough runs` the confounders decided nothing
+    notes = [f"{v['label']}: confounded by {'; '.join(v['confounders'])}" for v in out["versions"] if v["verdict"] == "confounded"]
     dirs = [f"files: {'; '.join(out['skill_dirs'])}"] if out.get("skill_dirs") else []
     return "\n".join([f"{out['skill']}: score 100 = its own typical run; difference = the version against the one before "
                       "(100 = no change)", _table(cols, rows)] + notes + dirs)
 
 
+def iso_date(text):
+    """argparse type for --since and --before: an ISO date, refused with the flag's name instead of a traceback later."""
+    try:
+        config.since_utc(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an ISO date like 2026-09-28 or 2026-09-28T14:00") from None
+    return text
+
+
 def output_flags(p):
+
     g = p.add_mutually_exclusive_group()
     g.add_argument("--json", action="store_true", help="print the rows as a JSON array")
     g.add_argument("--csv", action="store_true", help="print the rows as CSV")
@@ -402,10 +479,17 @@ def friendly(e):
         print(f"runlens: config error: {e}", file=sys.stderr)
     elif db_error:
         from .store import is_locked
+        label = type(e).__name__.removesuffix("Exception")
         msg = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        # DuckDB starts its messages with the same label ("Parser Error: syntax error at ..."): say it once
+        prefix = f"{label} Error: "
+        if msg.lower().startswith(prefix.lower()):
+            msg = msg[len(prefix):]
         if is_locked(e):
-            msg = f"the database is in use by another runlens process; try again in a moment ({msg})"
-        print(f"runlens: {type(e).__name__.removesuffix('Exception')} error: {msg}", file=sys.stderr)
+            # On Windows the OS part of the text is localized and DuckDB decodes it wrongly ("est�"): leave it out then
+            raw = "" if "�" in msg else f" ({msg})"
+            msg = f"the database is in use by another runlens process; try again in a moment{raw}"
+        print(f"runlens: {label} error: {msg}", file=sys.stderr)
     elif isinstance(e, (ValueError, OSError)):
         print(f"runlens: {e}", file=sys.stderr)
     else:
