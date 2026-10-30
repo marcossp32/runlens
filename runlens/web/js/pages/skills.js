@@ -648,7 +648,7 @@ function peakDayTakeaway(days, f, what) {
 // so ×0.66 on a cost is a version that costs about 1.5 times as much; it is not a percentage change of the measure.
 // A ratio at the cap was clipped (the score stops counting there): it reads "at least" / "at most".
 const clipped = (r) => Math.abs(Math.log(r)) >= LOG_CAP - 1e-6;
-const ratioWords = (r) => (!valid(r) || r <= 0 ? "—" : Math.abs(Math.log(r)) < 0.005 ? "×1.00" : `${clipped(r) ? (r > 1 ? "≥ " : "≤ ") : ""}${fmt.ratio(r)}`);
+const ratioWords = (r) => (!valid(r) || r <= 0 ? "—" : Math.abs(Math.log(r)) < 0.005 ? `×${nf({ minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1)}` : `${clipped(r) ? (r > 1 ? "≥ " : "≤ ") : ""}${fmt.ratio(r)}`);
 const ratioTone = (r) => (Math.abs(Math.log(r)) < 0.005 ? "about the same" : r > 1 ? "better" : "worse");
 
 function measuresTakeaway(rows, cols, cur) {
@@ -664,5 +664,10 @@ function measuresTakeaway(rows, cols, cur) {
     }
   }
   if (!big) return null;
-  return `${fmt.int(up)} cells are better than usual and ${fmt.int(down)} worse (by more than 5%). The biggest gap: ${big.r.name}, ${metricShort(big.c).toLowerCase()} ${ratioWords(big.d.ratio)} (${ratioTone(big.d.ratio)}).`;
+  // A rate's ratio is taken on 1 − p (floored), so a rate is named by its two values, as in its cell; a clipped ratio is
+  // where the score stops counting, not a measured size.
+  const d = big.d;
+  const what = big.c.type === "rate" ? `${fmt.metric(big.c, d.value)} vs ${fmt.metric(big.c, d.ref)}` : ratioWords(d.ratio);
+  const how = [ratioTone(d.ratio), `${fmt.runs(d.n)}`, clipped(d.ratio) ? `counted at the ×${fmt.num(DATA.method.max_ratio, 2)} cap` : null].filter(Boolean).join(", ");
+  return `${fmt.int(up)} cells are better than usual and ${fmt.int(down)} worse (by more than 5%). The biggest gap: ${big.r.name}, ${metricShort(big.c).toLowerCase()} ${what} (${how}).`;
 }

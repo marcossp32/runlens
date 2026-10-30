@@ -371,6 +371,9 @@ class Renders(unittest.TestCase):
         self.assertRegex(text, r"60 ?% vs 90 ?%")  # a rate shows its value against the reference
         self.assertNotRegex(text, r"[+−]\d+%")  # no signed percentage of a ratio
         self.assertIn("×", text)
+        # the takeaway names a rate by its values too, never by a clipped ratio of failure rates ("outcome ≥ ×2")
+        self.assertNotRegex(text, r"outcome [≥≤] ×")
+        self.assertRegex(text, r"The biggest gap: flow, outcome 60 ?% vs 90 ?% \((better|worse), 6 runs, counted at the ×2 cap\)")
 
     def test_confounded_version_is_not_called_clearly_above(self):
         path = TMP / "conf.html"
