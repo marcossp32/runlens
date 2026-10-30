@@ -644,7 +644,8 @@ class Renders(unittest.TestCase):
         for level, many in (("minor", False), ("patch", True)):
             m["method"]["cc_version"] = level
             path.write_text(dashboard.render(m), encoding="utf-8")
-            dom = dump(path, "#/runs", size="390,860", until=r'class="vmarklabel"')
+            # a tall phone window: charts are drawn only near the viewport, and the time chart sits below 860 px
+            dom = dump(path, "#/runs", size="390,4000", until=r'class="vmarklabel"')
             labels = re.findall(r'<text class="vmarklabel"[^>]*\by="([\d.]+)"[^>]*>([^<]*)</text>', dom)
             self.assertTrue(labels, level)
             # by default a patch release is no marker; with "patch" each one is
