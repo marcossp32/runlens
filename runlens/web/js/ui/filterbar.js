@@ -153,8 +153,10 @@ function renderFilterBar() {
   }
 }
 
-// One open menu at a time; a click outside or Escape closes it.
+// One open menu at a time; a click outside or Escape closes it. A click on a control the menu has just redrawn
+// (Save in Views) lands on a node no longer in the page: that is a click inside, not outside.
 document.addEventListener("click", (e) => {
+  if (!e.target.isConnected) return;
   for (const d of document.querySelectorAll("details.fdrop[open], details.menu[open]")) if (!d.contains(e.target)) d.open = false;
 });
 document.addEventListener("keydown", (e) => {

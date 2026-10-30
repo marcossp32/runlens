@@ -25,7 +25,8 @@ function storeViews(list) {
   }
 }
 
-function renderViewsMenu() {
+// `said` is a message for the status line, kept across the redraw that saving causes.
+function renderViewsMenu(said = "") {
   if (!VIEWS_EL) return;
   const wasOpen = VIEWS_EL.open;
   const configured = DATA.views || [];
@@ -39,7 +40,7 @@ function renderViewsMenu() {
       VIEWS_EL.open = true;
     } }, "Delete") : h("span", { class: "muted vfrom" }, "config.toml"));
   const name = h("input", { type: "text", maxlength: 80, placeholder: "Name this view", "aria-label": "Name for the current view" });
-  const status = h("span", { class: "muted", role: "status" });
+  const status = h("span", { class: "muted", role: "status" }, said);
   const save = button("Save", () => {
     const n = name.value.trim();
     if (!n) {
@@ -48,9 +49,10 @@ function renderViewsMenu() {
     }
     const list = savedViews().filter((x) => x.name !== n);
     list.unshift({ name: n, hash: location.hash || "#/" });
-    status.textContent = storeViews(list) ? "Saved." : "This browser does not allow saving.";
-    renderViewsMenu();
+    renderViewsMenu(storeViews(list) ? "Saved." : "This browser does not allow saving.");
     VIEWS_EL.open = true;
+    const again = VIEWS_EL.querySelector(".vsave input");
+    if (again) again.focus({ preventScroll: true });
   }, { class: "btn" });
   name.addEventListener("keydown", (e) => {
     if (e.key === "Enter") save.click();
