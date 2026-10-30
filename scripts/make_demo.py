@@ -226,7 +226,7 @@ for day in range(DAYS):
                         seq += 1  # one tool call per turn, as agents.tool_calls says
                         rows["tool_calls"].append({"session_id": sid, "agent_id": cid, "tool_use_id": "t%032x" % nest.getrandbits(128), "msg_id": cmid,
                                                    "seq": seq, "ts": t, "duration_ms": int(nest.expovariate(1 / 900)),
-                                                   "tool": nest.choice(["Read", "Grep", "Glob"]), "skill": skill, "is_error": False,
+                                                   "tool": "Glob", "skill": skill, "is_error": False,
                                                    "error_class": None, "idle": False})
                     sub_cost += c_cost
                     n_agents += 1
