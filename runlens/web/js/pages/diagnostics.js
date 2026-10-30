@@ -353,7 +353,7 @@ function diagAgents() {
       kpi("Per run", fmt.num(all.length / Math.max(1, runsN), 1), `in ${fmt.runs(runsN)} that started any`),
       kpi("In the background", fmt.pct(bg / all.length), `${fmt.int(bg)} of ${fmt.int(all.length)}`),
       kpi("Subagent spend", fmt.usd(sumOf(all, (a) => a.cost)), `${fmt.usd(sumOf(all, (a) => a.cost) / all.length)} each`),
-      kpi("Did not complete", fmt.int(notDone), `of ${fmt.int(all.length)} · stopped by you: ${fmt.int(all.filter((a) => a.stopped).length)}, counted on their own`)]),
+      kpi("Did not complete", fmt.int(notDone), `of ${fmt.int(all.length)}${all.some((a) => a.stopped) ? ` · stopped by you: ${fmt.int(all.filter((a) => a.stopped).length)}, counted on their own` : ""}`)]),
     section({ title: "Cost and duration by type", intro: "What each kind of subagent costs, and how long it runs." },
       h("div", { class: "grid" },
         barChart({ title: "Spend by agent type", question: "Which kind of subagent costs the most?", items: types.map((a) => ({ label: a.label, name: a.label, value: a.cost || 0, rows: [["Agents", fmt.int(a.one)]] })), ns: "agent",

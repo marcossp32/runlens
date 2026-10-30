@@ -436,7 +436,7 @@ class Renders(unittest.TestCase):
         path.write_text(dashboard.render(model()), encoding="utf-8")
         text = visible(dump(path, "#/method"))
         self.assertNotIn("keeps false", text)  # the README's null simulation: 8% at the final look, 14% at some look
-        self.assertRegex(text, r"14 ?% of the time at some look and 8 ?% at the final one")
+        self.assertRegex(text, r"wrong 8 ?% of the time, and checking after every run found a false call at some look 14 ?% of the time")
         text = visible(dump(path, "#/method?tab=limits"))
         self.assertNotIn("little or no work of its own", text)  # a skill a subagent loads gets its own unit and versions
         self.assertIn("is scored like any other", text)
