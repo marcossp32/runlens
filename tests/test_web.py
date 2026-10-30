@@ -387,6 +387,9 @@ class Renders(unittest.TestCase):
         self.assertRegex(text, r"60 ?% vs 90 ?%")  # a rate shows its value against the reference
         self.assertNotRegex(text, r"[+−]\d+%")  # no signed percentage of a ratio
         self.assertIn("×", text)
+        # the takeaway names a rate by its values too, never by a clipped ratio of failure rates ("outcome ≥ ×2")
+        self.assertNotRegex(text, r"outcome [≥≤] ×")
+        self.assertRegex(text, r"The biggest gap: flow, outcome 60 ?% vs 90 ?% \((better|worse), 6 runs, counted at the ×2 cap\)")
 
     def test_confounded_version_is_not_called_clearly_above(self):
         path = TMP / "conf.html"
@@ -396,6 +399,96 @@ class Renders(unittest.TestCase):
             self.assertNotRegex(text, r"release-flow is clearly above", route)
         text = visible(dump(path, "#/?kind=groups"))
         self.assertIn("1 confounded", text)
+
+    def test_range_takeaway_speaks_only_of_the_rows_it_judged(self):
+        # A confounded skill whose whole range is above 100 sits next to a skill whose range crosses 100:
+        # the takeaway may not say that every range crosses 100.
+        m = wording_model()
+        flow, once = m["units"][0], m["units"][1]
+        flow["ci"] = m["versions"]["skill:flow"][-1]["ci"] = [95.0, 125.0]
+        once.update(verdict="confounded", direction="better", vs="v0", confounders=["Claude Code 2.1 → 2.2"], ci=[106.0, 139.0], score=120.0, runs=6, low_sample=False)
+        path = TMP / "ranges.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/"))
+        self.assertNotIn("every range crosses 100", text)
+        self.assertIn("The one skill that can be judged is not clearly above or below its usual level: its range crosses 100.", text)
+
+    def test_compare_chart_words_agree_with_the_table(self):
+        # The dot is A ÷ B (×1.25 for cost); the table is B ÷ A − 1 on the same values. The words beside the dot
+        # must give the table's number, not "25% better".
+        path = TMP / "compare.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/compare?a=skill%3Aflow&av=v1&b=skill%3Aflow&bv=v2", until=r'class="value'))
+        self.assertNotRegex(text, r"25 ?% better")
+        self.assertRegex(text, r"8 ?% lower")  # the cost row of the chart
+        self.assertRegex(text, r"−8 ?%")  # the same change in the table
+
+    def test_truncated_bar_charts_take_shares_of_the_whole(self):
+        # 14 tools: the time chart keeps the twelve with the most time (T13 has the fewest calls and nearly all of it),
+        # and both charts take shares over every tool, not over the bars they keep.
+        m = model()
+        ids = [r[0] for r in m["explore"]["runs"]["r"]]
+        m["explore"]["tools"] = explorer.table(("run", "tool", "skill", "calls", "errors", "denied", "ms"),
+                                               [[r, f"T{i}", "flow", 100 - i, 0, 0, 1_000_000 if i == 13 else 1000] for r in ids for i in range(14)])
+        path = TMP / "tools.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics?tab=tools", until=r'class="value'))
+        self.assertRegex(text, r"T13: 99 ?% of the time in tools")
+        self.assertRegex(text, r"· 99 ?%")  # T13's bar, in the chart, with the takeaway's share
+        self.assertRegex(text, r"· 7[.,]6 ?%")  # T0's 100 calls of 1,309, not of the 1,134 the twelve bars hold
+        self.assertNotIn("does most of the work", text)
+
+    def test_compactions_counted_as_problems_are_not_called_other(self):
+        m = model()
+        m["explore"]["incidents"]["r"].append([m["explore"]["runs"]["r"][0][0], 400, "compaction", "flow", 0, "main", "incc", "auto", 0, 1, None])
+        path = TMP / "comp.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics"))
+        self.assertNotIn("that are not problems", text)
+        self.assertIn("Also counted among the problems above: context compactions.", text)
+
+    def test_help_texts_agree_with_the_readme(self):
+        path = TMP / "help.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/method"))
+        self.assertNotIn("keeps false", text)  # the README's null simulation: 8% at the final look, 14% at some look
+        self.assertRegex(text, r"wrong 8 ?% of the time, and checking after every run found a false call at some look 14 ?% of the time")
+        text = visible(dump(path, "#/method?tab=limits"))
+        self.assertNotIn("little or no work of its own", text)  # a skill a subagent loads gets its own unit and versions
+        self.assertIn("is scored like any other", text)
+        text = visible(dump(path, "#/unit/agent%3AExplore%7Cscan"))
+        self.assertNotIn("scored as one group", text)  # agent roles are described, not scored
+        self.assertIn("are not scored", text)
+        text = visible(dump(path, "#/unit/agent%3AExplore%7Cscan?tab=drivers"))
+        self.assertNotIn("No measure has data", text)
+        self.assertIn("Agent roles are not scored", text)
+
+    def test_spend_per_success_says_which_average_it_is(self):
+        # Spend ÷ eventual successes is not the geometric-mean cost per invocation, and not tied to the first-pass rate.
+        path = TMP / "cps.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        text = visible(dump(path, "#/?tab=outcome"))
+        self.assertNotIn("Cost per success", text)
+        self.assertIn("Spend per eventual success", text)
+        self.assertIn("a typical value (a geometric mean)", text)
+
+    def test_minor_wording(self):
+        path = TMP / "minor.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/")
+        verdicts = re.search(r'<span class="verdicts">(.*?)</span></div>', dom, re.S).group(1)
+        self.assertNotRegex(visible(verdicts), r"≈\s*2\b")  # ≈ counts "no clear change" only, not the first version too
+        self.assertIn("1 other", visible(verdicts))
+        self.assertIn("100 = the group's typical run", visible(dump(path, "#/?kind=groups")))
+        text = visible(dump(path, "#/unit/skill%3Aflow?tab=drivers"))
+        self.assertIn("Value that counts", text)  # the ratio's own operand, next to the raw values
+        text = visible(dump(path, "#/diagnostics?tab=agents", until=r'class="value'))
+        self.assertNotIn("stopped by you", text.replace("stopped by you:", ""))  # "N · M stopped by you" read as M out of N
+        self.assertIn("5 subagents", text)  # the duration chart counts subagents (those with an end), not calls
+        self.assertNotRegex(text, r"\b\d+ calls\b")
+        text = visible(dump(path, "#/diagnostics?tab=models"))
+        self.assertIn("1 model ·", text)
+        self.assertNotIn("1 models", text)
 
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
@@ -541,6 +634,22 @@ class Recompute(unittest.TestCase):
         self.assertEqual(int(kpis["Runs"].replace(",", "")), runs)
         self.assertEqual(int(kpis["Pull requests"].replace(",", "")), prs)
         self.assertEqual(re.sub(r"\D", "", kpis["Spend"]), f"{round(spend * 100)}")  # digits only: the separators follow the browser's locale
+
+    def test_flow_takeaway_says_most_only_for_a_majority(self):
+        # In the demo the commonest first skill starts well under half the runs, and the widest band of the
+        # sankey (one step) is not the matrix's most common hand-over (every step).
+        text = visible(dump(self.path, "#/diagnostics?tab=flow", budget=12000))
+        self.assertNotIn("Most runs start with", text)
+        self.assertRegex(text, r"More runs start with [\w-]+ than with any other skill \(\d+ of \d+ runs\)")
+        self.assertNotIn("the most common hand-over is", text)
+        self.assertRegex(text, r"the widest band is [\w-]+ → [\w-]+ from step \d to \d")
+
+    def test_ties_are_not_reported_as_one_winner(self):
+        # In the demo two problem kinds have 18 problems each, and two tools show the same rounded average call.
+        text = visible(dump(self.path, "#/diagnostics", budget=12000))
+        self.assertRegex(text, r"(Error streak and Repeated call|Repeated call and Error streak): 24 ?% of the problems each")
+        text = visible(dump(self.path, "#/diagnostics?tab=tools", budget=12000))
+        self.assertRegex(text, r"(Bash and Grep|Grep and Bash) are the slowest on average")
 
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")

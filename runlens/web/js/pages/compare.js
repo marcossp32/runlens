@@ -96,9 +96,11 @@ function comparison(sa, sb) {
   const forestRows = pair && d ? [
     ...(d.score != null ? [{ label: "Weighted score", bold: true, effect: d.score / 100, ci: d.ci ? [d.ci[0] / 100, d.ci[1] / 100] : null,
       tone: { better: "better", worse: "worse" }[pair.direction] || "unclear", word: pair.verdict, tip: [["Weights", customWeights() ? "yours" : "the defaults"]] }] : []),
-    // A rate's effect is worked out on 1 − p (floored) and clipped, so a rate reads as its two values, not as a percentage.
+    // The words say what the table under the chart says. A cost or a time reads as B's change against A (B ÷ A − 1, as
+    // in the table); the dot is A ÷ B, how many times better B is, so "40 % better" there would be "−29 %" here. A rate's
+    // or count's effect is worked out on floored values (1 − p for a rate) and clipped, so it reads as its two values.
     ...rows.filter((r) => r.pm).map((r) => ({ label: r.label, effect: r.pm.effect, ci: r.pm.ci, tone: r.tone,
-      words: r.m.type === "rate" ? `${fmt.metric(r.m, r.a)} → ${fmt.metric(r.m, r.b)}` : null,
+      words: r.m.type === "log" && r.d != null ? `${fmt.pct(Math.abs(r.d), Math.abs(r.d) < 0.1 ? 1 : 0)} ${r.d < 0 ? "lower" : "higher"}` : `${fmt.metric(r.m, r.a)} → ${fmt.metric(r.m, r.b)}`,
       tip: [["A", fmt.metric(r.m, r.a)], ["B", fmt.metric(r.m, r.b)], ["Weight", `×${r.pm.weight}`]] })),
   ] : [];
   const conf = pair && pair.confounders ? pair.confounders : [];

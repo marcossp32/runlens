@@ -87,7 +87,7 @@ function runsPage() {
       kpi("Spend", fmt.usd(spendAll), `${fmt.usd(spendAll / runs.length)} per run`),
       kpi("Active time", fmt.ms(sumOf(runs, (r) => r.active_ms)), `${fmt.ms(sumOf(runs, (r) => r.active_ms) / runs.length)} per run`),
       kpi("Subagents", fmt.int(sumOf(runs, (r) => r.agents)), `most in one run: ${fmt.int(Math.max(0, ...runs.map((r) => r.agents || 0)))}`),
-      kpi("Pull requests", fmt.int(prs), "opened during these runs")]),
+      kpi("Pull requests", fmt.int(prs), "PR links summed over these runs; a PR linked in two runs counts twice")]),
     section({ title: "When and how much", intro: "Every day with a run, and every run's cost on a time axis." },
       h("div", { class: "grid" },
         calendarChart({ title: "Activity by day", question: "When do I work, and what does a day cost?", sub: "one square per day, weeks across · darker = more",

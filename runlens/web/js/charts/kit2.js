@@ -100,7 +100,7 @@ function forestPlot(spec) {
       { label: "◆ the weighted score", css: "var(--text2)", shape: "diamond" }]),
     table: () => ({
       cols: [{ label: "Row", value: (r) => r.label }, { label: "Effect (×)", num: true, value: (r) => r.effect, cell: (r) => fmt.ratio(r.effect) },
-        { label: "In words", value: (r) => effectWords(r.effect) },
+        { label: "In words", value: (r) => r.words || effectWords(r.effect) },
         { label: "Interval low", num: true, value: (r) => (r.ci ? r.ci[0] : null), cell: (r) => (r.ci ? fmt.ratio(r.ci[0]) : "—") },
         { label: "Interval high", num: true, value: (r) => (r.ci ? r.ci[1] : null), cell: (r) => (r.ci ? fmt.ratio(r.ci[1]) : "—") },
         { label: "Reading", value: (r) => TONE[r.tone].word }, ...(spec.extraCols || [])],
@@ -134,7 +134,7 @@ function forestPlot(spec) {
         if (r.ci) kids.push(svg("line", { class: "ciline", x1: x(clamp(r.ci[0], lo, hi)), x2: x(clamp(r.ci[1], lo, hi)), y1: y, y2: y, style: `stroke:${t.css}` }));
         kids.push(marker(r.bold ? "diamond" : "circle", x(clamp(r.effect, lo, hi)), y, r.bold ? 7 : 5.5, { class: `dot${r.ci ? "" : " hollow"}`, style: r.ci ? `fill:${t.css}` : `stroke:${t.css}` }));
         kids.push(svg("rect", { class: "hit", x: x0 - 4, y: y - R / 2, width: x1 - x0 + 8, height: R }));
-        root.append(markGroup({ title: r.label, rows: [["Effect", `${effectWords(r.effect)} (${fmt.ratio(r.effect)})`], ["Interval", r.ci ? `${fmt.ratio(r.ci[0])} – ${fmt.ratio(r.ci[1])}` : "none: too few runs"],
+        root.append(markGroup({ title: r.label, rows: [["Effect", `${r.words || effectWords(r.effect)} (${fmt.ratio(r.effect)})`], ["Interval", r.ci ? `${fmt.ratio(r.ci[0])} – ${fmt.ratio(r.ci[1])}` : "none: too few runs"],
           ["Reading", `${t.icon} ${r.word || t.word}`], ...(r.tip || [])] }, ...kids));
         root.append(svg("text", { class: `value${r.bold ? " strong" : ""}`, x: x1 + 8, y: y + 4 }, fitText(`${t.icon} ${txt(r)}`, w - x1 - 10, FONT.axis)));
       });
@@ -264,9 +264,11 @@ function calendarChart(spec) {
 }
 
 /* ---- distributions per row on shared log bins (tool call durations) ----
-   spec: {title, question, sub, rows: [{label, bins, n, css}], edges (ms), notes} */
+   spec: {title, question, sub, rows: [{label, bins, n, css}], edges (ms), notes, unit: {one, many, row} (default: call, calls, Tool)} */
 function histRows(spec) {
   const rows = spec.rows.filter((r) => r.n > 0);
+  const u = spec.unit || { one: "call", many: "calls", row: "Tool" };
+  const count = (n) => `${fmt.compact(n)} ${n === 1 ? u.one : u.many}`;
   if (!rows.length) return emptyCard(spec.title, "No durations recorded.", spec.notes);
   const edges = spec.edges;
   const nb = edges.length + 1;
@@ -282,9 +284,9 @@ function histRows(spec) {
   };
   return chartCard({
     title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, height: rows.length * 34 + 60,
-    legend: () => legend([{ label: "share of the tool's calls in each band", css: "var(--c1)" }, { label: "median band", css: "var(--text)", kind: "line" }]),
+    legend: () => legend([{ label: `share of the ${u.row.toLowerCase()}'s ${u.many} in each band`, css: "var(--c1)" }, { label: "median band", css: "var(--text)", kind: "line" }]),
     table: () => ({
-      cols: [{ label: "Tool", value: (r) => r.label }, { label: "Calls", num: true, value: (r) => r.n },
+      cols: [{ label: u.row, value: (r) => r.label }, { label: u.many.charAt(0).toUpperCase() + u.many.slice(1), num: true, value: (r) => r.n },
         { label: "Median band", value: (r) => binLabel(quant(r.bins, 0.5)) }, { label: "Slowest 10% from", value: (r) => binLabel(quant(r.bins, 0.9)) },
         ...edges.concat([Infinity]).map((e, i) => ({ label: binLabel(i), num: true, value: (r) => r.bins[i] || 0 }))],
       rows,
@@ -292,14 +294,14 @@ function histRows(spec) {
     draw(w) {
       const RH = PREFS.density === "compact" ? 28 : 34, top = 8;
       const labelW = Math.min(maxLabel(rows.map((r) => r.label), FONT.label) + 14, Math.max(80, w * 0.25));
-      const nW = maxLabel(rows.map((r) => `${fmt.compact(r.n)} calls`), FONT.axis) + 12;
+      const nW = maxLabel(rows.map((r) => count(r.n)), FONT.axis) + 12;
       const x0 = labelW, x1 = Math.max(x0 + 120, w - nW);
       const bw = (x1 - x0) / nb;
       const H = top + rows.length * RH + 44;
       const root = svgRoot(w, H, `${spec.title}: ${rows.length} distributions`);
       const tickAt = [0, 2, 4, 6, 8, 10].filter((i) => i < nb - 1);
       axisX(root, { scale: (i) => x0 + (i + 1) * bw, ticks: tickAt.map((i) => ({ v: i, label: fmt.ms(edges[i]) })), x0, x1, y: top + rows.length * RH, grid: true, gridTop: top,
-        title: "Call duration (log scale)" });
+        title: u.axis || "Call duration (log scale)" });
       rows.forEach((r, i) => {
         const yb = top + (i + 1) * RH - 3, hmax = RH - 8;
         root.append(svg("text", { class: "rowlabel", x: labelW - 10, y: yb - hmax / 2 + 4, "text-anchor": "end" }, fitText(r.label, labelW - 12, FONT.label)));
@@ -307,13 +309,13 @@ function histRows(spec) {
         r.bins.forEach((c, j) => {
           if (!c) return;
           const hh = Math.max(1.5, (c / peak) * hmax);
-          root.append(markGroup({ title: `${r.label} · ${binLabel(j)}`, rows: [["Calls", fmt.int(c)], ["Share of its calls", fmt.pct(c / r.n)]] },
+          root.append(markGroup({ title: `${r.label} · ${binLabel(j)}`, rows: [[u.many.charAt(0).toUpperCase() + u.many.slice(1), fmt.int(c)], [`Share of its ${u.many}`, fmt.pct(c / r.n)]] },
             colPath(x0 + j * bw + 1, Math.max(1, bw - 2), yb, yb - hh, 2), svg("rect", { class: "hit", x: x0 + j * bw, y: yb - hmax, width: bw, height: hmax })));
           root.lastChild.firstChild.setAttribute("style", `fill:${r.css || "var(--c1)"}`);
         });
         const med = quant(r.bins, 0.5);
         root.append(svg("line", { class: "median", x1: x0 + (med + 0.5) * bw, x2: x0 + (med + 0.5) * bw, y1: yb + 1, y2: yb - hmax - 1 }));
-        root.append(svg("text", { class: "value", x: x1 + 8, y: yb - hmax / 2 + 4 }, `${fmt.compact(r.n)} calls`));
+        root.append(svg("text", { class: "value", x: x1 + 8, y: yb - hmax / 2 + 4 }, count(r.n)));
       });
       return root;
     },
