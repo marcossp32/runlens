@@ -505,6 +505,20 @@ class Renders(unittest.TestCase):
         self.assertEqual(len(keys), 4, keys)  # flow, once_only, Explore, general-purpose
         self.assertEqual(len({css for css, _ in keys}), 4, keys)
 
+    def test_calendar_names_each_week_by_its_days_and_says_each_figure_once(self):
+        m = model()
+        ex = m["explore"]
+        ex["runs"]["r"][0][2] = 1_788_264_000  # Tuesday 1 September 2026: its week starts on Monday 31 August
+        ex["days"]["r"][0][1] = "2026-09-01"
+        path = TMP / "calendar.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = card(dump(path, "#/runs", until=r'class="cell"'), "When do I work, and what does a day cost?")
+        months = re.findall(r'<text class="tick" x="[^"]*" y="13">([^<]+)</text>', dom)
+        self.assertEqual(len(months), 1, months)  # every active day is in September
+        tips = re.findall(r'aria-label="([^"]*Spend[^"]*)"', dom)
+        self.assertTrue(tips)
+        self.assertTrue(all(t.count("Spend") == 1 for t in tips), tips[:2])
+
     def test_a_stub_run_says_what_it_lacks(self):
         m = model()
         runs = m["explore"]["runs"]

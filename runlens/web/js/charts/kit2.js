@@ -247,9 +247,12 @@ function calendarChart(spec) {
         const wk = Math.floor(i / 7), dow = i % 7;
         const x = labelW + wk * (cell + 3), y = top + dow * (cell + 3);
         const day = localDay(t);
-        const m = new Date(t).getMonth();
+        // a week column is named by the month its Sunday is in, so a week that starts on 31 Aug but holds
+        // September's days says Sep
+        const sunday = all[Math.min(all.length - 1, i + 6)];
+        const m = new Date(sunday).getMonth();
         if (dow === 0 && m !== lastMonth && x - lastX > 30) {
-          root.append(svg("text", { class: "tick", x, y: top - 7 }, df({ month: "short" }).format(new Date(t))));
+          root.append(svg("text", { class: "tick", x, y: top - 7 }, df({ month: "short" }).format(new Date(sunday))));
           lastMonth = m;
           lastX = x;
         }

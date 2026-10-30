@@ -51,7 +51,9 @@ function runsPage() {
   }
   for (const d of days.values()) {
     d.value = d[metric];
-    d.rows = [["Runs", fmt.int(d.runs)], ["Spend", fmt.usd(d.cost)], ["Active time", fmt.secs(d.active * 3600)]];
+    // the tooltip already leads with the measure the days are coloured by
+    d.rows = [["runs", "Runs", fmt.int(d.runs)], ["cost", "Spend", fmt.usd(d.cost)], ["active", "Active time", fmt.secs(d.active * 3600)]]
+      .filter(([k]) => k !== metric).map(([, label, text]) => [label, text]);
   }
   const calSel = h("select", { "aria-label": "Colour the days by" }, [["cost", "Spend"], ["runs", "Runs"], ["active", "Active time"]].map(([v, t]) => h("option", { value: v, selected: v === metric ? true : null }, t)));
   calSel.addEventListener("change", () => refreshAfter({ cal: calSel.value === "cost" ? null : calSel.value }));
