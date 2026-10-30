@@ -168,26 +168,34 @@ function diagTools() {
     { key: "total", label: "Total time", num: true, value: (t) => t.ms, cell: (t) => fmt.ms(t.ms) },
   ];
   const top = tools.slice(0, 12);
-  const slowest = [...tools].filter((t) => t.calls >= 20 && t.ms).sort((a, b) => b.ms / b.calls - a.ms / a.calls)[0];
+  const byTime = tools.filter((t) => t.ms > 0).sort((a, b) => b.ms - a.ms);
+  const callsAll = sumOf(tools, (t) => t.calls), msAll = sumOf(byTime, (t) => t.ms);
+  // The slowest on average, with every tool that shows the same average once rounded: a tie is not one winner.
+  const avg = (t) => fmt.ms(t.ms / t.calls);
+  const timed = tools.filter((t) => t.calls >= 20 && t.ms).sort((a, b) => b.ms / b.calls - a.ms / a.calls);
+  const slowest = timed[0];
+  const slow = slowest ? timed.filter((t) => avg(t) === avg(slowest)).map((t) => t.label) : [];
+  const slowWords = slow.length > 1 ? `${listWords(slow)} are the slowest on average (${avg(slowest)} a call each)` : slowest ? `${slowest.label} is the slowest on average (${avg(slowest)} a call)` : "";
   return h("div", {},
-    answer(`${fmt.int(sumOf(tools, (t) => t.calls))} tool calls to ${plural(tools.length, "tool")}; ${tools[0].label} does most of the work (${fmt.pct(tools[0].calls / Math.max(1, sumOf(tools, (t) => t.calls)), 0)} of calls)${slowest ? `, and ${slowest.label} is the slowest on average (${fmt.ms(slowest.ms / slowest.calls)} a call)` : ""}.`),
+    answer(`${fmt.int(callsAll)} tool calls to ${plural(tools.length, "tool")}; ${tools[0].label} has the most calls (${fmt.pct(tools[0].calls / Math.max(1, callsAll), 0)})${slowest ? `, and ${slowWords}` : ""}.`),
     kpiRow([
-      kpi("Tool calls", fmt.int(sumOf(tools, (t) => t.calls)), `${tools.length} tools`),
+      kpi("Tool calls", fmt.int(callsAll), plural(tools.length, "tool")),
       kpi("Failed", fmt.pct(sumOf(tools, (t) => t.errors) / Math.max(1, sumOf(tools, (t) => t.calls))), "share of calls, denied ones not counted"),
       kpi("Denied", fmt.int(sumOf(tools, (t) => t.denied)), "by your permission rules or by you"),
       kpi("Time in tools", fmt.ms(sumOf(tools, (t) => t.ms)), "all runs in the filters")]),
     h("div", { class: "charts" },
       histRows({ title: "How long a call takes, by tool", question: "Which tool is slow, and how much does it vary?",
-        takeaway: slowest ? `${slowest.label} takes ${fmt.ms(slowest.ms / slowest.calls)} a call on average; the black tick on each row is its median band.` : null,
+        takeaway: slowest ? `${slow.length > 1 ? `${listWords(slow)} take` : `${slowest.label} takes`} ${avg(slowest)} a call on average, the longest; the black tick on each row is its median band.` : null,
         sub: "one row per tool; each column is a duration band, faster on the left · taller column = more of that tool's calls · the twelve most used tools",
         rows: top.filter((t) => bins.has(t.label)).map((t) => ({ label: t.label, bins: bins.get(t.label), n: bins.get(t.label).reduce((a, b) => a + b, 0) })), edges: EX.duration_edges,
         notes: "Bands are half a decade wide (10 ms, 32 ms, 100 ms, …), so a slow tail shows even when most calls are fast." }),
       h("div", { class: "grid" },
-        barChart({ title: "Calls by tool", question: "Which tools does the work lean on?", sub: "the twelve most used", items: top.map((t) => ({ label: t.label, value: t.calls })), fmt: countFmt, tickFmt: fmt.compact, valueTitle: "Calls", share: true, labelTitle: "Tool",
+        barChart({ title: "Calls by tool", question: "Which tools does the work lean on?", sub: `the twelve most used${tools.length > 12 ? " · shares are of all calls" : ""}`, items: top.map((t) => ({ label: t.label, value: t.calls })), fmt: countFmt, tickFmt: fmt.compact, valueTitle: "Calls", share: true, total: callsAll, labelTitle: "Tool",
           takeaway: () => shareTakeaway(tools.map((t) => ({ label: t.label, value: t.calls })), "of the calls") }),
-        barChart({ title: "Where tool time goes", question: "Which tools does the waiting come from?", sub: "total time spent in each tool", items: tools.map((t) => ({ label: t.label, value: t.ms || 0 })).filter((t) => t.value > 0).slice(0, 12),
-          takeaway: () => shareTakeaway(tools.map((t) => ({ label: t.label, value: t.ms || 0 })), "of the time in tools"),
-          fmt: fmt.ms, valueTitle: "Total time", share: true, labelTitle: "Tool" })),
+        barChart({ title: "Where tool time goes", question: "Which tools does the waiting come from?", sub: `total time spent in each tool${byTime.length > 12 ? " · the twelve with the most time; shares are of all time in tools" : ""}`,
+          items: byTime.slice(0, 12).map((t) => ({ label: t.label, value: t.ms })),
+          takeaway: () => shareTakeaway(byTime.map((t) => ({ label: t.label, value: t.ms })), "of the time in tools"),
+          fmt: fmt.ms, valueTitle: "Total time", share: true, total: msAll, labelTitle: "Tool" })),
       section({ title: "Every tool", count: plural(tools.length, "tool") }, sortTable({ caption: "Tools", cols, rows: tools, sort: { key: "calls", dir: -1 }, csvName: "tools" }).el)));
 }
 

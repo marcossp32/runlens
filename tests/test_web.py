@@ -407,6 +407,21 @@ class Renders(unittest.TestCase):
         self.assertRegex(text, r"8 ?% lower")  # the cost row of the chart
         self.assertRegex(text, r"−8 ?%")  # the same change in the table
 
+    def test_truncated_bar_charts_take_shares_of_the_whole(self):
+        # 14 tools: the time chart keeps the twelve with the most time (T13 has the fewest calls and nearly all of it),
+        # and both charts take shares over every tool, not over the bars they keep.
+        m = model()
+        ids = [r[0] for r in m["explore"]["runs"]["r"]]
+        m["explore"]["tools"] = explorer.table(("run", "tool", "skill", "calls", "errors", "denied", "ms"),
+                                               [[r, f"T{i}", "flow", 100 - i, 0, 0, 1_000_000 if i == 13 else 1000] for r in ids for i in range(14)])
+        path = TMP / "tools.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics?tab=tools", until=r'class="value'))
+        self.assertRegex(text, r"T13: 99 ?% of the time in tools")
+        self.assertRegex(text, r"· 99 ?%")  # T13's bar, in the chart, with the takeaway's share
+        self.assertRegex(text, r"· 7[.,]6 ?%")  # T0's 100 calls of 1,309, not of the 1,134 the twelve bars hold
+        self.assertNotIn("does most of the work", text)
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")

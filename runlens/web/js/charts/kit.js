@@ -40,13 +40,14 @@ const emptyCard = (title, text, notes) => h("figure", { class: "card" }, h("figc
   [notes].flat().filter(Boolean).map((n) => (n instanceof Node ? n : note(n))));
 
 /* ---- horizontal bars: one value per category ----
-   spec: {title, sub, notes, items: [{label, value, ns, href, sub}], fmt, valueTitle, share, sort = true, colour, single} */
+   spec: {title, sub, notes, items: [{label, value, ns, href, sub}], fmt, valueTitle, share, total, sort = true, colour, single} */
 function barChart(spec) {
   const fmtv = spec.fmt || fmt.num;
   let items = spec.items.filter((i) => valid(i.value));
   if (spec.sort !== false) items = [...items].sort((a, b) => b.value - a.value);
   if (!items.length) return emptyCard(spec.title, spec.emptyText || "Nothing recorded for this yet.", spec.notes);
-  const total = items.reduce((n, i) => n + i.value, 0);
+  // A chart that keeps only its biggest bars passes the whole total, so a share is of everything, not of the bars shown.
+  const total = spec.total ?? items.reduce((n, i) => n + i.value, 0);
   const shareOf = (v) => (spec.share && total ? ` · ${fmt.pct(v / total, v / total < 0.1 ? 1 : 0)}` : "");
   if (items.length === 1 && spec.single !== false) {
     const it = items[0];
