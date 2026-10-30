@@ -631,7 +631,7 @@ class Renders(unittest.TestCase):
         path.write_text(dashboard.render(model()), encoding="utf-8")
         text = visible(dump(path, "#/method?ci=80").split('<article class="page"')[1])  # the page, not the Score menu's choices
         self.assertIn("80%", text)
-        self.assertNotIn("95%", text)
+        self.assertNotIn("If the 95% interval", text)  # the simulation note keeps its own 95%
         unit = dump(path, "#/unit/skill%3Aflow?w=cost%3A5")
         score = float(re.search(r'class="summary[^"]*"[^>]*data-score="([\d.]+)"', unit).group(1))
         text = visible(dump(path, "#/method?tab=example&w=cost%3A5"))
