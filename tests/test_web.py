@@ -505,6 +505,23 @@ class Renders(unittest.TestCase):
         self.assertEqual(len(keys), 4, keys)  # flow, once_only, Explore, general-purpose
         self.assertEqual(len({css for css, _ in keys}), 4, keys)
 
+    def test_a_stub_run_says_what_it_lacks(self):
+        m = model()
+        runs = m["explore"]["runs"]
+        stub = list(runs["r"][0])
+        stub[:2] = ["s7stubaa", "session-7"]
+        stub[runs["c"].index("stub")], stub[runs["c"].index("cost")], stub[runs["c"].index("agents")] = 1, 0.01, 0
+        runs["r"].append(stub)
+        path = TMP / "stub.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/run/s7stubaa"))
+        self.assertIn("Nothing in this run has a time to draw", text)
+        self.assertNotIn("0 subagents in 0 types", text)
+        self.assertNotIn("Nothing recorded for this yet", text)  # the money is there, only not split
+        self.assertRegex(text, r"Claude Code counted (\S+ \$|\$\S+) for this run")
+        busy = visible(dump(path, "#/run/s1v1aaaa"))
+        self.assertNotIn("the twelve most expensive", busy)  # three agents with a cost
+
     def test_axis_ticks_land_on_round_values(self):
         m = model()
         t = m["explore"]["tools"]
