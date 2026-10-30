@@ -8,7 +8,10 @@
 function healthPage() {
   const H = EX.health;
   const head = h("header", { class: "pagehead" }, h("h1", { tabindex: "-1" }, "Data health"),
-    h("p", { class: "lede" }, "Whether the numbers on the other pages are complete and current, and what to run when they are not."));
+    h("p", { class: "lede" }, "Whether the numbers on the other pages are complete and current, and what to run when they are not. It covers every run in the database, open and stub runs included."),
+    // The data's health is the database's, not a slice's: say so when filters are on, rather than ignore them silently.
+    filtered() ? h("p", { class: "settingsnote healthfilters" }, h("span", { "aria-hidden": "true" }, "● "),
+      "The filters do not apply here: every number on this page covers all the runs in the database.") : null);
   if (!H) return h("article", { class: "page" }, head, empty("This database has no health view yet. Run runlens refresh, then runlens dashboard."));
   const s = H.summary || {};
   const issues = healthIssues();

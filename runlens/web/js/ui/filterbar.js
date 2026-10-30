@@ -10,7 +10,7 @@ let barOpen = null; // the dimension whose menu was open, kept open across the r
 let barExpanded = false; // the controls are shown (the reader opened them); kept across redraws
 
 function refreshAfter(changes) {
-  setParams(changes);
+  setParams(changes, true); // a new history entry: Back undoes the change
   route();
 }
 
@@ -25,6 +25,9 @@ function dimMenu(d) {
     box.append(h("div", { class: "fpanel" }, note("Not recorded.")));
     return box;
   }
+  // Each count is the runs that ticking the value alone would leave: the other filters and the population apply.
+  const counts = new Map();
+  for (const r of EX.runs) if (runPasses(r, d.key)) for (const v of new Set(d.of(r) || [])) counts.set(v, (counts.get(v) || 0) + 1);
   const write = (values) => refreshAfter({ [d.key]: values.length && values.length < opts.length ? values.join(",") : null });
   const search = opts.length > 8 ? h("input", { type: "search", class: "fsearch", placeholder: `Find ${d.plural}`, "aria-label": `Find ${d.plural}` }) : null;
   const list = h("ul", { class: "flist" }, opts.map((o) => {
@@ -40,7 +43,7 @@ function dimMenu(d) {
     const dot = d.key === "skills" ? colourOf("skill", o.value) : d.key === "model" ? colourOf("model", o.value) : null;
     return h("li", { "data-text": String(o.value).toLowerCase() }, h("label", {}, cb,
       dot && !dot.other ? svg("svg", { class: "lkey", width: 10, height: 10, "aria-hidden": "true" }, marker(dot.shape, 5, 5, 4, { style: `fill:${dot.css}` })) : null,
-      h("span", { class: "fopt" }, show(o.value)), h("span", { class: "fcount" }, fmt.int(o.runs))));
+      h("span", { class: "fopt" }, show(o.value)), h("span", { class: "fcount" }, fmt.int(counts.get(o.value) || 0))));
   }));
   if (search) {
     search.addEventListener("input", () => {
@@ -150,8 +153,10 @@ function renderFilterBar() {
   }
 }
 
-// One open menu at a time; a click outside or Escape closes it.
+// One open menu at a time; a click outside or Escape closes it. A click on a control the menu has just redrawn
+// (Save in Views) lands on a node no longer in the page: that is a click inside, not outside.
 document.addEventListener("click", (e) => {
+  if (!e.target.isConnected) return;
   for (const d of document.querySelectorAll("details.fdrop[open], details.menu[open]")) if (!d.contains(e.target)) d.open = false;
 });
 document.addEventListener("keydown", (e) => {
@@ -165,4 +170,21 @@ document.addEventListener("toggle", (e) => {
   const d = e.target;
   if (!d.open || !d.matches || !d.matches("details.fdrop, details.menu")) return;
   for (const o of document.querySelectorAll("details.fdrop[open], details.menu[open]")) if (o !== d) o.open = false;
+  keepInView(d);
 }, true);
+
+// A menu's panel hangs from its button, so on a narrow screen it can open past an edge (Score and Views once the
+// header wraps, a filter in the middle of the row). Slide it back inside the window.
+function keepInView(d) {
+  const panel = d && d.open ? d.querySelector(":scope > .menu-panel, :scope > .fpanel") : null;
+  if (!panel) return;
+  panel.style.transform = "";
+  const r = panel.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth, m = 8;
+  let dx = r.right > vw - m ? vw - m - r.right : 0;
+  if (r.left + dx < m) dx = m - r.left;
+  if (dx) panel.style.transform = `translateX(${Math.round(dx)}px)`;
+}
+window.addEventListener("resize", () => {
+  for (const d of document.querySelectorAll("details.fdrop[open], details.menu[open]")) keepInView(d);
+});

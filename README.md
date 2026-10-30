@@ -107,7 +107,7 @@ Every page starts with its answer in a sentence, worked out from your data, then
   </tr>
 </table>
 
-**Filters, links and views.** A "Filters" button narrows every page to some dates, repos, branches, models, effort levels, skills or Claude Code versions; active filters show as chips and the count of runs left is always on screen. The page state is in the URL, so a link reproduces a view. **Views** keeps named views in the browser, and `[[dashboard.view]]` tables in config.toml (a `name` and a `hash`, the part of a dashboard link after `#`) add shared ones. Each chart's "⋯" menu shows its data as a table and downloads it as CSV, SVG or PNG.
+**Filters, links and views.** A "Filters" button narrows every page to some dates, repos, branches, models, effort levels, skills or Claude Code versions; active filters show as chips and the count of runs left is always on screen. The page state is in the URL, so a link reproduces a view, and Back undoes a change of tab, filter or score setting. **Views** keeps named views in the browser, and `[[dashboard.view]]` tables in config.toml (a `name` and a `hash`, the part of a dashboard link after `#`) add shared ones. Each chart's "⋯" menu shows its data as a table and downloads it as CSV, SVG or PNG.
 
 > [!WARNING]
 > **The dashboard contains transcript text**: each skill version's text, run arguments and task titles. Keep it on your machine and check it before you share it.
@@ -202,7 +202,7 @@ The question runlens answers is *did a change to this skill make its runs better
 
 ## CLI reference
 
-Every command accepts `--config <file>` before the command name (default `~/.runlens/config.toml`). Errors a user can fix (bad config, bad SQL, database busy) print one line and exit 1.
+Every command accepts `--config <file>` before the command name (default `~/.runlens/config.toml`; without that file every default applies, but a `--config` file that does not exist is an error). Errors a user can fix (bad config, bad SQL, database busy) print one line and exit 1.
 
 **Data**
 
@@ -212,7 +212,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 | `ingest` | Load the archive into DuckDB. Incremental: unchanged runs are skipped (see [Data](#data-reference)) | as `archive`, plus `--force` (parse every run again) |
 | `refresh` | Drain the hook's queue, then `archive` + `ingest` | as `ingest` |
 | `check` | Compare the database with the archive and the archive with `~/.claude/projects`, and warn when the installed `/runlens-retro` is older than this runlens's; exits 1 on any `FAIL` or `WARN` | `--session ID` (repeatable), `--no-sources` (skip the comparison with `~/.claude/projects`) |
-| `prune` | Delete runs from the database and the archive. Lists them unless `--yes` | `--before DATE`, `--session ID` (or 8-char prefix, repeatable), `--keep-archive` (database rows only), `--yes` |
+| `prune` | Delete runs from the database and the archive. Lists them unless `--yes`. A pruned run stays out: `archive`, `ingest`, `refresh` and `check` skip it until a `--session` names it again (`refresh --session ID` brings it back) | `--before DATE`, `--session ID` (or 8-char prefix, repeatable), `--keep-archive` (database rows only), `--yes` |
 | `migrate-evidence` | Convert evidence archived by runlens 0.1 into deduplicated blobs and delete the old folders. Dry run unless `--yes` | `--yes`, `--keep-excluded` (also keep browser profiles, databases, node_modules) |
 | `sql "<query>"` | Any read-only query over the tables and views | `--json`, `--csv` |
 
@@ -220,11 +220,11 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 
 | Command | What it does | Flags |
 |---|---|---|
-| `score` | Each unit's current version against its previous one: runs, invocations, verdict, difference, outcome, typical cost | `--kind skill\|agent\|group` (default `skill`), `--json` |
+| `score` | Each unit's current version against its previous one: runs and invocations of every version, the current version's runs, verdict, difference, outcome and typical cost. In `--json`, `outcome` and `typical` pool every version, `current_outcome` and `current_typical` are the current version's | `--kind skill\|agent\|group` (default `skill`), `--json` |
 | `versions <skill>` | Every version of a skill (or a unit id such as `group:my-flow`): runs, invocations, score, verdict, confounders, outcome, cost per success, the diff against the previous version, and the folders the skill was loaded from | `--json` |
-| `proposals add` | Record a proposed edit; prints its id (`p-0001`, ...) | `--skill` (required), `--hypothesis` (required), `--measure` (required: `score` or a measure key), `--direction lower\|higher` (required), `--evidence ID ...`, `--base-version HASH` (default: the current version) |
+| `proposals add` | Record a proposed edit; prints its id (`p-0001`, ...). Warns, and records it anyway, when `--evidence` names no known incident or `--base-version` no recorded version | `--skill` (required), `--hypothesis` (required), `--measure` (required: `score` or a measure key), `--direction lower\|higher` (required), `--evidence ID ...`, `--base-version HASH` (default: the current version) |
 | `proposals list` | List recorded proposals | `--json` |
-| `verify [<id>]` | Check one or every proposal against the runs since: `confirmed`, `refuted`, `inconclusive`, `not enough runs`, `confounded` | `--json` |
+| `verify [<id>]` | Check one or every proposal against the runs since: `confirmed`, `refuted`, `inconclusive`, `not enough runs`, `confounded`. `moved` says which way the measure went (higher or lower, as `--direction` is written); `observed` says better or worse (a lower cost is better); `difference.scale` says what the numbers are on (a score: 100 = no change; one measure: a clipped quality ratio, 1 = no change) | `--json` |
 
 **Diagnosis**
 
@@ -246,7 +246,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 
 ## Config reference
 
-Every section is optional. [`config.example.toml`](runlens/config.example.toml) documents every key with its default. A value runlens cannot use stops the command with a one-line error naming the key.
+Every section is optional. [`config.example.toml`](runlens/config.example.toml) documents every key with its default. A value runlens cannot use stops the command with a one-line error naming the key, including an `[outcome] marker` that names no `[[marker]]`.
 
 | Section | Keys (default) | What it sets |
 |---|---|---|
@@ -301,7 +301,7 @@ Views (in [`views.sql`](runlens/views.sql)): `v_runs`, `v_skill`, `v_role`, `v_m
 
 - **Everything is local.** The archive, database, dashboard and report live in `~/.runlens/`. Nothing is sent anywhere, except incident timelines and skill text to `claude -p` when you run `classify`.
 - **Redaction.** `[privacy] redact = true` masks API keys and tokens (Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google, Stripe, npm), private keys, JWTs, bearer tokens, passwords in URLs and assignments, and e-mail addresses in the stored text columns (tool inputs and outputs, agent text, prompts, skill texts, event details, marker values), and in the task prompt and history that `export-eval` writes; the working directory, git branch and PR links are not masked. Text is masked before it is cut to its stored length. Add your own regexes in `patterns`. Hashes are taken before masking, so counts do not change. The archived transcripts stay verbatim, because they are what runlens re-ingests from.
-- **Retention.** `runlens prune --before 2026-01-01` (or `--session <id>`) lists the runs it would delete; add `--yes` to delete their database rows and archived files. `--keep-archive` deletes only the rows.
+- **Retention.** `runlens prune --before 2026-01-01` (or `--session <id>`) lists the runs it would delete; add `--yes` to delete their database rows and archived files. `--keep-archive` deletes only the rows. runlens remembers what it pruned (`~/.runlens/pruned.json`), so a run whose transcript is still in `~/.claude/projects` is not copied back by the next `refresh`, and `check` does not ask for it. `runlens refresh --session <id>` brings one back.
 - **Evidence.** `[[evidence]]` files are stored once by content hash under `archive/_blobs`. By default only files modified during the run are kept, at most `max_mb` per run and rule, and browser profiles (cookies, saved passwords, local storage), databases, `node_modules`, `.git` objects and virtualenvs are never kept. Add your own `exclude` globs.
 
 ## Troubleshooting
@@ -317,6 +317,7 @@ Views (in [`views.sql`](runlens/views.sql)): `v_runs`, `v_skill`, `v_role`, `v_m
 | A skill is missing from `score` | It may not match `[select]`, have no finished non-stub runs, or has no finished non-stub run once subagent work before the load is left out |
 | A verdict says `not enough runs` or `confounded` | See [how many runs you need](#improve-a-skill-step-by-step) and why batch edits are confounded |
 | The dashboard is out of date | `runlens dashboard` rebuilds it. Hook and drain errors are in `~/.runlens/hooks.log` |
+| `hooks.log` says `config error` | The hook queued the session but no drain ran, because `config.toml` does not load. Fix the key it names, then `runlens refresh` ingests the queue |
 | Deleting `~/.runlens` fails on Windows | Archived paths can exceed 260 characters. Use the long-path form (see [Uninstall](#uninstall)) |
 
 ## Uninstall

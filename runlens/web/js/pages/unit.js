@@ -105,7 +105,7 @@ function unitPage(id) {
 }
 
 function versionsPanel(u, versions) {
-  if (u.kind === "agent") return note("Agent roles have no versions. Their runs are scored as one group.");
+  if (u.kind === "agent") return note("Agent roles have no versions and are not scored: their runs are described together, as one set.");
   if (!versions.length) return empty("No runs yet.");
   if (!versions.some((v) => v.recorded)) {
     return note("Claude Code did not record this skill's text in these runs, so there are no versions to compare.");
@@ -167,6 +167,7 @@ function diffBlock(c) {
 const effect = (share) => Math.exp(share) - 1;
 
 function driversPanel(u, versions) {
+  if (u.kind === "agent") return note("Agent roles are not scored, so no measure moves a score. Their figures are in the table above.");
   const withData = versions.filter((x) => Object.keys(x.metrics || {}).length);
   if (!withData.length) return empty("No measure has data for this unit yet.");
   const wanted = param("ver");
@@ -195,7 +196,7 @@ function driversPanel(u, versions) {
             ...(prevShare.has(p.m.key) ? [[`Effect in ${prev.label}`, fmt.signedPct(effect(prevShare.get(p.m.key)), 1)]] : [])] })),
         notes: `The steps multiply: together they take the score from 100 to ${fmt.score(v.score)}. A measure with weight 0 is shown in the table and moves nothing.`,
       }),
-      section({ title: "The numbers behind each step", intro: "Each measure's value for this version, the skill's typical run, and how much it moves the score." }, breakdownTable(v)),
+      section({ title: "The numbers behind each step", intro: `Each measure's value for this version, the skill's typical run, the value that counts (this version pulled toward the typical run, as if it had ${DATA.method.shrink} extra typical runs) and how much it moves the score. The ratio compares the typical run with the value that counts, not with this version's own value; for rates and counts it adds a small floor to both sides (a rate is read as 1 − p when higher is better), and it is clipped at ×${DATA.method.max_ratio}.` }, breakdownTable(v)),
       versions.length > 1 ? barChart({ title: "Spend by version", question: "How much did each version cost in total?", sub: "model spend of each version's runs", items: spend,
         takeaway: () => shareTakeaway(spend, "of the spend"), sort: false, fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Version" }) : null);
   };
@@ -214,12 +215,14 @@ function breakdownTable(v) {
     { label: "Measure", value: (r) => metricLabel(r.m), cell: (r) => h("span", {}, metricLabel(r.m), h("span", { class: "sub block" }, metricHelp(r.m))) },
     { label: "This version", num: true, value: (r) => r.d.value, cell: (r) => fmt.metric(r.m, r.d.value) },
     { label: "Typical run", num: true, value: (r) => r.d.ref, cell: (r) => fmt.metric(r.m, r.d.ref) },
+    // The ratio is taken on the value that counts (pulled toward the typical run), not on "This version": both are shown.
+    { label: "Value that counts", num: true, value: (r) => r.d.counted, cell: (r) => fmt.metric(r.m, r.d.counted) },
     { label: "Ratio", num: true, value: (r) => r.d.ratio, cell: (r) => fmt.ratio(r.d.ratio) },
     { label: "Weight", num: true, value: (r) => r.d.weight },
     { label: "Effect on the score", num: true, value: (r) => r.share, cell: (r) => toneTag(r.share > 0.001 ? "better" : r.share < -0.001 ? "worse" : "unclear", fmt.signedPct(effect(r.share), 1)) },
     { label: "Runs", num: true, value: (r) => r.d.n },
   ];
-  return sortTable({ caption: `What drives the score of ${nameOf(v)}`, cols, rows, sort: { key: "c5", dir: 1 }, csvName: `drivers-${v.label}` }).el;
+  return sortTable({ caption: `What drives the score of ${nameOf(v)}`, cols, rows, sort: { key: "c6", dir: 1 }, csvName: `drivers-${v.label}` }).el;
 }
 
 const RUN_MEASURES = ["cost", "seconds", "error_rate", "incidents", "interventions"];

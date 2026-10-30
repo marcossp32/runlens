@@ -64,6 +64,8 @@ PRIVACY = {
 
 def load(path=None):
     p = Path(path) if path else HOME / "config.toml"
+    if path and not p.exists():  # only the default file may be absent: a --config that is not there is a typo
+        raise ConfigError(f"{p}: no such file")
     try:
         cfg = tomllib.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     except tomllib.TOMLDecodeError as e:
@@ -186,6 +188,11 @@ def validate(cfg, path="config.toml"):
         re.compile(cfg["analysis"]["test_path"])
     except re.error as e:
         bad(f"[analysis] test_path: invalid regex ({e})")
+    from . import bench  # [outcome], [[group]], [weights] and [method] values, checked now rather than at `score`
+    try:
+        bench.settings(cfg)
+    except ValueError as e:
+        bad(str(e))
     since = (cfg.get("select") or {}).get("since")
     if since:
         try:

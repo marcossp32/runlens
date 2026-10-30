@@ -71,8 +71,16 @@ def queued_transcript(sid):
     return path if isinstance(path, str) and path else None
 
 
-def handle(cfg, payload):
-    """The hook itself: queue the session and start a detached drain. Returns at once."""
+def config_error_text(e):
+    return (f"config error: {e}. Queued sessions stay in {config.PENDING}: "
+            "fix the config, then run `runlens refresh`")
+
+
+def handle(cfg, payload, config_error=None):
+    """The hook itself: queue the session and start a detached drain. Returns at once.
+
+    With a config that does not load (`config_error`), the session is still queued and the error logged; no drain
+    starts, since it would fail the same way. `runlens refresh` drains the queue once the config is fixed."""
     if os.environ.get("RUNLENS_JUDGE"):
         return 0
     try:
@@ -84,7 +92,9 @@ def handle(cfg, payload):
             return 0
         log(f"queued {sid} ({data.get('reason')})")
         enqueue(sid, {"session_id": sid, "reason": data.get("reason"), "transcript_path": data.get("transcript_path"), "queued_at": datetime.now().astimezone().isoformat()})
-        if os.environ.get("RUNLENS_HOOK_INLINE"):
+        if config_error is not None:
+            log(config_error_text(config_error))
+        elif os.environ.get("RUNLENS_HOOK_INLINE"):
             drain(cfg)
         else:
             spawn_drain()
@@ -148,6 +158,16 @@ class DrainLock:
             self.fh = None
 
 
+def why_skipped(sid, transcripts=()):
+    """Why `archive` took nothing for a queued session, for hooks.log."""
+    from .archive import pruned
+    if sid in pruned():
+        return f"pruned earlier (`runlens refresh --session {sid}` brings it back)"
+    if not any(config.PROJECTS.glob(f"*/{sid}.jsonl")) and not any(Path(t).is_file() for t in transcripts):
+        return f"no transcript for it in {config.PROJECTS}"
+    return "not selected by [select] in config.toml"
+
+
 def drain(cfg, wait_lock=False):
     """Archive and ingest every queued session, then rebuild the dashboard once.
 
@@ -184,10 +204,11 @@ def drain(cfg, wait_lock=False):
                 selected = set()
                 for sid in sids:
                     try:
-                        if archive(cfg, quiet=True, sessions=[sid], transcripts=[t for t in [queued_transcript(sid)] if t]):
+                        transcripts = [t for t in [queued_transcript(sid)] if t]
+                        if archive(cfg, quiet=True, sessions=[sid], transcripts=transcripts):
                             selected.add(sid)
                         else:
-                            log(f"skipped {sid}: not selected by [select] in config.toml")
+                            log(f"skipped {sid}: {why_skipped(sid, transcripts)}")
                             (config.PENDING / sid).unlink(missing_ok=True)
                     except Exception as e:
                         log(f"error archiving {sid}: {type(e).__name__}: {e}")
@@ -249,21 +270,31 @@ def write_settings(settings):
 
 
 def backup_settings():
-    """One backup per day at most, so repeated installs do not pile up copies."""
+    """One backup per day at most, so repeated installs do not pile up copies. Returns (path, written now)."""
     backup = SETTINGS.with_name(f"settings.json.runlens-backup-{datetime.now():%Y%m%d}")
-    if not backup.exists():
-        shutil.copy2(SETTINGS, backup)
-    return backup
+    if backup.exists():
+        return backup, False
+    shutil.copy2(SETTINGS, backup)
+    return backup, True
 
 
-def install(skill=True):
-    settings = read_settings()
-    if SETTINGS.exists():
-        print(f"backup  {backup_settings()}")
+def session_end_groups(settings):
+    """settings["hooks"]["SessionEnd"], created if absent; a message, not a traceback, when either has the wrong shape."""
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise SystemExit(f"{SETTINGS}: \"hooks\" is not an object; fix it, then run this again")
     groups = hooks.setdefault("SessionEnd", [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"{SETTINGS}: \"hooks\".\"SessionEnd\" is not a list of hook groups; fix it, then run this again")
+    return groups
+
+
+def install(skill=True):
+    settings = read_settings()
+    groups = session_end_groups(settings)  # checked before anything is written
+    if SETTINGS.exists():
+        backup, made = backup_settings()
+        print(f"backup  {backup}" + ("" if made else " (made earlier today; kept, not overwritten)"))
     groups[:] = [g for g in groups if not is_ours(g)]
     groups.append({"hooks": [our_hook()]})
     write_settings(settings)
@@ -305,8 +336,12 @@ def uninstall():
         print("no runlens hook installed")
         return
     settings = read_settings()
-    groups = (settings.get("hooks") or {}).get("SessionEnd", [])
+    if not settings.get("hooks"):
+        print("no runlens hook installed")
+        return
+    groups = session_end_groups(settings)
     kept = [g for g in groups if not is_ours(g)]
+
     if len(kept) == len(groups):
         print("no runlens hook installed")
         return

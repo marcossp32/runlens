@@ -241,6 +241,9 @@ td a,th a{font-weight:500}
 code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
 .score strong{font-size:14px;font-variant-numeric:tabular-nums;margin-right:6px}
 .score .sub{white-space:nowrap}
+/* in a numeric column the score sits at the right edge, so scores line up whatever their verdict says */
+td.num .score{display:inline-flex;align-items:baseline;gap:8px}
+td.num .score strong{order:2;margin-right:0;min-width:3ch;text-align:right}
 
 /* toolbars and controls */
 .toolbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0}
@@ -289,6 +292,10 @@ select{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background
 .tool[aria-pressed="true"]{color:var(--text);border-color:var(--accent)}
 .tool:disabled{opacity:.4;cursor:default}
 .plot{overflow-x:auto;overflow-y:hidden}
+/* a plot that scrolls sideways fades on the side that has more (charts/frame.js scrollCue) */
+.plot.more-right{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 48px),transparent)}
+.plot.more-left{-webkit-mask-image:linear-gradient(to right,transparent,#000 48px);mask-image:linear-gradient(to right,transparent,#000 48px)}
+.plot.more-left.more-right{-webkit-mask-image:linear-gradient(to right,transparent,#000 48px,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(to right,transparent,#000 48px,#000 calc(100% - 48px),transparent)}
 .tableview{margin-top:12px}
 .tableview .tablebox{margin:0}
 .smalln{font-size:12.5px;color:var(--warn);margin:0 0 6px}
@@ -505,7 +512,7 @@ details.more > summary{font-weight:600;color:var(--text);padding:6px 0}
   .tablist{display:none}
   .tw{overflow:visible;border-color:#bbb}
   tbody th{position:static}
-  .plot{overflow:visible}
+  .plot{overflow:visible;-webkit-mask-image:none!important;mask-image:none!important}
   a{color:#000;text-decoration:none}
   .tip{display:none!important}
 }
@@ -519,6 +526,14 @@ details.more > summary{font-weight:600;color:var(--text);padding:6px 0}
 .profile td .big2{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
 .profile td .bullet{display:inline-block;vertical-align:middle;margin:0 0 0 8px}
 .profile td .sub{display:block;white-space:normal}
+/* a phone: the columns share the width (the current version stays on screen), the strip goes under the score */
+@media (max-width:560px){
+  .profile table{font-size:13px;width:100%}
+  .profile tbody th{min-width:0;width:34%}
+  .profile th,.profile td{padding-left:8px;padding-right:8px}
+  .profile td{white-space:normal}
+  .profile td .bullet{display:block;width:100%;max-width:150px;height:auto;margin:4px 0 0}
+}
 .vlist .vhead code{white-space:normal;overflow-wrap:anywhere}
 .section > * + *{margin-top:var(--gap)}
 .section > .section-head + .section-intro,.section > .section-intro + *,details.section > summary + *{margin-top:0}

@@ -162,7 +162,7 @@ def parse_outcomes(raw, markers=()):
         marker = e.get("marker")
         if not marker:
             raise ValueError(f"[outcome] #{i + 1} needs marker = \"<name>\" or pr = \"opened\"")
-        if known and marker not in known:
+        if marker not in known:
             raise ValueError(f"[outcome] marker {marker!r} is not a [[marker]] in config.toml")
         success = {str(v) for v in e.get("success") or []}
         if not success:
@@ -1114,6 +1114,7 @@ def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
         "runs": n, "invocations": sum(r["invocations"] for r in xs), "low_sample": n < st["min_runs"],
         "score": 100 * math.exp(d) if d is not None else None, "ci": ci, "metrics": metrics,
         "outcome": outcome_summary(o, xs), "kpi": extras(xs),
+        "typical": {m["key"]: display(m, internal(m, sums_of(xs, m["key"]))) for m in MEASURES if m["key"] in base},
         "changes": diffs, "verdict": None, "direction": None, "p": None, "vs": None, "difference": None, "confounders": [],
         "delta": None, "overlap": None,
     }
@@ -1162,6 +1163,7 @@ def _clip(text, n=300):
 # ---- summaries for the CLI (the JSON contract the retro skill reads) --------------------
 
 def unit_summary(model, u):
+    current = next((v for v in model["versions"].get(u["id"], []) if v["label"] == u["current"]), None)
     return {"unit": u["id"], "name": u["name"], "kind": u["kind"], "runs": u["runs"], "invocations": u["invocations"],
             "versions": u["versions"], "current": u["current"], "verdict": u["verdict"], "direction": u["direction"],
             "vs": u["vs"], "confounders": u["confounders"], "outcome": u["outcome"], "difference": _diff_out(u["difference"]),
@@ -1169,7 +1171,11 @@ def unit_summary(model, u):
             "score": u["score"], "ci95": u["ci"],
             "typical": {k: v for k, v in u["kpi"].items() if k in MEASURE},
             "cost_per_success_usd": u["kpi"].get("cost_per_success"), "cost_per_kloc_usd": u["kpi"].get("cost_per_kloc"),
-            "spend_usd": u["kpi"].get("spend")}
+            "spend_usd": u["kpi"].get("spend"),
+            # `outcome` and `typical` above pool every version; these are the current version's own
+            "current_runs": current["runs"] if current else None,
+            "current_outcome": current["outcome"] if current else None,
+            "current_typical": {k: v for k, v in current["typical"].items() if k in MEASURE} if current else None}
 
 
 def _diff_out(diff):

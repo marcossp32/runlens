@@ -59,6 +59,8 @@ def makedirs(p):
 def write_atomic(path, text):
     """Write a text file so readers see either the old or the new content, never half of it."""
     path = fs_path(path)
+    if path.is_dir():  # os.replace onto a folder fails with a bare "Access is denied" on Windows
+        raise IsADirectoryError(f"{plain(path)} is a folder: give a file path, e.g. {plain(path / 'out.html')}")
     makedirs(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:

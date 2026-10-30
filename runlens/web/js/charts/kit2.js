@@ -55,7 +55,8 @@ function waterfallChart(spec) {
       const vals = steps.flatMap((s) => [s.from, s.to]).concat([100, total]);
       const lo = Math.min(...vals) / 1.06, hi = Math.max(...vals) * 1.06;
       const x = scaleLog(lo, hi, x0, x1);
-      const tk = ticks(lo, hi, Math.max(3, Math.floor((x1 - x0) / 70))).filter((t) => t > 0);
+      // whole-number steps: a 2.5 step labelled without decimals reads as 93, 98, 103
+      const tk = ticks(lo, hi, Math.max(3, Math.floor((x1 - x0) / 70)), true).filter((t) => t > 0);
       const H = top + (steps.length + 1) * R + 46;
       const root = svgRoot(w, H, `${spec.title}: from 100 to ${fmt.score(total)} in ${steps.length} steps`);
       axisX(root, { scale: x, ticks: tk.map((v) => ({ v, label: fmt.num(v, v < 10 ? 1 : 0) })), x0, x1, y: top + (steps.length + 1) * R, grid: true, gridTop: top - 6,
@@ -100,14 +101,14 @@ function forestPlot(spec) {
       { label: "◆ the weighted score", css: "var(--text2)", shape: "diamond" }]),
     table: () => ({
       cols: [{ label: "Row", value: (r) => r.label }, { label: "Effect (×)", num: true, value: (r) => r.effect, cell: (r) => fmt.ratio(r.effect) },
-        { label: "In words", value: (r) => effectWords(r.effect) },
+        { label: "In words", value: (r) => r.words || effectWords(r.effect) },
         { label: "Interval low", num: true, value: (r) => (r.ci ? r.ci[0] : null), cell: (r) => (r.ci ? fmt.ratio(r.ci[0]) : "—") },
         { label: "Interval high", num: true, value: (r) => (r.ci ? r.ci[1] : null), cell: (r) => (r.ci ? fmt.ratio(r.ci[1]) : "—") },
         { label: "Reading", value: (r) => TONE[r.tone].word }, ...(spec.extraCols || [])],
       rows,
     }),
     draw(w) {
-      const R = rowH() + 4, top = 28;
+      const R = rowH() + 4;
       const labelW = Math.min(maxLabel(rows.map((r) => r.label), FONT.label) + 16, Math.max(100, w * 0.3));
       const txt = (r) => r.words || effectWords(r.effect);
       const valW = Math.min(maxLabel(rows.map((r) => `▲ ${txt(r)}`), FONT.axis) + 16, Math.max(110, w * 0.3));
@@ -117,14 +118,18 @@ function forestPlot(spec) {
       const lo = clamp(Math.min(...vals) / 1.1, 1 / (cap * 1.5), 1), hi = clamp(Math.max(...vals) * 1.1, 1, cap * 1.5);
       const x = scaleLog(lo, hi, x0, x1);
       const tk = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4].filter((v) => v >= lo && v <= hi);
+      let left = spec.leftLabel || "◀ worse", right = spec.rightLabel || "better ▶";
+      if (textWidth(left, FONT.small) + textWidth(right, FONT.small) + 16 > x1 - x0) [left, right] = ["◀ worse", "better ▶"];
+      // "no change" sits over ×1: on a narrow plot it would cover the direction labels, so it moves up a line.
+      const half = textWidth("no change", FONT.small) / 2 + 6;
+      const clash = x(1) - half < x0 + textWidth(left, FONT.small) || x(1) + half > x1 - textWidth(right, FONT.small);
+      const top = clash ? 40 : 28;
       const H = top + rows.length * R + 46;
       const root = svgRoot(w, H, `${spec.title}: ${rows.length} rows`);
       axisX(root, { scale: x, ticks: tk.map((v) => ({ v, label: `×${fmt.num(v, 2)}`, ref: v === 1 })), x0, x1, y: top + rows.length * R, grid: true, gridTop: top - 6,
         title: spec.axisTitle || "Effect, log scale (×1 = no change)" });
-      let left = spec.leftLabel || "◀ worse", right = spec.rightLabel || "better ▶";
-      if (textWidth(left, FONT.small) + textWidth(right, FONT.small) + 16 > x1 - x0) [left, right] = ["◀ worse", "better ▶"];
       root.append(svg("text", { class: "dirlabel", x: x0, y: top - 12 }, left), svg("text", { class: "dirlabel", x: x1, y: top - 12, "text-anchor": "end" }, right),
-        svg("text", { class: "reflabel", x: x(1), y: top - 12, "text-anchor": "middle" }, "no change"));
+        svg("text", { class: "reflabel", x: x(1), y: top - (clash ? 26 : 12), "text-anchor": "middle" }, "no change"));
       rows.forEach((r, i) => {
         const y = top + i * R + R / 2;
         const t = TONE[r.tone] || TONE.unclear;
@@ -134,7 +139,7 @@ function forestPlot(spec) {
         if (r.ci) kids.push(svg("line", { class: "ciline", x1: x(clamp(r.ci[0], lo, hi)), x2: x(clamp(r.ci[1], lo, hi)), y1: y, y2: y, style: `stroke:${t.css}` }));
         kids.push(marker(r.bold ? "diamond" : "circle", x(clamp(r.effect, lo, hi)), y, r.bold ? 7 : 5.5, { class: `dot${r.ci ? "" : " hollow"}`, style: r.ci ? `fill:${t.css}` : `stroke:${t.css}` }));
         kids.push(svg("rect", { class: "hit", x: x0 - 4, y: y - R / 2, width: x1 - x0 + 8, height: R }));
-        root.append(markGroup({ title: r.label, rows: [["Effect", `${effectWords(r.effect)} (${fmt.ratio(r.effect)})`], ["Interval", r.ci ? `${fmt.ratio(r.ci[0])} – ${fmt.ratio(r.ci[1])}` : "none: too few runs"],
+        root.append(markGroup({ title: r.label, rows: [["Effect", `${r.words || effectWords(r.effect)} (${fmt.ratio(r.effect)})`], ["Interval", r.ci ? `${fmt.ratio(r.ci[0])} – ${fmt.ratio(r.ci[1])}` : "none: too few runs"],
           ["Reading", `${t.icon} ${r.word || t.word}`], ...(r.tip || [])] }, ...kids));
         root.append(svg("text", { class: `value${r.bold ? " strong" : ""}`, x: x1 + 8, y: y + 4 }, fitText(`${t.icon} ${txt(r)}`, w - x1 - 10, FONT.axis)));
       });
@@ -229,7 +234,7 @@ function calendarChart(spec) {
   const weeks = Math.ceil(all.length / 7);
   const max = Math.max(...[...spec.days.values()].map((d) => d.value), 1e-9);
   return chartCard({
-    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, height: 7 * 18 + 60,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, controls: spec.controls, height: 7 * 18 + 60,
     legend: () => scaleLegend("seq", spec.legendText || ["less", "more"]),
     table: () => ({ cols: [{ label: "Day", value: (d) => d.day }, { label: spec.valueTitle || "Value", num: true, value: (d) => d.value, cell: (d) => fmtv(d.value) }],
       rows: keys.map((k) => ({ day: k, value: spec.days.get(k).value })) }),
@@ -246,9 +251,12 @@ function calendarChart(spec) {
         const wk = Math.floor(i / 7), dow = i % 7;
         const x = labelW + wk * (cell + 3), y = top + dow * (cell + 3);
         const day = localDay(t);
-        const m = new Date(t).getMonth();
+        // a week column is named by the month its Sunday is in, so a week that starts on 31 Aug but holds
+        // September's days says Sep
+        const sunday = all[Math.min(all.length - 1, i + 6)];
+        const m = new Date(sunday).getMonth();
         if (dow === 0 && m !== lastMonth && x - lastX > 30) {
-          root.append(svg("text", { class: "tick", x, y: top - 7 }, df({ month: "short" }).format(new Date(t))));
+          root.append(svg("text", { class: "tick", x, y: top - 7 }, df({ month: "short" }).format(new Date(sunday))));
           lastMonth = m;
           lastX = x;
         }
@@ -264,9 +272,11 @@ function calendarChart(spec) {
 }
 
 /* ---- distributions per row on shared log bins (tool call durations) ----
-   spec: {title, question, sub, rows: [{label, bins, n, css}], edges (ms), notes} */
+   spec: {title, question, sub, rows: [{label, bins, n, css}], edges (ms), notes, unit: {one, many, row} (default: call, calls, Tool)} */
 function histRows(spec) {
   const rows = spec.rows.filter((r) => r.n > 0);
+  const u = spec.unit || { one: "call", many: "calls", row: "Tool" };
+  const count = (n) => `${fmt.compact(n)} ${n === 1 ? u.one : u.many}`;
   if (!rows.length) return emptyCard(spec.title, "No durations recorded.", spec.notes);
   const edges = spec.edges;
   const nb = edges.length + 1;
@@ -282,9 +292,9 @@ function histRows(spec) {
   };
   return chartCard({
     title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, height: rows.length * 34 + 60,
-    legend: () => legend([{ label: "share of the tool's calls in each band", css: "var(--c1)" }, { label: "median band", css: "var(--text)", kind: "line" }]),
+    legend: () => legend([{ label: `share of the ${u.row.toLowerCase()}'s ${u.many} in each band`, css: "var(--c1)" }, { label: "median band", css: "var(--text)", kind: "line" }]),
     table: () => ({
-      cols: [{ label: "Tool", value: (r) => r.label }, { label: "Calls", num: true, value: (r) => r.n },
+      cols: [{ label: u.row, value: (r) => r.label }, { label: u.many.charAt(0).toUpperCase() + u.many.slice(1), num: true, value: (r) => r.n },
         { label: "Median band", value: (r) => binLabel(quant(r.bins, 0.5)) }, { label: "Slowest 10% from", value: (r) => binLabel(quant(r.bins, 0.9)) },
         ...edges.concat([Infinity]).map((e, i) => ({ label: binLabel(i), num: true, value: (r) => r.bins[i] || 0 }))],
       rows,
@@ -292,14 +302,14 @@ function histRows(spec) {
     draw(w) {
       const RH = PREFS.density === "compact" ? 28 : 34, top = 8;
       const labelW = Math.min(maxLabel(rows.map((r) => r.label), FONT.label) + 14, Math.max(80, w * 0.25));
-      const nW = maxLabel(rows.map((r) => `${fmt.compact(r.n)} calls`), FONT.axis) + 12;
+      const nW = maxLabel(rows.map((r) => count(r.n)), FONT.axis) + 12;
       const x0 = labelW, x1 = Math.max(x0 + 120, w - nW);
       const bw = (x1 - x0) / nb;
       const H = top + rows.length * RH + 44;
       const root = svgRoot(w, H, `${spec.title}: ${rows.length} distributions`);
       const tickAt = [0, 2, 4, 6, 8, 10].filter((i) => i < nb - 1);
       axisX(root, { scale: (i) => x0 + (i + 1) * bw, ticks: tickAt.map((i) => ({ v: i, label: fmt.ms(edges[i]) })), x0, x1, y: top + rows.length * RH, grid: true, gridTop: top,
-        title: "Call duration (log scale)" });
+        title: u.axis || "Call duration (log scale)" });
       rows.forEach((r, i) => {
         const yb = top + (i + 1) * RH - 3, hmax = RH - 8;
         root.append(svg("text", { class: "rowlabel", x: labelW - 10, y: yb - hmax / 2 + 4, "text-anchor": "end" }, fitText(r.label, labelW - 12, FONT.label)));
@@ -307,13 +317,13 @@ function histRows(spec) {
         r.bins.forEach((c, j) => {
           if (!c) return;
           const hh = Math.max(1.5, (c / peak) * hmax);
-          root.append(markGroup({ title: `${r.label} · ${binLabel(j)}`, rows: [["Calls", fmt.int(c)], ["Share of its calls", fmt.pct(c / r.n)]] },
+          root.append(markGroup({ title: `${r.label} · ${binLabel(j)}`, rows: [[u.many.charAt(0).toUpperCase() + u.many.slice(1), fmt.int(c)], [`Share of its ${u.many}`, fmt.pct(c / r.n)]] },
             colPath(x0 + j * bw + 1, Math.max(1, bw - 2), yb, yb - hh, 2), svg("rect", { class: "hit", x: x0 + j * bw, y: yb - hmax, width: bw, height: hmax })));
           root.lastChild.firstChild.setAttribute("style", `fill:${r.css || "var(--c1)"}`);
         });
         const med = quant(r.bins, 0.5);
         root.append(svg("line", { class: "median", x1: x0 + (med + 0.5) * bw, x2: x0 + (med + 0.5) * bw, y1: yb + 1, y2: yb - hmax - 1 }));
-        root.append(svg("text", { class: "value", x: x1 + 8, y: yb - hmax / 2 + 4 }, `${fmt.compact(r.n)} calls`));
+        root.append(svg("text", { class: "value", x: x1 + 8, y: yb - hmax / 2 + 4 }, count(r.n)));
       });
       return root;
     },
@@ -635,7 +645,12 @@ function runTimeline(spec) {
         });
       }
       // agents
-      root.append(svg("text", { class: "sectionlabel", x: 0, y: yAgents - 6 }, spec.layout === "packed" ? "Subagents grouped by type: one bar per subagent, from start to end; bars share a row when they do not overlap" : "Agents: one bar per agent, from start to end, indented under the agent that started it"));
+      // The caption in the longest wording that fits the width (a phone gets the short one).
+      const captions = spec.layout === "packed"
+        ? ["Subagents grouped by type: one bar per subagent, from start to end; bars share a row when they do not overlap", "Subagents by type: one bar each, start to end", "Subagents by type"]
+        : ["Agents: one bar per agent, from start to end, indented under the agent that started it", "Agents: one bar each, under the agent that started it", "Agents, under their parent"];
+      const caption = captions.find((c) => textWidth(c, 11, 600) <= w - 4) || fitText(captions[captions.length - 1], w - 4, 11, 600);
+      root.append(svg("text", { class: "sectionlabel", x: 0, y: yAgents - 6 }, caption));
       let yy = yAgents;
       for (const r of rowsOut) {
         const indent = spec.layout === "packed" ? 0 : Math.min(5, r.depth || 0) * 10;

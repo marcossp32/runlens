@@ -92,6 +92,7 @@ class Sandbox(unittest.TestCase):
                                          ARCHIVE=self.home / "archive", BLOBS=self.home / "archive" / "_blobs",
                                          PENDING=self.home / "pending", PROJECTS=self.projects)
         self.patch.start()
+        (self.tmp / "none.toml").write_text("", encoding="utf-8")  # an empty config: every default
         self.cfg = config.load(self.tmp / "none.toml")
 
     def tearDown(self):
@@ -390,6 +391,24 @@ class Ingest(Sandbox):
         self.quiet(archive.archive, self.cfg, since="2026-09-30T23:00:00Z")
         self.assertEqual(len(list(fs_path(self.home / "archive").glob("*/*.runlens.json"))), 1)
 
+    def test_ingest_skill_and_project_filters_are_applied(self):
+        simple_run(self.projects, "a2a2a2a2-0000-0000-0000-000000000001")  # skill flow, cwd C:\work\repo
+        other = Run(self.projects, "a2a2a2a2-0000-0000-0000-000000000002", project="C--work-site", cwd="C:\\work\\site")
+        for i in range(3):
+            other.turn(f"o{i}", f"ot{i}", attr="deploy")
+        other.end()
+        other.write()
+        self.quiet(archive.archive, self.cfg)
+        run = lambda *args: self.quiet(cli.main, ["--config", str(self.tmp / "none.toml"), "ingest", "--force", *args])
+        run("--skill", "nosuchskill")
+        self.assertIn("0 run(s) ingested", self.out)
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 0)
+        run("--skill", "deploy")
+        self.assertEqual([r[0] for r in self.q("SELECT session_id FROM runs")], [other.sid])
+        run("--project", "REPO")  # case-insensitive, like archive
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 2)
+        self.assertIn("1 run(s) ingested", self.out)
+
     def test_structured_results_permissions_prompts_mentions(self):
         r = Run(self.projects, "acacacac-0000-0000-0000-000000000001")
         r.rec(type="user", message={"role": "user", "content": "<command-name>/flow</command-name>"})  # old CC: no origin
@@ -497,6 +516,59 @@ class Ingest(Sandbox):
             con.close()
         self.assertEqual(ids, {"cdcdcdcd-1111-0000-0000-000000000001", "cdcdcdcd-2222-0000-0000-000000000002", "cececece"})
 
+    def test_synthetic_is_not_a_model_on_the_dashboard(self):
+        from runlens import explorer
+        r = Run(self.projects, "dededede-0000-0000-0000-000000000001")
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        r.turn("m1", "t1")
+        r.rec(type="assistant", isApiErrorMessage=True, apiErrorStatus=529,
+              message={"id": "e1", "model": "<synthetic>", "content": [{"type": "text", "text": "API Error: 529 Overloaded"}]})
+        r.turn("m2", "t2")
+        r.end()
+        r.write()
+        sub = Run(self.projects, "agent-h1", project=f"C--work-repo/{r.sid}/subagents")
+        sub.turn("h1", "ht1")
+        sub.write()
+        # the agent asked for "haiku" by alias; it called claude-sonnet-5-5
+        (sub.path.parent / "agent-h1.meta.json").write_text(json.dumps({"agentType": "Explore", "toolUseId": "t1", "model": "haiku"}))
+        self.refresh()
+        self.assertEqual(self.q("SELECT count(*) FROM api_calls WHERE model = '<synthetic>' AND api_error")[0][0], 1)  # kept as written
+        con = store.connect(read_only=True)
+        try:
+            facts = explorer.build(con)
+        finally:
+            con.close()
+
+        def rows(name):
+            t = facts[name]
+            return [{c: (t["d"][c][v] if c in t.get("d", {}) else v) for c, v in zip(t["c"], r)} for r in t["r"]]
+        self.assertEqual([x["models"] for x in rows("runs")], [["claude-sonnet-5-5"]])  # the Model filter and first-use markers
+        for name in ("calls", "days", "stops", "apierr", "agents"):
+            self.assertNotIn("<synthetic>", {x["model"] for x in rows(name)}, name)
+        self.assertEqual(sum(x["calls"] for x in rows("calls")), 4)  # the error still counts as a turn of the model it called
+        self.assertEqual([(x["model"], x["n"]) for x in rows("apierr")], [("claude-sonnet-5-5", 1)])
+        self.assertEqual({x["model"] for x in rows("agents") if x["i"] == 1}, {"claude-sonnet-5-5"})
+
+    def test_token_coverage_leaves_out_calls_cost_state_does_not_cover(self):
+        from runlens import explorer
+        r = Run(self.projects, "dfdfdfdf-0000-0000-0000-000000000001")
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        for i in range(4):
+            r.turn(f"c{i}", f"ct{i}")  # 50 output tokens each in the transcript
+        # the cost-state's process started after the first two calls: it counts the last two only
+        start = int((T0 + timedelta(seconds=6)).timestamp() * 1000)
+        r.rec(type="cost-state", totalCostUSD=0.5, startTime=start, modelUsage={"claude-sonnet-5-5": {"costUSD": 0.5, "outputTokens": 100}})
+        r.write()
+        simple_run(self.projects, "dfdfdfdf-0000-0000-0000-000000000002")
+        self.refresh()
+        self.assertGreater(self.q("SELECT cost_uncovered_usd FROM runs WHERE session_id LIKE 'dfdfdfdf-%1'")[0][0], 0)
+        con = store.connect(read_only=True)
+        try:
+            cov = explorer.build(con)["health"]["coverage"]
+        finally:
+            con.close()
+        self.assertEqual([c[0] for c in cov], ["dfdfdfdf-0000-0000-0000-000000000002"])
+
     def test_unknown_model_is_flagged_not_guessed(self):
         r = Run(self.projects, "adadadad-0000-0000-0000-000000000001")
         r.rec(type="assistant", message={"id": "u1", "model": "claude-future-9", "content": [],
@@ -550,6 +622,27 @@ class Ingest(Sandbox):
         self.assertEqual([r[0] for r in self.q("SELECT session_id FROM runs")], ["afafafaf-0000-0000-0000-000000000002"])
         self.assertFalse(fs_path(self.home / "archive" / "C--work-repo" / f"{old.sid}.jsonl").exists())
 
+    def test_pruned_runs_stay_pruned_until_named_again(self):
+        a = simple_run(self.projects, "a3a3a3a3-0000-0000-0000-000000000001")
+        b = simple_run(self.projects, "a3a3a3a3-0000-0000-0000-000000000002")
+        c = simple_run(self.projects, "a3a3a3a3-0000-0000-0000-000000000003")
+        self.refresh()
+        self.quiet(store.prune, sessions=[a.sid], yes=True)
+        self.quiet(store.prune, sessions=[b.sid], keep_archive=True, yes=True)
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)  # neither is asked for back
+        cli_args = ["--config", str(self.tmp / "none.toml")]
+        self.quiet(cli.main, cli_args + ["refresh", "--force"])
+        self.assertEqual([r[0] for r in self.q("SELECT session_id FROM runs")], [c.sid])
+        self.assertFalse(fs_path(self.home / "archive" / "C--work-repo" / f"{a.sid}.jsonl").exists())
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
+        self.quiet(cli.main, cli_args + ["refresh", "--session", a.sid])  # naming it brings it back
+        self.assertEqual(sorted(r[0] for r in self.q("SELECT session_id FROM runs")), [a.sid, c.sid])
+        self.quiet(cli.main, cli_args + ["ingest", "--session", b.sid[:8]])  # by prefix too; its archive was kept
+        self.assertIn("taken off the pruned list", self.out)
+        self.quiet(cli.main, cli_args + ["ingest"])
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 3)
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
+
 
 class Sources(Sandbox):
     def test_check_finds_stale_and_unarchived_runs(self):
@@ -564,6 +657,21 @@ class Sources(Sandbox):
         self.assertIn("selected by [select] but never archived", self.out)
         self.refresh()
         self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
+
+    def test_check_finds_database_only_runs_and_unknown_sessions(self):
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
+        self.assertIn("nothing to check", self.out)  # an empty home is not "all checks passed"
+        r = simple_run(self.projects, "bdbdbdbd-0000-0000-0000-000000000001")
+        self.refresh()
+        self.assertEqual(self.quiet(check.check, ["deadbeef"], cfg=self.cfg), 1, self.out)
+        self.assertIn("deadbeef  no run with this id", self.out)
+        self.assertEqual(self.quiet(check.check, [r.sid[:8]], cfg=self.cfg), 0, self.out)
+        archive.remove_run("C--work-repo", r.sid)  # the archive lost it, the database still has it
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg, sources=False), 1, self.out)
+        self.assertIn("in the database but not in the archive", self.out)
+        self.quiet(store.prune, sessions=[r.sid], yes=True)
+        self.assertEqual(self.quiet(check.check, [r.sid[:8]], cfg=self.cfg), 0, self.out)
+        self.assertIn("pruned on", self.out)
 
     def test_scan_cache_skips_unchanged_sessions(self):
         simple_run(self.projects, "bcbcbcbc-0000-0000-0000-000000000001")
@@ -733,6 +841,19 @@ class HookQueue(Sandbox):
         self.assertEqual(hooks.pending(), [])
         self.assertIn("skipped", (self.home / "hooks.log").read_text(encoding="utf-8"))
 
+    def test_the_log_says_why_a_queued_session_was_skipped(self):
+        r = simple_run(self.projects, "d2d2d2d2-0000-0000-0000-000000000001")
+        self.refresh()
+        self.quiet(store.prune, sessions=[r.sid], yes=True)
+        hooks.enqueue(r.sid)
+        hooks.enqueue("d2d2d2d2-0000-0000-0000-00000000dead")  # no transcript anywhere
+        hooks.drain(self.cfg)
+        log = (self.home / "hooks.log").read_text(encoding="utf-8")
+        self.assertIn(f"skipped {r.sid}: pruned earlier", log)
+        self.assertIn("skipped d2d2d2d2-0000-0000-0000-00000000dead: no transcript", log)
+        self.assertNotIn("not selected", log)
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 0)
+
     def test_lock_errors_are_recognised_and_waited_for(self):
         store.connect().close()
         code = ("import duckdb, sys, time; c = duckdb.connect(sys.argv[1]); print('ready', flush=True); time.sleep(3); c.close()")
@@ -789,12 +910,46 @@ class Install(Sandbox):
         self.assertIn("is not valid JSON", str(ctx.exception))
         self.assertEqual(self.settings.read_text(encoding="utf-8"), "{not json")
 
+    def test_odd_shapes_give_a_message_not_a_traceback(self):
+        self.settings.write_text(json.dumps({"hooks": {"SessionEnd": {"hooks": []}}}), encoding="utf-8")
+        with self.assertRaises(SystemExit) as ctx:
+            self.quiet(hooks.install, skill=False)
+        self.assertIn('"SessionEnd" is not a list', str(ctx.exception))
+        self.settings.write_text(json.dumps({"hooks": "x"}), encoding="utf-8")
+        with self.assertRaises(SystemExit) as ctx:
+            self.quiet(hooks.uninstall)
+        self.assertIn('"hooks" is not an object', str(ctx.exception))
+
+    def test_a_second_install_the_same_day_says_the_backup_is_the_earlier_one(self):
+        self.settings.write_text("{}", encoding="utf-8")
+        self.quiet(hooks.install, skill=False)
+        self.assertNotIn("earlier today", self.out)
+        self.quiet(hooks.install, skill=False)
+        self.assertIn("made earlier today", self.out)
+
 
 class Cli(Sandbox):
-    def run_cli(self, *args):
-        env = {**os.environ, "RUNLENS_HOME": str(self.home), "CLAUDE_PROJECTS": str(self.projects)}
+    def run_cli(self, *args, stdin=None):
+        env = {**os.environ, "RUNLENS_HOME": str(self.home), "CLAUDE_PROJECTS": str(self.projects),
+               "CLAUDE_SETTINGS": str(self.tmp / "settings.json"), "CLAUDE_CONFIG_DIR": str(self.tmp / "claude")}
+        env.pop("RUNLENS_HOOK_INLINE", None)
         return subprocess.run([sys.executable, "-m", "runlens", *args], capture_output=True, text=True, env=env, cwd=ROOT,
-                              encoding="utf-8")
+                              encoding="utf-8", input=stdin)
+
+    def test_a_broken_config_still_queues_the_session_and_logs_why(self):
+        (self.home / "config.toml").write_text("[select", encoding="utf-8")
+        payload = json.dumps({"hook_event_name": "SessionEnd", "session_id": "abc"})
+        res = self.run_cli("hook", stdin=payload)
+        self.assertEqual(res.returncode, 0, res.stderr)  # a hook never fails the session
+        self.assertEqual([p.name for p in hooks.pending()], ["abc"])
+        log = (self.home / "hooks.log").read_text(encoding="utf-8")
+        self.assertIn("queued abc", log)
+        self.assertIn("config error", log)
+        self.assertIn("runlens refresh", log)
+        drain = self.run_cli("drain")  # the detached drain has no terminal: its config error goes to the log too
+        self.assertEqual(drain.returncode, 1)
+        self.assertEqual((self.home / "hooks.log").read_text(encoding="utf-8").count("config error"), 2)
+        self.assertEqual([p.name for p in hooks.pending()], ["abc"])
 
     def test_sql_errors_are_one_line_and_output_formats(self):
         simple_run(self.projects, "eaeaeaea-0000-0000-0000-000000000001")
@@ -807,6 +962,65 @@ class Cli(Sandbox):
         self.assertEqual(json.loads(ok.stdout)[0]["cost_usd"], 0.5)
         csv_out = self.run_cli("incidents", "--csv", "--all")
         self.assertTrue(csv_out.stdout.startswith("incident_id,run,type"), csv_out.stdout + csv_out.stderr)
+
+    def test_sql_cannot_write_files_and_errors_say_what_failed(self):
+        simple_run(self.projects, "eaeaeaea-0000-0000-0000-000000000002")
+        self.refresh()
+        target = self.tmp / "out.csv"
+        for q in (f"COPY (SELECT 1) TO '{target.as_posix()}'",
+                  f"SET enable_external_access = true; COPY (SELECT 1) TO '{target.as_posix()}'",
+                  f"ATTACH '{(self.tmp / 'other.db').as_posix()}'"):
+            res = self.run_cli("sql", q)
+            self.assertEqual(res.returncode, 1, q)
+            self.assertNotIn("Traceback", res.stderr)
+        self.assertFalse(target.exists())
+        self.assertFalse((self.tmp / "other.db").exists())
+        empty = self.run_cli("sql", "")
+        self.assertEqual(empty.returncode, 1)
+        self.assertIn("give a query", empty.stderr)
+        self.assertNotIn("Traceback", empty.stderr)
+        bad = self.run_cli("sql", "selec 1")
+        self.assertIn('runlens: Parser error: syntax error at or near "selec"', bad.stderr)
+        import duckdb
+        with redirect_stderr(io.StringIO()) as err:
+            cli.friendly(duckdb.IOException('IO Error: Could not set lock on file "x": El proceso no tiene acceso porque est� siendo utilizado'))
+        self.assertIn("in use by another runlens process", err.getvalue())
+        self.assertNotIn("�", err.getvalue())
+
+    def test_messages_name_the_cause(self):
+        empty_dash = self.run_cli("dashboard", "--out", str(self.tmp / "d.html"))
+        self.assertEqual(empty_dash.returncode, 0, empty_dash.stderr)
+        self.assertIn("no runs in the database yet", empty_dash.stderr)  # an empty page, but said why
+        r = simple_run(self.projects, "ecececec-0000-0000-0000-000000000001")
+        first = self.run_cli("archive")
+        self.assertIn(f"new      2026-10-01T10:00  {r.sid}", first.stdout)  # copied for the first time is not "updated"
+        self.assertIn(f"same     2026-10-01T10:00  {r.sid}", self.run_cli("archive").stdout)
+        self.run_cli("ingest", "--quiet")
+        rep = self.run_cli("report", "--session", "nosuch", "--out", str(self.tmp / "r.html"))
+        self.assertEqual(rep.returncode, 1)
+        self.assertIn("no run matches --session nosuch", rep.stderr)
+        for args, flag in ((("ingest", "--since", "notadate"), "--since"), (("prune", "--before", "notadate"), "--before")):
+            res = self.run_cli(*args)
+            self.assertEqual(res.returncode, 2, args)
+            self.assertIn(f"argument {flag}: 'notadate' is not an ISO date", res.stderr)
+            self.assertNotIn("Traceback", res.stderr)
+        folder = self.tmp / "outdir"
+        folder.mkdir()
+        dash = self.run_cli("dashboard", "--out", str(folder))
+        self.assertEqual(dash.returncode, 1)
+        self.assertIn("is a folder: give a file path", dash.stderr)
+        self.assertNotIn("WinError", dash.stderr)
+        show = self.run_cli("show", "nosuch")
+        self.assertEqual((show.returncode, show.stdout), (1, ""))
+        self.assertIn("no incident or tool call with id nosuch", show.stderr)
+
+    def test_summary_prints_every_row(self):
+        for i in range(45):
+            simple_run(self.projects, f"edededed-0000-0000-0000-{i:012d}")
+        self.refresh()
+        out = self.run_cli("summary").stdout  # piped, as here: DuckDB's printer showed 20 of them
+        self.assertIn("(45 rows)", out)
+        self.assertNotIn("shown", out)
 
     def test_report_with_a_quote_in_the_path(self):
         odd = self.tmp / "o'brien"

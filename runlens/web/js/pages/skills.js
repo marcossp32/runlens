@@ -177,8 +177,10 @@ function skillsView(sel, picker) {
     skillsAnswer(shown, tones),
     kpiRow([
       kpi("Verdicts", h("span", { class: "verdicts" },
-        toneTag("better", fmt.int(count("better"))), " ", toneTag("worse", fmt.int(count("worse"))), " ", toneTag("unclear", fmt.int(count("unclear") + count("few") + count("confounded") + count("first")))),
-      "latest version against the one before · better · worse · other"),
+        // ≈ is "no clear change" only; confounded, too few runs and a first version are counted apart, without its glyph.
+        toneTag("better", fmt.int(count("better"))), " ", toneTag("worse", fmt.int(count("worse"))), " ", toneTag("unclear", fmt.int(count("unclear"))), " ",
+        h("span", { class: "muted" }, `${fmt.int(count("few") + count("confounded") + count("first"))} other`)),
+      "latest version against the one before · better · worse · no clear change · not judged (confounded, too few runs or a first version)"),
       kpi(sel.split ? "Items" : "Skills", fmt.int(shown.length), sel.split ? `${bases.length} skills split into versions` : `of ${SKILLS.length} recorded`),
       kpi("Runs", fmt.int(sessions), slicing() ? "in the filters" : DATA.window.first ? fmt.span(DATA.window.first, DATA.window.last) : ""),
       kpi("Model spend", fmt.usd(spend), "attributed to the skills shown"),
@@ -208,7 +210,7 @@ function skillsView(sel, picker) {
         section({ title: "Every skill in detail", count: plural(shown.length, "skill"), intro: "One row per skill. Sort by any column; more measures are behind “More columns”." },
           sortTable({ caption: "Skills", cols, rows: shown, sort: { key: "runs", dir: -1 }, csvName: "skills", moreParam: "cols" }).el,
           h("details", { class: "howto-read" }, h("summary", {}, "How to read this table"),
-            h("div", { class: "howto-body" }, h("p", {}, `Latest change compares the newest version shown with the one before it, from the difference between their runs; it needs ${MIN_RUNS} runs on each side, and is “confounded” when another skill, the model, the effort, Claude Code or the project changed at the same time.${unrecorded.length ? ` No skill text was recorded for ${unrecorded.join(", ")}, so their versions are unknown.` : ""} A skill that only ever ran inside a subagent has no version of its own yet.`)))),
+            h("div", { class: "howto-body" }, h("p", {}, `Latest change compares the newest version shown with the one before it, from the difference between their runs; it needs ${MIN_RUNS} runs on each side, and is “confounded” when another skill, the model, the effort, Claude Code or the project changed at the same time.${unrecorded.length ? ` No skill text was recorded for ${unrecorded.join(", ")}, so their versions are unknown.` : ""} A skill loaded inside a subagent has versions of its own too; the subagent's work before the load counts for the skill that started it.`)))),
         h("details", { class: "more" }, h("summary", {}, `${versions} recorded versions shown`), versionTable(bases))) },
       { id: "cost", label: "Cost", build: () => costPanel(shown) },
       { id: "outcome", label: "Outcome", build: () => outcomePanel(bases) },
@@ -241,21 +243,23 @@ function costPanel(shown) {
     const chartNames = [...new Set(pts.map((u) => u.unit.name))];
     return scatterChart({
       title: yOutcome ? `${ow.rate} against cost per invocation${sets.length > 1 ? ` (${pts[0].outcome.measure})` : ""}` : "Score against cost per invocation",
-      question: yOutcome ? "How do the skills' outcome and cost sit side by side?" : "How do the items' scores and cost sit side by side?",
+      // with several outcome definitions there is one card per definition, and each must ask its own question
+      question: yOutcome ? `How do the skills' ${sets.length > 1 ? `outcome (${pts[0].outcome.measure})` : "outcome"} and cost sit side by side?` : "How do the items' scores and cost sit side by side?",
       takeaway: () => (alone ? singleTakeaway(pts[0], yOutcome) : frontierTakeaway(pts)),
       sub: alone
         ? `one item${yOutcome && sets.length > 1 ? " uses this outcome" : ""}, so there is nothing to compare it with here · up is better, left is cheaper`
         : `each mark is one item · bigger marks have more runs · up is better, left is cheaper · the line (the Pareto frontier) joins the items nothing else beats on both`,
       legendInHowto: true,
       points: pts.map((u) => ({
-        x: u.kpi.cost, y: yOutcome ? u.kpi.outcome : u.score, label: u.name, ns: "skill", name: u.unit.name, r: 4 + 6 * Math.sqrt(u.runs / maxRuns), href: hrefUnit(u.id), hollow: u.low_sample,
+        x: u.kpi.cost, y: yOutcome ? u.kpi.outcome : u.score, label: u.name, ns: "skill", name: u.unit.name, runs: u.runs, r: 4 + 6 * Math.sqrt(u.runs / maxRuns), href: hrefUnit(u.id), hollow: u.low_sample,
         tip: { title: u.name, rows: [["Score", fmt.score(u.score)], ["Outcome", fmt.pct(u.kpi.outcome)], ["Cost per invocation", fmt.usd(u.kpi.cost)], ["Runs", fmt.int(u.runs)]] },
       })),
       x: { title: "Cost per invocation, US$ (log scale)", log: true, fmt: fmt.usdTick },
-      y: yOutcome ? { title: `${ow.rate}: share of attempts (higher is better)`, fmt: (v) => fmt.pct(v, 0), fit: true, bounds: [0, 1] } : { title: `Score (100 = ${baseWords()}, higher is better)`, fmt: fmt.score, fit: true, ref: 100, refLabel: "100 = usual level" },
+      // a tick at 92.5 % keeps its decimal, so two ticks never read the same
+      y: yOutcome ? { title: `${ow.rate}: share of attempts (higher is better)`, fmt: (v) => fmt.pct(v, Math.abs(v * 100 - Math.round(v * 100)) > 1e-6 ? 1 : 0), fit: true, bounds: [0, 1] } : { title: `Score (100 = ${baseWords()}, higher is better)`, fmt: fmt.score, fit: true, whole: true, ref: 100, refLabel: "100 = usual level" },
       frontier: alone ? null : { x: "low", y: "high" }, labels: true, labelTitle: "Skill",
       legendItems: chartNames.map((n) => { const c = colourOf("skill", n); return { label: n, css: c.css, shape: c.shape }; }).concat(alone ? [] : [{ label: "Pareto frontier", css: "var(--text2)", kind: "line" }]),
-      extraCols: [{ label: "Runs", num: true, value: (p) => p.r }],
+      extraCols: [{ label: "Runs", num: true, value: (p) => p.runs }],
       notes: yOutcome ? "The outcome is the success rate your config defines; skills with a different outcome are drawn in their own chart. Hollow marks have too few runs to trust." : "Each score is against its own skill, so marks of different skills are not ranked. Set an [outcome] in config.toml to put success on this axis instead. Hollow marks have too few runs to trust.",
     });
   };
@@ -353,9 +357,10 @@ function outcomePanel(bases) {
       cols: [nameCol("Skill"), { key: "o", label: ow.rate, num: true, value: (u) => u.kpi.outcome, cell: (u) => fmt.pct(u.kpi.outcome) },
         { key: "n", label: "Attempts", num: true, value: (u) => sumOf(u.runList, (r) => r.on) },
         { key: "e", label: "Eventual successes", num: true, value: (u) => sumOf(u.runList, (r) => r.oe) },
-        { key: "cps", label: "Cost per success", num: true, value: (u) => (sumOf(u.runList, (r) => r.oe) ? u.spend / sumOf(u.runList, (r) => r.oe) : null),
+        { key: "cps", label: "Spend per eventual success", num: true, value: (u) => (sumOf(u.runList, (r) => r.oe) ? u.spend / sumOf(u.runList, (r) => r.oe) : null),
           cell: (u) => fmt.usd(sumOf(u.runList, (r) => r.oe) ? u.spend / sumOf(u.runList, (r) => r.oe) : null) }],
-      rows: bases.filter((u) => sumOf(u.runList, (r) => r.on)), sort: { key: "n", dir: -1 } }).el);
+      rows: bases.filter((u) => sumOf(u.runList, (r) => r.on)), sort: { key: "n", dir: -1 } }).el,
+    note(`Spend per eventual success is the skill's total spend divided by its successes at any attempt, not only the first, so it is an average of totals. Cost per invocation, elsewhere, is a typical value (a geometric mean), so a few expensive runs raise the first and barely move the second: spend per success can sit above cost per invocation even when every attempt succeeds.`));
 }
 
 // Up to n named series in their own colour; the rest folded into one grey "Other".
@@ -541,6 +546,9 @@ function rolesPanel(list) {
     section({ title: "Every agent role", intro: "Sort by any column, or search above." }, t.el));
 }
 
+// What 100 means on the Groups chart: a group is read against its own typical run, not a skill's.
+const groupBase = () => baseWords().replace("the skill's", "the group's");
+
 function groupsPanel(list) {
   if (!list.length) {
     return h("div", { class: "howto" },
@@ -561,10 +569,10 @@ function groupsPanel(list) {
   return h("div", { class: "charts" },
     views.length ? answer(views.length === 1 ? `${views[0].name} (${views[0].members.length} skills): ${gt[0].sentence}` : `${plural(views.length, "group")}: ${listWords(views.map((u, i) => `${u.name} ${TONE[gt[i].tone].icon} ${gt[i].word.toLowerCase()}`))}.`, gt.length === 1 ? gt[0].tone : null) : null,
     h("p", { class: "subanswer" }, `A group is scored as one unit, next to each of its skills on its own: its runs are the union of its members' work, and its version is the combination of its members' versions, so it changes when any member's text changes. ${auto ? `${auto === 1 ? "One set was" : `${auto} sets were`} found in your runs: skills used together in most of their runs and edited at the same time (marked “auto”; [method] auto_groups = false turns this off).` : ""} Define your own with [[group]] in config.toml.`),
-    rangeChart({ title: "Latest version of each group against its own runs", question: "Is each flow, taken as a whole, better or worse than usual?", sub: `100 = ${baseWords()} · dot = score; bar = likely range · right of 100 is better`,
+    rangeChart({ title: "Latest version of each group against its own runs", question: "Is each flow, taken as a whole, better or worse than usual?", sub: `100 = ${groupBase()} · dot = score; bar = likely range · right of 100 is better`,
       takeaway: () => rangeTakeaway(views.map((u) => ({ label: u.name, score: u.score, ci: u.ci, tone: verdict(u.score, u.ci, u).tone })), "group"),
       rows: views.map((u) => ({ label: u.name, ns: "group", score: u.score, ci: u.ci, href: hrefUnit(u.id), tone: verdict(u.score, u.ci, u).tone, word: verdict(u.score, u.ci, u).word })),
-      ref: 100, refLabel: "usual level", axisTitle: `Score (100 = ${baseWords()})`, labelTitle: "Group" }),
+      ref: 100, refLabel: "usual level", axisTitle: `Score (100 = ${groupBase()})`, labelTitle: "Group" }),
     views.map((u) => h("p", { class: "note" }, h("strong", {}, `${u.name}: `), `members ${u.members.map((m) => m.replace(/^skill:/, "")).join(", ")}`)),
     sortTable({ caption: "Groups", cols, rows: views, sort: { key: "runs", dir: -1 }, csvName: "groups" }).el);
 }
@@ -602,7 +610,12 @@ function rangeTakeaway(rows, noun) {
       below.length ? `${listWords(below)} ${below.length === 1 ? "is" : "are"} clearly below` : null].filter(Boolean).join("; ") + "." + tail;
   }
   if (!ranged.length) return conf.length ? `No ${noun} can be judged against its usual level: ${fmt.int(conf.length)} confounded${rows.length > conf.length ? ", the rest without a range" : ""}.` : `No ${noun} has enough runs for a range yet: the scores are points only.`;
-  return `No ${noun} is clearly above or below its usual level: every range crosses 100.${rows.length - conf.length > ranged.length ? ` ${fmt.int(rows.length - conf.length - ranged.length)} more have too few runs for a range.` : ""}${tail}`;
+  // A confounded row is left out above, and its range may well sit on one side of 100: the sentence speaks only of the rows it judged.
+  const short = rows.length - conf.length - ranged.length;
+  const head = !conf.length ? `No ${noun} is clearly above or below its usual level: every range crosses 100.`
+    : ranged.length === 1 ? `The one ${noun} that can be judged is not clearly above or below its usual level: its range crosses 100.`
+      : `None of the ${fmt.int(ranged.length)} ${noun}s that can be judged is clearly above or below its usual level: each of their ranges crosses 100.`;
+  return `${head}${short ? ` ${fmt.int(short)} more ${short === 1 ? "has" : "have"} too few runs for a range.` : ""}${tail}`;
 }
 
 function timelineTakeaway(bases) {
@@ -639,7 +652,10 @@ function shareTakeaway(items, what, lead) {
   const total = sumOf(list, (i) => i.value);
   if (!list.length || !total) return null;
   const top = list[0];
-  return `${lead ? `${lead} ${top.label}` : top.label}: ${fmt.pct(top.value / total, 0)} ${what}${list[1] ? `, then ${list[1].label} (${fmt.pct(list[1].value / total, 0)})` : ""}.`;
+  // Items that share the top value are named together: a tie has no single winner.
+  const ties = list.filter((i) => i.value === top.value), next = list[ties.length];
+  const name = listWords(ties.map((i) => i.label));
+  return `${lead ? `${lead} ${name}` : name}: ${fmt.pct(top.value / total, 0)} ${what}${ties.length > 1 ? " each" : ""}${next ? `, then ${next.label} (${fmt.pct(next.value / total, 0)})` : ""}.`;
 }
 
 // The busiest day of a day-by-day chart.
@@ -654,7 +670,7 @@ function peakDayTakeaway(days, f, what) {
 // so ×0.66 on a cost is a version that costs about 1.5 times as much; it is not a percentage change of the measure.
 // A ratio at the cap was clipped (the score stops counting there): it reads "at least" / "at most".
 const clipped = (r) => Math.abs(Math.log(r)) >= LOG_CAP - 1e-6;
-const ratioWords = (r) => (!valid(r) || r <= 0 ? "—" : Math.abs(Math.log(r)) < 0.005 ? "×1.00" : `${clipped(r) ? (r > 1 ? "≥ " : "≤ ") : ""}${fmt.ratio(r)}`);
+const ratioWords = (r) => (!valid(r) || r <= 0 ? "—" : Math.abs(Math.log(r)) < 0.005 ? `×${nf({ minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1)}` : `${clipped(r) ? (r > 1 ? "≥ " : "≤ ") : ""}${fmt.ratio(r)}`);
 const ratioTone = (r) => (Math.abs(Math.log(r)) < 0.005 ? "about the same" : r > 1 ? "better" : "worse");
 
 function measuresTakeaway(rows, cols, cur) {
@@ -670,5 +686,10 @@ function measuresTakeaway(rows, cols, cur) {
     }
   }
   if (!big) return null;
-  return `${fmt.int(up)} cells are better than usual and ${fmt.int(down)} worse (by more than 5%). The biggest gap: ${big.r.name}, ${metricShort(big.c).toLowerCase()} ${ratioWords(big.d.ratio)} (${ratioTone(big.d.ratio)}).`;
+  // A rate's ratio is taken on 1 − p (floored), so a rate is named by its two values, as in its cell; a clipped ratio is
+  // where the score stops counting, not a measured size.
+  const d = big.d;
+  const what = big.c.type === "rate" ? `${fmt.metric(big.c, d.value)} vs ${fmt.metric(big.c, d.ref)}` : ratioWords(d.ratio);
+  const how = [ratioTone(d.ratio), `${fmt.runs(d.n)}`, clipped(d.ratio) ? `counted at the ×${fmt.num(DATA.method.max_ratio, 2)} cap` : null].filter(Boolean).join(", ");
+  return `${fmt.int(up)} cells are better than usual and ${fmt.int(down)} worse (by more than 5%). The biggest gap: ${big.r.name}, ${metricShort(big.c).toLowerCase()} ${what} (${how}).`;
 }

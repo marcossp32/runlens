@@ -1,10 +1,15 @@
 /* pages/method.js: how a score and a verdict are made, followed on one of your own skills (#/method). */
 
+// The example is scored as every other page scores it (the Score settings and the filters), on the current
+// version with the most runs, so its numbers match the Skills page.
 function workedExample() {
-  const unit = DATA.units.filter((u) => u.kind === "skill" && u.score != null).sort((a, b) => b.runs - a.runs)
-    .find((u) => (DATA.versions[u.id] || []).some((v) => v.label === u.current && Object.keys(v.metrics || {}).length));
-  if (!unit) return empty("There is no scored skill yet, so there is nothing to walk through.");
-  const v = DATA.versions[unit.id].find((x) => x.label === unit.current);
+  const pick = DATA.units.filter((u) => u.kind === "skill" && u.baseline && skillShown(u.name)).map((u) => {
+    const sc = scoreUnit(u);
+    return { unit: u, v: sc.versions.find((x) => x.label === sc.current) };
+  }).filter((c) => c.v && c.v.score != null && Object.keys(c.v.metrics || {}).length).sort((a, b) => b.v.runs - a.v.runs)[0];
+  if (!pick) return empty(filtered() ? "No skill has a scored version in these filters, so there is nothing to walk through." : "There is no scored skill yet, so there is nothing to walk through.");
+  const { unit, v } = pick;
+  const refWords = S.base === "self" ? "the skill's typical run" : baseWords();
   const parts = contributions(v);
   const wsum = parts.reduce((n, p) => n + p.d.weight, 0);
   const acc = parts.reduce((n, p) => n + p.d.weight * Math.log(p.d.ratio), 0);
@@ -12,9 +17,10 @@ function workedExample() {
     p.d.weight, fmt.num(p.d.weight * Math.log(p.d.ratio), 3)]);
   const j = verdict(v.score, v.ci, v);
   return h("div", { class: "prose" },
-    h("p", {}, `This is ${unit.name}, version ${nameOf(v)}, which has ${fmt.runs(v.runs)}. Each row is one measure. The ratio compares the skill's typical run with the value that counts, so a ratio above 1 means this version did better than the skill usually does.`),
+    scoreSettingsNote(),
+    h("p", {}, `This is ${unit.name}, version ${nameOf(v)}, which has ${fmt.runs(v.runs)}${slicing() ? " in the filters" : ""}. Each row is one measure. The ratio compares ${refWords} with the value that counts, so a ratio above 1 means this version did better than ${S.base === "self" ? "the skill usually does" : refWords}.`),
     plainTable("Worked example",
-      [{ label: "Measure" }, { label: "This version", num: true }, { label: "Typical run of the skill", num: true }, { label: "Value that counts", num: true },
+      [{ label: "Measure" }, { label: "This version", num: true }, { label: S.base === "self" ? "Typical run of the skill" : `Reference: ${refWords}`, num: true }, { label: "Value that counts", num: true },
         { label: "Ratio", num: true }, { label: "Weight", num: true }, { label: "Weight × ln(ratio)", num: true }], rows),
     h("p", {}, `“Value that counts” is this version's value pulled toward the skill's own value, as if it had ${DATA.method.shrink} extra typical runs. Ratios are capped at ×${DATA.method.max_ratio} and ×${fmt.num(1 / DATA.method.max_ratio, 2)}.`),
     h("ol", {},
@@ -24,7 +30,7 @@ function workedExample() {
     h("p", {}, `So the score is ${fmt.score(v.score)}`, v.ci ? `, with a range of ${fmt.interval(v.ci)}.` : "."),
     waterfallChart({ title: `The same sum, step by step: ${unit.name} ${nameOf(v)}`, question: "How does each measure take the score from 100 to its value?",
       takeaway: `Each bar is one measure's push: right raises the score, left lowers it. Together they take ${unit.name} ${nameOf(v)} from 100 to ${fmt.score(v.score)}.`,
-      sub: "each step is weight × ln(ratio) ÷ total weight; the steps multiply", score: v.score, base: "the skill's typical run", n: v.runs, minN: MIN_RUNS,
+      sub: "each step is weight × ln(ratio) ÷ total weight; the steps multiply", score: v.score, base: refWords, n: v.runs, minN: MIN_RUNS,
       rows: [...parts].sort((a, b) => Math.abs(b.share) - Math.abs(a.share)).map((p) => ({ label: metricLabel(p.m), share: p.share,
         tip: [["Ratio", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`]] })) }),
     h("p", {}, `The verdict is separate: ${j.sentence}`));
@@ -32,7 +38,7 @@ function workedExample() {
 
 function methodPage() {
   const m = DATA.method;
-  const pct = Math.round((m.confidence || 0.95) * 100);
+  const pct = pctOf(); // the confidence level in use: config.toml's, or the one chosen in Score
   const formula = [
     "value     = Σ num / Σ den over the runs          (log measures: num = Σ ln(x + offset) per invocation)",
     "counted   = (Σ num + K · d · typical) / (Σ den + K · d)      d = the skill's mean den per run",
@@ -52,7 +58,7 @@ function methodPage() {
       li(h("strong", {}, "Compare with the skill itself. "), "A version is compared with its own skill's typical run (100) and with the version before it, never with other skills: research is cheaper than building, and that says nothing about either skill."),
       li(h("strong", {}, "Combine. "), "The measures are combined with weights into one number. Weights can be set per skill under [weights] in config.toml, for example 0 for your messages in a skill that is meant to ask you questions.")),
     h("h2", {}, "The verdict"),
-    h("p", {}, `A version is judged against the version before it. Their runs are resampled ${fmt.int(m.resamples)} times, by session so that a run's invocations stay together, and the weighted difference is worked out each time. If the ${pct}% interval of the difference is entirely on the better side the verdict is “better” (▲), entirely on the worse side “worse” (▼), otherwise “no clear change” (≈), which says the interval holds zero and is not evidence that the versions are alike: with a handful of runs most real improvements land here. The interval is widened for small samples, which keeps false “better” or “worse” calls at about ${100 - pct}% when nothing changed.`),
+    h("p", {}, `A version is judged against the version before it. Their runs are resampled ${fmt.int(m.resamples)} times, by session so that a run's invocations stay together, and the weighted difference is worked out each time. If the ${pct}% interval of the difference is entirely on the better side the verdict is “better” (▲), entirely on the worse side “worse” (▼), otherwise “no clear change” (≈), which says the interval holds zero and is not evidence that the versions are alike: with a handful of runs most real improvements land here. The interval is widened for small samples, aiming at ${100 - pct}% false “better” or “worse” calls when nothing changed. It does not quite get there: in runlens's own simulation at 95% with nothing changed, the verdict at the final run was wrong 8% of the time, and checking after every run found a false call at some look 14% of the time.`),
     h("p", {}, `Fewer than ${m.min_runs} runs on either side is “not enough runs” (○): no verdict is given. When something else changed between the two sides, the verdict is “confounded” (?) and names it: another skill's text, the model or effort mix, the Claude Code version${m.cc_version === "minor" ? " (its minor version)" : ""}, or the project. A change can then not be put down to the skill text. Skills edited together are best judged together, as a group. With enough runs but no measure that has a weight above 0, the verdict is “not scored”.`),
     h("p", {}, "Limits worth knowing. Power is low: with five to ten runs a side, even a large real improvement usually shows as “no clear change”. The verdict is recomputed with the runs so far each time you refresh, so checking it as runs arrive calls a change more often than the nominal rate; judge a version once, after a number of runs you chose in advance. A unit listed among many is one of many tests, so the model also gives each unit a Benjamini-Hochberg q, and a “better” or “worse” it does not support is flagged. A reverted skill (A, then B, then A again) counts as three versions."),
     h("details", { class: "more" }, h("summary", {}, "Exact formula and settings"),
@@ -100,7 +106,7 @@ function methodPage() {
       li(h("strong", {}, "A version is one skill text. "), "Versions are numbered by first use. A skill whose text Claude Code did not record shows as unrecorded."),
       li(h("strong", {}, "Leaving versions out re-scores a skill. "), "The score is then worked out from the versions still on, as a single number with no range."),
       li(h("strong", {}, "Time is approximate. "), `It is the gap from each model turn to the same agent's next turn, capped at ${m.turn_cap} seconds, so it includes tool time and waiting. It is agent time, not wall-clock time: agents running in parallel add up and waits for subagents or the user are included.`),
-      li(h("strong", {}, "Skills that only run in subagents. "), "Claude Code credits a subagent's turns to the skill that started it, so a skill loaded only inside subagents may have little or no work of its own."),
+      li(h("strong", {}, "Skills that run in subagents. "), "A subagent's work before it loads a skill is credited to the skill that started it. A skill a subagent loads gets its own versions, and the subagent's work after the load is credited to it, so a skill loaded only inside subagents is scored like any other."),
       li(h("strong", {}, "Agent roles have no versions. "), "A role is a subagent type with its description, numbers folded. Roles seen in a single run are folded into one row per type. They are described, not scored."),
       li(h("strong", {}, "Groups. "), "A group's runs are the union of its members' work, each piece counted once. Its version changes when any member's text changes, so skills edited together are judged together.")));
 

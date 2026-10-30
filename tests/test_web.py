@@ -138,6 +138,28 @@ def visible(dom):
     return re.sub(r"<[^>]+>", " ", re.sub(r"(?s)<(script|style)\b.*?</\1>", " ", dom)).replace("&nbsp;", " ")
 
 
+def card(dom, question):
+    """The markup of the chart card whose heading is `question` (empty when there is none)."""
+    i = dom.find(f">{question}</figcaption>")
+    if i < 0:
+        return ""
+    return dom[dom.rfind("<figure", 0, i):dom.find("</figure>", i)]
+
+
+def x_ticks(markup):
+    """The tick labels of the first horizontal axis in some chart markup."""
+    axis = re.search(r'<g class="axis-x">(.*?)</g>', markup, re.S)
+    return re.findall(r'<text class="tick"[^>]*>([^<]*)</text>', axis.group(1)) if axis else []
+
+
+def duration_ms(label):
+    """A duration label as the page writes it ("1.5 h", "30 min", "0 ms"), in ms."""
+    m = re.fullmatch(r"(-?[\d.,]+)\s*(ms|s|min|h)", re.sub(r"\s", " ", label).strip())
+    if not m:
+        raise ValueError(label)
+    return float(m.group(1).replace(",", ".")) * {"ms": 1, "s": 1e3, "min": 6e4, "h": 36e5}[m.group(2)]
+
+
 def wording_model():
     """The model with a PR outcome on one skill, a check outcome on another, and a confounded group whose range starts at 100.2."""
     m = copy.deepcopy(model())
@@ -184,8 +206,8 @@ def find_browser():
     return None
 
 
-def dump(path, route, budget=5000, until=None, tries=4):
-    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile.
+def dump(path, route, budget=5000, until=None, tries=4, size=None, height=900):
+    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile (size: the window, "w,h"; else 1280 wide by height).
 
     The virtual-time budget runs timers, not frames: on a loaded machine Chrome can spend it and dump before it
     paints once, so nothing that waits on a frame (ResizeObserver, IntersectionObserver, requestAnimationFrame)
@@ -196,7 +218,7 @@ def dump(path, route, budget=5000, until=None, tries=4):
     for _ in range(tries):
         prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
         cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-               f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
+               f"--virtual-time-budget={budget}", f"--window-size={size or f'1280,{height}'}", "--dump-dom", path.as_uri() + route]
         try:
             dom = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
         except subprocess.TimeoutExpired:
@@ -259,6 +281,22 @@ class Model(unittest.TestCase):
         t = explorer.table(("a", "b"), [["x", 1], ["y", 2], ["x", 3]], codes=("a",))
         self.assertEqual(t["d"]["a"], ["x", "y"])
         self.assertEqual([r[0] for r in t["r"]], [0, 1, 0])
+
+    def test_health_counts_labels_that_match_no_incident(self):
+        import duckdb
+        con = duckdb.connect()
+
+        def rows(sql, params=None):  # as explorer.build's: a missing table gives no rows
+            try:
+                cur = con.execute(sql, params or [])
+            except (duckdb.CatalogException, duckdb.BinderException):
+                return []
+            return [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+
+        self.assertEqual(explorer.health(rows, {})["orphan_labels"], 0)  # no labels table yet
+        con.execute("CREATE TABLE incidents (incident_id VARCHAR); INSERT INTO incidents VALUES ('a')")
+        con.execute("CREATE TABLE labels (incident_id VARCHAR); INSERT INTO labels VALUES ('a'), ('gone'), ('gone'), ('lost')")
+        self.assertEqual(explorer.health(rows, {})["orphan_labels"], 2)  # as `runlens check` counts them
 
     def test_duration_bins(self):
         self.assertEqual(explorer.duration_bin(5), 0)
@@ -387,6 +425,9 @@ class Renders(unittest.TestCase):
         self.assertRegex(text, r"60 ?% vs 90 ?%")  # a rate shows its value against the reference
         self.assertNotRegex(text, r"[+−]\d+%")  # no signed percentage of a ratio
         self.assertIn("×", text)
+        # the takeaway names a rate by its values too, never by a clipped ratio of failure rates ("outcome ≥ ×2")
+        self.assertNotRegex(text, r"outcome [≥≤] ×")
+        self.assertRegex(text, r"The biggest gap: flow, outcome 60 ?% vs 90 ?% \((better|worse), 6 runs, counted at the ×2 cap\)")
 
     def test_confounded_version_is_not_called_clearly_above(self):
         path = TMP / "conf.html"
@@ -396,6 +437,96 @@ class Renders(unittest.TestCase):
             self.assertNotRegex(text, r"release-flow is clearly above", route)
         text = visible(dump(path, "#/?kind=groups"))
         self.assertIn("1 confounded", text)
+
+    def test_range_takeaway_speaks_only_of_the_rows_it_judged(self):
+        # A confounded skill whose whole range is above 100 sits next to a skill whose range crosses 100:
+        # the takeaway may not say that every range crosses 100.
+        m = wording_model()
+        flow, once = m["units"][0], m["units"][1]
+        flow["ci"] = m["versions"]["skill:flow"][-1]["ci"] = [95.0, 125.0]
+        once.update(verdict="confounded", direction="better", vs="v0", confounders=["Claude Code 2.1 → 2.2"], ci=[106.0, 139.0], score=120.0, runs=6, low_sample=False)
+        path = TMP / "ranges.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/"))
+        self.assertNotIn("every range crosses 100", text)
+        self.assertIn("The one skill that can be judged is not clearly above or below its usual level: its range crosses 100.", text)
+
+    def test_compare_chart_words_agree_with_the_table(self):
+        # The dot is A ÷ B (×1.25 for cost); the table is B ÷ A − 1 on the same values. The words beside the dot
+        # must give the table's number, not "25% better".
+        path = TMP / "compare.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/compare?a=skill%3Aflow&av=v1&b=skill%3Aflow&bv=v2", until=r'class="value'))
+        self.assertNotRegex(text, r"25 ?% better")
+        self.assertRegex(text, r"8 ?% lower")  # the cost row of the chart
+        self.assertRegex(text, r"−8 ?%")  # the same change in the table
+
+    def test_truncated_bar_charts_take_shares_of_the_whole(self):
+        # 14 tools: the time chart keeps the twelve with the most time (T13 has the fewest calls and nearly all of it),
+        # and both charts take shares over every tool, not over the bars they keep.
+        m = model()
+        ids = [r[0] for r in m["explore"]["runs"]["r"]]
+        m["explore"]["tools"] = explorer.table(("run", "tool", "skill", "calls", "errors", "denied", "ms"),
+                                               [[r, f"T{i}", "flow", 100 - i, 0, 0, 1_000_000 if i == 13 else 1000] for r in ids for i in range(14)])
+        path = TMP / "tools.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics?tab=tools", until=r'class="value'))
+        self.assertRegex(text, r"T13: 99 ?% of the time in tools")
+        self.assertRegex(text, r"· 99 ?%")  # T13's bar, in the chart, with the takeaway's share
+        self.assertRegex(text, r"· 7[.,]6 ?%")  # T0's 100 calls of 1,309, not of the 1,134 the twelve bars hold
+        self.assertNotIn("does most of the work", text)
+
+    def test_compactions_counted_as_problems_are_not_called_other(self):
+        m = model()
+        m["explore"]["incidents"]["r"].append([m["explore"]["runs"]["r"][0][0], 400, "compaction", "flow", 0, "main", "incc", "auto", 0, 1, None])
+        path = TMP / "comp.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics"))
+        self.assertNotIn("that are not problems", text)
+        self.assertIn("Also counted among the problems above: context compactions.", text)
+
+    def test_help_texts_agree_with_the_readme(self):
+        path = TMP / "help.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/method"))
+        self.assertNotIn("keeps false", text)  # the README's null simulation: 8% at the final look, 14% at some look
+        self.assertRegex(text, r"wrong 8 ?% of the time, and checking after every run found a false call at some look 14 ?% of the time")
+        text = visible(dump(path, "#/method?tab=limits"))
+        self.assertNotIn("little or no work of its own", text)  # a skill a subagent loads gets its own unit and versions
+        self.assertIn("is scored like any other", text)
+        text = visible(dump(path, "#/unit/agent%3AExplore%7Cscan"))
+        self.assertNotIn("scored as one group", text)  # agent roles are described, not scored
+        self.assertIn("are not scored", text)
+        text = visible(dump(path, "#/unit/agent%3AExplore%7Cscan?tab=drivers"))
+        self.assertNotIn("No measure has data", text)
+        self.assertIn("Agent roles are not scored", text)
+
+    def test_spend_per_success_says_which_average_it_is(self):
+        # Spend ÷ eventual successes is not the geometric-mean cost per invocation, and not tied to the first-pass rate.
+        path = TMP / "cps.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        text = visible(dump(path, "#/?tab=outcome"))
+        self.assertNotIn("Cost per success", text)
+        self.assertIn("Spend per eventual success", text)
+        self.assertIn("a typical value (a geometric mean)", text)
+
+    def test_minor_wording(self):
+        path = TMP / "minor.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/")
+        verdicts = re.search(r'<span class="verdicts">(.*?)</span></div>', dom, re.S).group(1)
+        self.assertNotRegex(visible(verdicts), r"≈\s*2\b")  # ≈ counts "no clear change" only, not the first version too
+        self.assertIn("1 other", visible(verdicts))
+        self.assertIn("100 = the group's typical run", visible(dump(path, "#/?kind=groups")))
+        text = visible(dump(path, "#/unit/skill%3Aflow?tab=drivers"))
+        self.assertIn("Value that counts", text)  # the ratio's own operand, next to the raw values
+        text = visible(dump(path, "#/diagnostics?tab=agents", until=r'class="value'))
+        self.assertNotIn("stopped by you", text.replace("stopped by you:", ""))  # "N · M stopped by you" read as M out of N
+        self.assertIn("5 subagents", text)  # the duration chart counts subagents (those with an end), not calls
+        self.assertNotRegex(text, r"\b\d+ calls\b")
+        text = visible(dump(path, "#/diagnostics?tab=models"))
+        self.assertIn("1 model ·", text)
+        self.assertNotIn("1 models", text)
 
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
@@ -472,6 +603,176 @@ class Renders(unittest.TestCase):
         self.assertNotIn('class="ghost custom"', plain)
         self.assertNotIn('class="settingsnote"', plain)
 
+    # ---- issue #30: controls that never appeared, lost state or ignored the settings ----
+
+    def test_runs_calendar_offers_its_colour_select(self):
+        path = TMP / "cal.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/runs?cal=runs")
+        sel = re.search(r'<select aria-label="Colour the days by">(.*?)</select>', dom, re.S)
+        self.assertIsNotNone(sel, "the calendar's colour select is not on the page")
+        self.assertRegex(sel.group(1), r'<option value="runs" selected="">Runs</option>')
+
+    def test_per_unit_weights_keep_their_decimals(self):
+        path = TMP / "wu.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/unit/skill%3Aflow?wu=flow%3Acost%3A1.5.seconds%3A0")
+        self.assertRegex(dom, r'data-key="w-cost"[^>]*><output class="sp-val">×1[.,]5</output>')  # not ×1
+        self.assertRegex(dom, r'data-key="w-seconds"[^>]*><output class="sp-val">×0</output>')
+
+    def test_unknown_baseline_version_is_the_default(self):
+        path = TMP / "base.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        self.assertNotIn('class="ghost custom"', dump(path, "#/?base=ver%3Av99"))
+        self.assertIn('class="ghost custom"', dump(path, "#/?base=ver%3Av1"))
+
+    def test_how_it_works_follows_the_score_settings_and_filters(self):
+        path = TMP / "method.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/method?ci=80").split('<article class="page"')[1])  # the page, not the Score menu's choices
+        self.assertIn("80%", text)
+        self.assertNotIn("If the 95% interval", text)  # the simulation note keeps its own 95%
+        unit = dump(path, "#/unit/skill%3Aflow?w=cost%3A5")
+        score = float(re.search(r'class="summary[^"]*"[^>]*data-score="([\d.]+)"', unit).group(1))
+        text = visible(dump(path, "#/method?tab=example&w=cost%3A5"))
+        self.assertIn("Worked out with your weights", text)
+        self.assertEqual(int(re.search(r"So the score is (\d+)", text).group(1)), round(score))  # the score the unit page shows
+        text = visible(dump(path, "#/method?tab=example&repo=nowhere"))
+        self.assertIn("nothing to walk through", text)
+        self.assertNotIn("So the score is", text)
+
+    def test_data_health_says_the_filters_do_not_apply_and_counts_orphan_labels(self):
+        m = model()
+        m["explore"]["health"]["orphan_labels"] = 59
+        path = TMP / "health.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = dump(path, "#/health?repo=other")
+        self.assertIn('class="settingsnote healthfilters"', dom)
+        self.assertIn("59 incident labels match no incident", visible(dom))
+        self.assertNotIn('class="settingsnote healthfilters"', dump(path, "#/health"))
+
+    def test_filter_counts_are_the_runs_a_choice_would_leave(self):
+        path = TMP / "fcount.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        count = lambda dom, v: int(re.search(rf'data-text="{re.escape(v)}".*?class="fcount">(\d+)<', dom, re.S).group(1))
+        dom = dump(path, "#/runs")
+        self.assertEqual(count(dom, "2.2.0"), 2)  # runs 4, 5 and 6 used it; run 6 is still open
+        dom = dump(path, "#/runs?repo=other")
+        self.assertEqual((count(dom, "2.1.0"), count(dom, "2.2.0")), (1, 1))  # the repo filter applies to the Claude Code counts
+        self.assertEqual(count(dom, "other"), 2)  # a dimension's own filter does not narrow its counts
+        self.assertEqual(count(dump(path, "#/runs?pop=all"), "2.2.0"), 3)
+
+    def test_a_single_point_scatter_keeps_its_x_ticks(self):
+        # One skill: the log cost axis spans about 0.9-1.6 $, which holds no 1, 2 or 5 step.
+        path = TMP / "onepoint.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost&skills=flow", until=r'<g class="axis-x">')
+        markup = card(dom, "How do the items' scores and cost sit side by side?")
+        ticks = x_ticks(markup)
+        self.assertGreaterEqual(len(ticks), 2, ticks)
+        y = re.findall(r'<text class="tick"[^>]*>([^<]*)</text>', re.search(r'<g class="axis-y">(.*?)</g>', markup, re.S).group(1))
+        self.assertEqual(len(y), len(set(y)), y)  # no two score ticks read the same (99.5 and 100 both as "100")
+
+    def test_each_outcome_chart_asks_its_own_question(self):
+        path = TMP / "questions.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost")
+        asked = re.findall(r'<figcaption class="cardtitle"[^>]*>(How do the skills[^<]*)</figcaption>', dom)
+        self.assertEqual(len(asked), 2, asked)
+        self.assertEqual(len(set(asked)), 2, asked)
+
+    def test_run_explorer_never_gives_a_skill_and_an_agent_type_one_colour(self):
+        m = model()
+        a = m["explore"]["agents"]
+        a["r"].append([a["r"][0][0], 3, 0, "general-purpose", "fix", "claude-sonnet-5-5", 200, 400, 0.2, "completed", 1, 0, 2, 0, 0, None, 0, None])
+        path = TMP / "agentcolours.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = dump(path, "#/run/s1v1aaaa")
+        keys = re.findall(r'<li><svg class="lkey"[^>]*>.*?style="fill:([^"]+)".*?</svg>((?:skill|agent): [^<]+)</li>', card(dom, "What happened in this run, and when?"))
+        self.assertEqual(len(keys), 4, keys)  # flow, once_only, Explore, general-purpose
+        self.assertEqual(len({css for css, _ in keys}), 4, keys)
+
+    def test_calendar_names_each_week_by_its_days_and_says_each_figure_once(self):
+        m = model()
+        ex = m["explore"]
+        ex["runs"]["r"][0][2] = 1_788_264_000  # Tuesday 1 September 2026: its week starts on Monday 31 August
+        ex["days"]["r"][0][1] = "2026-09-01"
+        path = TMP / "calendar.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = card(dump(path, "#/runs", until=r'class="cell"'), "When do I work, and what does a day cost?")
+        months = re.findall(r'<text class="tick" x="[^"]*" y="13">([^<]+)</text>', dom)
+        self.assertEqual(len(months), 1, months)  # every active day is in September
+        tips = re.findall(r'aria-label="([^"]*Spend[^"]*)"', dom)
+        self.assertTrue(tips)
+        self.assertTrue(all(t.count("Spend") == 1 for t in tips), tips[:2])
+
+    def test_bars_by_skill_wear_each_skill_colour(self):
+        m = model()
+        calls = m["explore"]["calls"]
+        row = list(calls["r"][0])
+        calls["d"]["skill"].append("once_only")
+        row[calls["c"].index("skill")] = len(calls["d"]["skill"]) - 1
+        calls["r"].append(row)
+        path = TMP / "barcolours.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = card(dump(path, "#/run/s1v1aaaa", height=2400, until=r'(?s)Which skills did the work\?</figcaption>.*?class="bar"'), "Which skills did the work?")
+        fills = re.findall(r'<path[^>]*class="bar"[^>]*style="fill:([^"]+)"', dom)
+        self.assertEqual(len(fills), 2, dom[-400:])  # flow and once_only
+        self.assertEqual(len(set(fills)), 2, fills)
+
+    def test_labels_say_what_they_are(self):
+        m = model()
+        ex = m["explore"]
+        tools = ex["tools"]["r"]
+        tools += [[r[0], "Bash", "flow", 20, 1, 0, 9000] for r in tools[:3]] + [[r[0], "bash", "flow", 2, 2, 0, 10] for r in tools[:3]]
+        inc = ex["incidents"]
+        inc["r"][0][inc["c"].index("detail")] = "auto, 484996 tokens before"
+        path = TMP / "labels.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics?tab=tools"))
+        self.assertIn("bash (no such tool, not Bash)", text)
+        run = dump(path, "#/run/s1v1aaaa")
+        self.assertNotIn("484996", " ".join(re.findall(r'aria-label="([^"]*)"', run)))
+        self.assertRegex(run, r'aria-label="[^"]*484\D996 tokens before')
+
+    def test_a_stub_run_says_what_it_lacks(self):
+        m = model()
+        runs = m["explore"]["runs"]
+        stub = list(runs["r"][0])
+        stub[:2] = ["s7stubaa", "session-7"]
+        stub[runs["c"].index("stub")], stub[runs["c"].index("cost")], stub[runs["c"].index("agents")] = 1, 0.01, 0
+        runs["r"].append(stub)
+        path = TMP / "stub.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/run/s7stubaa"))
+        self.assertIn("Nothing in this run has a time to draw", text)
+        self.assertNotIn("0 subagents in 0 types", text)
+        self.assertNotIn("Nothing recorded for this yet", text)  # the money is there, only not split
+        self.assertRegex(text, r"Claude Code counted (\S+ \$|\$\S+) for this run")
+        busy = visible(dump(path, "#/run/s1v1aaaa"))
+        self.assertNotIn("the twelve most expensive", busy)  # three agents with a cost
+
+    def test_axis_ticks_land_on_round_values(self):
+        m = model()
+        t = m["explore"]["tools"]
+        t["r"] += [[r[0], "Bash", r[2], 10, 0, 0, 1_000_000] for r in t["r"]]  # 6 × 1000 s in Bash
+        path = TMP / "ticks.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        # a waterfall's score axis: whole steps, never 97.5 shown as "98"
+        dom = dump(path, "#/unit/skill%3Aflow?tab=drivers", until=r'<g class="axis-x">')
+        vals = [float(x.replace(",", "")) for x in x_ticks(card(dom, "Which measure moves the score of v2, and by how much?"))]
+        self.assertGreaterEqual(len(vals), 3, vals)
+        step = vals[1] - vals[0]
+        self.assertIn(step, (1, 2, 5, 10, 20, 50), vals)
+        self.assertTrue(all(v % step == 0 for v in vals), vals)
+        # durations: clock steps (30 min, 1 h), never 33.3 min or 1.1 h
+        dom = dump(path, "#/diagnostics?tab=tools", until=r'<g class="axis-x">')
+        ms = [duration_ms(x) for x in x_ticks(card(dom, "Which tools does the waiting come from?"))]
+        self.assertGreaterEqual(len(ms), 3, ms)
+        step = ms[1] - ms[0]
+        self.assertIn(step, (6e4, 5 * 6e4, 10 * 6e4, 15 * 6e4, 30 * 6e4, 36e5), ms)
+        self.assertTrue(all(abs(v / step - round(v / step)) < 1e-6 for v in ms), ms)
+
 
 def build_demo():
     """The demo history and its model, built in child processes with their own RUNLENS_HOME."""
@@ -541,6 +842,33 @@ class Recompute(unittest.TestCase):
         self.assertEqual(int(kpis["Runs"].replace(",", "")), runs)
         self.assertEqual(int(kpis["Pull requests"].replace(",", "")), prs)
         self.assertEqual(re.sub(r"\D", "", kpis["Spend"]), f"{round(spend * 100)}")  # digits only: the separators follow the browser's locale
+
+    def test_flow_takeaway_says_most_only_for_a_majority(self):
+        # In the demo the commonest first skill starts well under half the runs, and the widest band of the
+        # sankey (one step) is not the matrix's most common hand-over (every step).
+        text = visible(dump(self.path, "#/diagnostics?tab=flow", budget=12000))
+        self.assertNotIn("Most runs start with", text)
+        self.assertRegex(text, r"More runs start with [\w-]+ than with any other skill \(\d+ of \d+ runs\)")
+        self.assertNotIn("the most common hand-over is", text)
+        self.assertRegex(text, r"the widest band is [\w-]+ → [\w-]+ from step \d to \d")
+
+    def test_ties_are_not_reported_as_one_winner(self):
+        # In the demo two problem kinds have 18 problems each, and two tools show the same rounded average call.
+        text = visible(dump(self.path, "#/diagnostics", budget=12000))
+        self.assertRegex(text, r"(Error streak and Repeated call|Repeated call and Error streak): 24 ?% of the problems each")
+        text = visible(dump(self.path, "#/diagnostics?tab=tools", budget=12000))
+        self.assertRegex(text, r"(Bash and Grep|Grep and Bash) are the slowest on average")
+
+    def test_a_phone_keeps_captions_inside_and_marks_what_scrolls(self):
+        # issue #31: at 390 px the run explorer's caption fits its chart, and a heatmap wider than its card says so.
+        rid = self.model["explore"]["runs"]["r"][0][0]
+        dom = dump(self.path, f"#/run/{rid}", size="390,860", until=r'class="sectionlabel"')
+        caption = re.search(r'<text class="sectionlabel"[^>]*>([^<]+)</text>', dom).group(1)
+        self.assertNotIn("indented under the agent that started it", caption)  # the long wording does not fit 390 px
+        self.assertTrue(caption.startswith("Agents"), caption)
+        dom = dump(self.path, "#/?tab=measures", size="390,860", until=r'class="plot more-right"')  # the measures heatmap
+        self.assertIn('class="plot more-right"', dom)
+        self.assertNotIn('class="plot more-right"', dump(self.path, "#/?tab=measures", until=r'class="rowlabel"'))  # it fits at 1280 px
 
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")

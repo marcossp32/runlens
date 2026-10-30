@@ -8,7 +8,7 @@ function compareValues(a, b, dir) {
   return dir * c;
 }
 
-/* A sortable table. cols: {key, label, num, value(row), cell(row), csv(row), more}. With `page`, rows arrive in pages.
+/* A sortable table. cols: {key, label, num, value(row), cell(row), csv(row), csvLabel, more}. With `page`, rows arrive in pages.
    `csvName` adds a CSV button that exports every row and every column (not just what is shown), with raw values.
    Columns marked `more` start hidden behind a "More columns" toggle, so a wide table opens with what most readers
    need; the toggle is remembered in the URL under `more=1` when `moreParam` is given. */
@@ -129,7 +129,7 @@ function tabs(label, items, opts = {}) {
       }
       panels[i].hidden = !on;
     });
-    if (write && opts.param) setParams({ [opts.param]: id === items[0].id ? null : id });
+    if (write && opts.param) setParams({ [opts.param]: id === items[0].id ? null : id }, true);
     if (opts.onSelect) opts.onSelect(id);
   };
   buttons.forEach((b, i) => {

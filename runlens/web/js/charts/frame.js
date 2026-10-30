@@ -59,6 +59,23 @@ function redrawForPrint() {
      n, minN                           sample size: under minN the chart says so and is drawn muted
      controls                          at most two small controls for this chart (a measure, a scale), in its header
    } */
+
+// A drawing wider than its card scrolls sideways (a heatmap on a phone). The side that has more fades out, so the
+// reader sees there is more, and a cut column reads as "continues" rather than as the end of the chart.
+const CUED = new WeakSet();
+function scrollCue(el) {
+  const update = () => {
+    const over = el.scrollWidth > el.clientWidth + 1;
+    el.classList.toggle("more-right", over && el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    el.classList.toggle("more-left", over && el.scrollLeft > 1);
+  };
+  if (!CUED.has(el)) {
+    CUED.add(el);
+    el.addEventListener("scroll", update, { passive: true });
+  }
+  update();
+}
+
 function chartCard(spec) {
   const id = `c${Math.random().toString(36).slice(2, 9)}`;
   const plot = h("div", { class: "plot", style: `min-height:${spec.height || 180}px` });
@@ -115,6 +132,7 @@ function chartCard(spec) {
       } else this.svg = null;
       plot.replaceChildren(node || empty("Nothing to draw."));
       plot.style.minHeight = "";
+      scrollCue(plot);
       exportButtons.forEach((b) => { b.disabled = !this.svg; });
     },
   };
@@ -285,17 +303,41 @@ function logTicks(lo, hi) {
     }
   }
   const powers = out.filter((v) => Math.abs(Math.log10(v) % 1) < 1e-9);
-  return out.length > 7 && powers.length >= 2 ? powers : out;
+  if (out.length > 7 && powers.length >= 2) return powers;
+  // A narrow range (one point, or a few close together) can hold no 1, 2 or 5 at all: plain round steps instead.
+  if (out.length < 2) {
+    const lin = ticks(lo, hi, 4).filter((v) => v >= lo * 0.999 && v <= hi * 1.001 && v > 0);
+    if (lin.length >= 2) return lin;
+  }
+  return out;
 }
-// Time ticks between a and b (ms), at most about `count`, on round hours, days, weeks or months.
+// Durations on a linear axis (ms): zero to a round duration above max, ticks on steps a clock reads (15 min, 1 h, 6 h),
+// never 16.7 min or 55.6 h.
+const DURATION_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1e3, 2e3, 5e3, 10e3, 15e3, 30e3, 60e3, 2 * 60e3, 5 * 60e3, 10 * 60e3,
+  15 * 60e3, 30 * 60e3, 36e5, 2 * 36e5, 3 * 36e5, 6 * 36e5, 12 * 36e5, 864e5, 2 * 864e5, 5 * 864e5, 10 * 864e5, 20 * 864e5, 50 * 864e5];
+function durationMax(maxMs, count) {
+  const top = maxMs > 0 ? maxMs : 1;
+  const step = DURATION_STEPS.find((s) => top / s <= count) || 10 ** Math.ceil(Math.log10(top / count));
+  const t = [];
+  for (let v = 0; v < top + step - 1e-9; v += step) t.push(v);
+  return { max: t[t.length - 1], ticks: t };
+}
+// Time ticks between a and b (ms), at most about `count`, on round seconds, minutes, hours, days, weeks or months.
+// Under a day, a tick at local midnight is labelled with its date, so an axis that spans days says which day.
 function timeTicks(a, b, count) {
-  const H = 36e5;
-  const steps = [H, 3 * H, 6 * H, 12 * H, DAY, 2 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 91 * DAY];
+  const M = 6e4, H = 36e5;
+  const steps = [5e3, 10e3, 15e3, 30e3, M, 2 * M, 5 * M, 10 * M, 15 * M, 30 * M, H, 3 * H, 6 * H, 12 * H, DAY, 2 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 91 * DAY];
   const step = steps.find((s) => (b - a) / s <= count) || 182 * DAY;
   const out = [];
   if (step < DAY) {
     const off = new Date(a).getTimezoneOffset() * 6e4;
-    for (let t = Math.ceil((a - off) / step) * step + off; t <= b; t += step) out.push({ t, label: fmt.hour(t) });
+    const clock = step < M ? (t) => df({ hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(t)) : fmt.hour;
+    const midnight = (t) => {
+      const d = new Date(t);
+      return d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0;
+    };
+    const days = b - a > H && new Date(a).toDateString() !== new Date(b).toDateString();
+    for (let t = Math.ceil((a - off) / step) * step + off; t <= b; t += step) out.push({ t, label: days && midnight(t) ? fmt.monthDay(t) : clock(t) });
   } else {
     // local midnights, so a day tick sits where that day starts for the reader
     const d = new Date(a);
