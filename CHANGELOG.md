@@ -20,7 +20,6 @@
 - Token columns from the transcript (`v_skill`, `v_model`, `agents.*_tokens`, the report and dashboard) are labelled as undercounts of output.
 - Work in the main session after a skill ends goes back to the skill the user invoked, not to an earlier sibling skill. In an `/ship-feature` run, plan, build, review and prove orchestration were credited to the grilling skill (#1). Skills the main session invokes now run one after another under the outermost one; subagents are unchanged.
 - Groups found automatically are steadier (#10). A set needs two shared edits, not one. A set inside a configured `[[group]]`, or nearly the same as one, is left out instead of being scored twice. A group member a run did not use keeps its nearest used version, so it no longer splits the group into extra versions.
-- The parser version is 5: agent roles drop the "�" (U+FFFD) some Claude Code descriptions carry, so such a role reads cleanly and is not split from its intact twin (#32).
 
 ### Benchmark
 - The cost measure leaves out runs without `cost-state` (list price on a partial transcript is about 30% too cheap, which made newer versions look cheaper) and invocations with a call that has no price (it counted as $0). Time keeps them. A comparison says how many runs were left out (#3).

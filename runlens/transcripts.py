@@ -21,8 +21,7 @@ from .privacy import redactor
 #    active time is the union of turns; idle detection splits on pipes, "FAIL" matches upper case only, roles
 #    ignore punctuation, denials are not tool errors; cost allocated per token category, one cost-state per
 #    process, web searches, geo scope, Bedrock/Vertex ids; text redacted before it is truncated.
-# 5: roles drop U+FFFD (real descriptions carry it, most likely cut by Claude Code inside a multi-byte character).
-PARSER_VERSION = 5
+PARSER_VERSION = 4
 
 # USD per million tokens (input, output, cache_read), Anthropic first-party list prices, checked against
 # https://platform.claude.com/docs/en/about-claude/pricing on 2026-10-13. Cache writes are 1.25x (5m) and 2x (1h)
@@ -175,12 +174,10 @@ def summarize(inp):
 
 
 def role_of(description):
-    """Group agents by what they were asked to do: digits and ids folded, so 'Repro F-013' -> 'Repro F-#'.
-    U+FFFD is dropped: real meta descriptions carry it (most likely cut inside a multi-byte character), and the
-    replacement mark would split one role in two and show as "�"."""
+    """Group agents by what they were asked to do: digits and ids folded, so 'Repro F-013' -> 'Repro F-#'."""
     if not description or not isinstance(description, str):
         return None
-    d = re.sub(r"#?\d+", "#", description.replace("\ufffd", " ").strip())
+    d = re.sub(r"#?\d+", "#", description.strip())
     d = re.sub(r"\(#\)|[:;,.]+(?=\s|$)", " ", d)
     d = re.sub(r"\s+", " ", d).strip()
     return d[:60]

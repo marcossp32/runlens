@@ -473,8 +473,6 @@ class RunlensTest(unittest.TestCase):
         self.assertEqual(transcripts.error_class("failed to parse jq expression", None, False), "other")
         self.assertEqual(transcripts.error_class("FAIL: test_x", None, False), "test_failure")
         self.assertEqual(transcripts.role_of("Scan A: installed versions"), transcripts.role_of("Scan A installed versions"))
-        self.assertEqual(transcripts.role_of("Fix the build \ufffd step 2"), "Fix the build step #")
-        self.assertEqual(transcripts.role_of("Review the diff \ufffd"), "Review the diff")
         self.assertTrue(transcripts.is_idle('S="C:/a b/c"; until grep -q "^exit" $S/r.txt; do sleep 20; done; grep -v x $S/r.txt', parts))
 
     def test_prices(self):
