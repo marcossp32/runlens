@@ -469,7 +469,7 @@ details.more > summary{font-weight:600;color:var(--text);padding:6px 0}
 .confounders{margin-top:8px;font-size:13.5px}
 .confounders > summary{font-size:13.5px;color:var(--text2)}
 .confounders ul{margin:4px 0;padding-left:20px}
-.vnotes{margin:6px 0 0;padding:0;list-style:none;font-size:13px}
+.vnotes{margin:6px 0 0;padding:0;list-style:none;font-size:13px;max-width:var(--prose)}
 .vnotes li + li{margin-top:2px}
 
 .foot{max-width:2200px;margin:0 auto;padding:0 clamp(12px,2.2vw,32px) 24px;color:var(--muted);font-size:12px}

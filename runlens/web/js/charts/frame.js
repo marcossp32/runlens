@@ -11,6 +11,8 @@
 const FRAMES = new Set();
 const FRAME_OF = new WeakMap();
 const FONT = { axis: 12, label: 12, small: 11, title: 12 };
+// Room a chart leaves above its plot for two rows of change-marker labels (placeVlines).
+const VLINE_BAND = 26;
 
 const RO = typeof ResizeObserver === "function" ? new ResizeObserver((entries) => {
   for (const e of entries) {
@@ -359,7 +361,7 @@ function axisY(root, o) {
     g.append(svg("line", { class: t === o.ref ? "ref" : "grid", x1: o.x0, x2: o.x1, y1: y, y2: y }));
     g.append(svg("text", { class: "tick", x: o.x0 - 6, y: y + 4, "text-anchor": "end" }, o.fmt(t)));
   }
-  if (o.title) g.append(svg("text", { class: "axis-title", x: Math.max(2, o.x0 - (o.labelWidth || 0) - 6), y: o.top - 10 }, o.title));
+  if (o.title) g.append(svg("text", { class: "axis-title", x: Math.max(2, o.x0 - (o.labelWidth || 0) - 6), y: o.titleY ?? o.top - 10 }, o.title));
   root.append(g);
 }
 // A horizontal axis: ticks as {v, label} or values, the title under them, right-aligned.

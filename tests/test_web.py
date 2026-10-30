@@ -625,6 +625,29 @@ class Renders(unittest.TestCase):
         self.assertIsNotNone(sel, "the calendar's colour select is not on the page")
         self.assertRegex(sel.group(1), r'<option value="runs" selected="">Runs</option>')
 
+    # ---- issue #32: change markers on time axes ----
+
+    def test_change_marker_labels_stay_on_the_chart_and_say_what_they_leave_out(self):
+        # Every run on its own Claude Code patch and its own new model: more markers than two label rows hold on a phone.
+        m = copy.deepcopy(model())
+        runs = m["explore"]["runs"]
+        cc, models = runs["c"].index("cc"), runs["c"].index("models")
+        for i, r in enumerate(runs["r"]):
+            r[cc], r[models] = f"2.1.{300 + i}", [f"claude-model-{i}-0"]
+        path = TMP / "marks.html"
+        dom = None
+        for level, many in (("minor", False), ("patch", True)):
+            m["method"]["cc_version"] = level
+            path.write_text(dashboard.render(m), encoding="utf-8")
+            dom = dump(path, "#/runs", size="390,860", until=r'class="vmarklabel"')
+            labels = re.findall(r'<text class="vmarklabel"[^>]*\by="([\d.]+)"[^>]*>([^<]*)</text>', dom)
+            self.assertTrue(labels, level)
+            # by default a patch release is no marker; with "patch" each one is
+            self.assertEqual(any(t.startswith("CC ") for _, t in labels), many, (level, labels))
+            for y, text in labels:
+                self.assertGreaterEqual(float(y), 14, f"{text!r} is cut by the top of the chart")  # an 11 px label needs its height
+        self.assertTrue(any(re.fullmatch(r"\+\d+ more", t) for _, t in labels), labels)
+
     def test_per_unit_weights_keep_their_decimals(self):
         path = TMP / "wu.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")
