@@ -236,20 +236,25 @@ function costPanel(shown) {
   const sets = measures.length ? measures.map((m) => allPts.filter((u) => (u.outcome || {}).measure === m)) : [allPts];
   const costChart = (pts) => {
     const ow = outcomeWords(yOutcome && pts[0] ? outcomeDef(pts[0].outcome) : null);
+    // A frontier needs something to beat: with one mark there is no line and nothing to say about one.
+    const alone = pts.length < 2;
+    const chartNames = [...new Set(pts.map((u) => u.unit.name))];
     return scatterChart({
       title: yOutcome ? `${ow.rate} against cost per invocation${sets.length > 1 ? ` (${pts[0].outcome.measure})` : ""}` : "Score against cost per invocation",
       question: yOutcome ? "How do the skills' outcome and cost sit side by side?" : "How do the items' scores and cost sit side by side?",
-      takeaway: () => frontierTakeaway(pts),
-      sub: `each mark is one item · bigger marks have more runs · up is better, left is cheaper · the line (the Pareto frontier) joins the items nothing else beats on both`,
+      takeaway: () => (alone ? singleTakeaway(pts[0], yOutcome) : frontierTakeaway(pts)),
+      sub: alone
+        ? `one item${yOutcome && sets.length > 1 ? " uses this outcome" : ""}, so there is nothing to compare it with here · up is better, left is cheaper`
+        : `each mark is one item · bigger marks have more runs · up is better, left is cheaper · the line (the Pareto frontier) joins the items nothing else beats on both`,
       legendInHowto: true,
       points: pts.map((u) => ({
         x: u.kpi.cost, y: yOutcome ? u.kpi.outcome : u.score, label: u.name, ns: "skill", name: u.unit.name, r: 4 + 6 * Math.sqrt(u.runs / maxRuns), href: hrefUnit(u.id), hollow: u.low_sample,
         tip: { title: u.name, rows: [["Score", fmt.score(u.score)], ["Outcome", fmt.pct(u.kpi.outcome)], ["Cost per invocation", fmt.usd(u.kpi.cost)], ["Runs", fmt.int(u.runs)]] },
       })),
       x: { title: "Cost per invocation, US$ (log scale)", log: true, fmt: fmt.usdTick },
-      y: yOutcome ? { title: `${ow.rate}: share of attempts (higher is better)`, fmt: (v) => fmt.pct(v, 0), fit: true } : { title: `Score (100 = ${baseWords()}, higher is better)`, fmt: fmt.score, fit: true, ref: 100, refLabel: "100 = usual level" },
-      frontier: { x: "low", y: "high" }, labels: true, labelTitle: "Skill",
-      legendItems: [...names].map((n) => { const c = colourOf("skill", n); return { label: n, css: c.css, shape: c.shape }; }).concat([{ label: "Pareto frontier", css: "var(--text2)", kind: "line" }]),
+      y: yOutcome ? { title: `${ow.rate}: share of attempts (higher is better)`, fmt: (v) => fmt.pct(v, 0), fit: true, bounds: [0, 1] } : { title: `Score (100 = ${baseWords()}, higher is better)`, fmt: fmt.score, fit: true, ref: 100, refLabel: "100 = usual level" },
+      frontier: alone ? null : { x: "low", y: "high" }, labels: true, labelTitle: "Skill",
+      legendItems: chartNames.map((n) => { const c = colourOf("skill", n); return { label: n, css: c.css, shape: c.shape }; }).concat(alone ? [] : [{ label: "Pareto frontier", css: "var(--text2)", kind: "line" }]),
       extraCols: [{ label: "Runs", num: true, value: (p) => p.r }],
       notes: yOutcome ? "The outcome is the success rate your config defines; skills with a different outcome are drawn in their own chart. Hollow marks have too few runs to trust." : "Each score is against its own skill, so marks of different skills are not ranked. Set an [outcome] in config.toml to put success on this axis instead. Hollow marks have too few runs to trust.",
     });
@@ -620,6 +625,12 @@ function frontierTakeaway(pts) {
     }
   }
   return n ? h("span", {}, `${plural(pts.length, "item")} drawn; the line (the `, term("Pareto frontier"), `) joins ${n === 1 ? "the one" : `the ${n}`} that no other is both cheaper and higher than. It describes this set, not which is best.`) : null;
+}
+
+// What a chart with a single mark can say: where that one item sits.
+function singleTakeaway(u, yOutcome) {
+  if (!u) return null;
+  return `${u.name}: ${yOutcome ? fmt.pct(u.kpi.outcome, 0) : `score ${fmt.score(u.score)}`} at ${fmt.usd(u.kpi.cost)} per invocation, over ${plural(u.runs, "run")}.`;
 }
 
 // The biggest item and its share of the total.

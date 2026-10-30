@@ -74,6 +74,7 @@
 - A drain now re-ingests runs last parsed by an older parser, so a parser bump no longer leaves the dashboard on old numbers until a manual `runlens ingest` (#5).
 - `CLAUDE_CONFIG_DIR` is honoured for settings, skills and the transcripts folder, and the hook passes its `transcript_path` to the drain, so sessions outside `~/.claude/projects` are no longer dropped as "not selected" (#5).
 - `runlens refresh` takes the drain lock while it archives and ingests; the drain looks at the queue once more after releasing the lock; the log no longer says "archived and ingested" for a run whose ingest failed (#5).
+- The Skills page's outcome/cost scatter keeps a rate axis inside 0–100 % (a single point drew -400 % to 400 %), and a chart with one skill no longer draws or explains a Pareto frontier: it says where that skill sits instead. Its legend lists only the skills in that chart (#21).
 
 ### Config, packaging and CI
 - `config.toml` is checked for typos and wrong types: an unknown section or key (`[runs] idle_hourz`, `[selectt]`) and a value of the wrong type (`[method] min_runs = "x"`, `resamples = 4000.5`) stop the command with a one-line error that names the key (#17).
