@@ -135,6 +135,23 @@ class Rejected(unittest.TestCase):
         self.fails("[privacy]\nredact = 'yes'\n", "[privacy] redact")
         self.fails("[dashboard]\nauto = 'no'\n", "[dashboard] auto")
 
+    def test_an_outcome_must_name_a_marker_that_exists(self):
+        # With no [[marker]] at all this used to load, and every skill was scored without an outcome.
+        self.fails('[outcome]\nmarker = "nope"\nsuccess = ["PASS"]\n', "[outcome] marker 'nope'", "[[marker]]")
+        self.fails('[[marker]]\nname = "check"\npattern = "x"\n[outcome]\nmarker = "chek"\nsuccess = ["PASS"]\n', "'chek'")
+        load('[[marker]]\nname = "check"\npattern = "x"\n[outcome]\nmarker = "check"\nsuccess = ["PASS"]\n')
+
+    def test_method_values_are_checked_at_load(self):
+        self.fails("[method]\nmin_runs = 1\n", "min_runs must be at least 2")
+        self.fails('[[group]]\nname = "x"\nmembers = ["plan"]\n', "plan")
+
+    def test_a_config_file_given_but_missing_is_an_error(self):
+        missing = Path(tempfile.mkdtemp(prefix="runlens-config-")) / "typo.toml"
+        with self.assertRaises(config.ConfigError) as ctx:
+            config.load(missing)
+        self.assertIn("no such file", str(ctx.exception))
+        self.assertIn("runs", config.load())  # the default file may be absent: defaults
+
     def test_valid_values_still_load(self):
         cfg = load('[method]\nmin_runs = 5\nconfidence = 0.9\n[select]\nsince = 2026-09-28\nskills = ["a"]\n[runs]\nstub_cost_usd = 1\n')
         self.assertEqual(cfg["method"]["min_runs"], 5)

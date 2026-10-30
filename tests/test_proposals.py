@@ -100,6 +100,7 @@ class CommandLine(unittest.TestCase):
         cls.home = Path(tempfile.mkdtemp(prefix="runlens-cli-"))
         cls.patch = mock.patch.multiple(config, HOME=cls.home, DB=cls.home / "runlens.duckdb", ARCHIVE=cls.home / "archive")
         cls.patch.start()
+        (cls.home / "none.toml").write_text("", encoding="utf-8")  # an empty config: every default
         d = history([("aaa", 6), ("bbb", 6)], cost=lambda v, i: (1.0 if v == 0 else 3.0) * (1 + i / 50))
         con = store.connect()
         for r in d["runs"]:

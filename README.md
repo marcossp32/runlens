@@ -202,7 +202,7 @@ The question runlens answers is *did a change to this skill make its runs better
 
 ## CLI reference
 
-Every command accepts `--config <file>` before the command name (default `~/.runlens/config.toml`). Errors a user can fix (bad config, bad SQL, database busy) print one line and exit 1.
+Every command accepts `--config <file>` before the command name (default `~/.runlens/config.toml`; without that file every default applies, but a `--config` file that does not exist is an error). Errors a user can fix (bad config, bad SQL, database busy) print one line and exit 1.
 
 **Data**
 
@@ -246,7 +246,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 
 ## Config reference
 
-Every section is optional. [`config.example.toml`](runlens/config.example.toml) documents every key with its default. A value runlens cannot use stops the command with a one-line error naming the key.
+Every section is optional. [`config.example.toml`](runlens/config.example.toml) documents every key with its default. A value runlens cannot use stops the command with a one-line error naming the key, including an `[outcome] marker` that names no `[[marker]]`.
 
 | Section | Keys (default) | What it sets |
 |---|---|---|

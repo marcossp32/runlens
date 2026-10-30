@@ -92,6 +92,7 @@ class Sandbox(unittest.TestCase):
                                          ARCHIVE=self.home / "archive", BLOBS=self.home / "archive" / "_blobs",
                                          PENDING=self.home / "pending", PROJECTS=self.projects)
         self.patch.start()
+        (self.tmp / "none.toml").write_text("", encoding="utf-8")  # an empty config: every default
         self.cfg = config.load(self.tmp / "none.toml")
 
     def tearDown(self):

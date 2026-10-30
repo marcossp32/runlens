@@ -162,7 +162,7 @@ def parse_outcomes(raw, markers=()):
         marker = e.get("marker")
         if not marker:
             raise ValueError(f"[outcome] #{i + 1} needs marker = \"<name>\" or pr = \"opened\"")
-        if known and marker not in known:
+        if marker not in known:
             raise ValueError(f"[outcome] marker {marker!r} is not a [[marker]] in config.toml")
         success = {str(v) for v in e.get("success") or []}
         if not success:
