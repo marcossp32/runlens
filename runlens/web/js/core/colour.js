@@ -3,7 +3,9 @@
    Identity: each skill, model, agent type and group gets ONE colour for the whole page, decided once from
    the data: skills and models in order of first use (so a new skill takes the next slot and the old ones
    keep theirs), the rest by name. Eight validated hues (--c1..--c8, light and dark steps in app.css);
-   past eight the hue repeats with a different marker shape, never a generated hue.
+   past eight the hue repeats with a different marker shape, never a generated hue. Agent types take the
+   slots from the other end (--c8 first), so they rarely meet a skill; where a view shows both, distinctAgents
+   moves an agent type off a colour a skill on screen already has.
    Polarity / state: better is blue with ▲, worse is red with ▼, unclear is grey with ≈. The pair was
    checked with the dataviz validator for protanopia and deuteranopia, and never relies on colour alone.
    Magnitude: one blue ramp (sequential) and a blue–grey–red ramp (diverging), mixed in OKLab. */
@@ -37,7 +39,29 @@ const ENTITY = (() => {
 function colourOf(ns, name) {
   const i = ENTITY[ns] ? ENTITY[ns].get(name) : undefined;
   if (i === undefined) return { css: "var(--other)", slot: 0, shape: "circle", other: true };
-  return { css: `var(--c${(i % SLOTS) + 1})`, slot: (i % SLOTS) + 1, shape: SHAPES[Math.floor(i / SLOTS) % SHAPES.length] };
+  const slot = ns === "agent" ? SLOTS - (i % SLOTS) : (i % SLOTS) + 1;
+  return { css: `var(--c${slot})`, slot, shape: SHAPES[Math.floor(i / SLOTS) % SHAPES.length] };
+}
+// The colours of agent types drawn next to these skills: each keeps its own colour unless a skill (or another
+// type) here already has it, then it takes the first free slot. Past eight in all, colours repeat.
+function distinctAgents(skills, types) {
+  const taken = new Set(skills.map((s) => colourOf("skill", s).slot).filter(Boolean));
+  const out = new Map();
+  for (const t of types) {
+    const c = colourOf("agent", t);
+    if (c.slot && !taken.has(c.slot)) {
+      taken.add(c.slot);
+      out.set(t, c);
+    }
+  }
+  for (const t of types) {
+    if (out.has(t)) continue;
+    const c = colourOf("agent", t);
+    const free = Array.from({ length: SLOTS }, (_, k) => k + 1).find((k) => !taken.has(k));
+    if (free) taken.add(free);
+    out.set(t, free ? { ...c, css: `var(--c${free})`, slot: free } : c);
+  }
+  return out;
 }
 const entityOfUnit = (u) => ({ skill: "skill", group: "group" }[u.kind] || null);
 

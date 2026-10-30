@@ -187,9 +187,13 @@ function runPage(id) {
   if (main) walk(main, 0);
   for (const a of agents) if (!ordered.some((o) => o.a === a)) ordered.push({ a, depth: 1 }); // orphans: parent not recorded
   const layout = param("layout") === "tree" || (param("layout") !== "packed" && agents.length <= 40) ? "tree" : "packed";
+  // skills and agent types share this page's legend: no agent type may wear a skill's colour here
+  const agentColour = distinctAgents([...new Set(segments.map((s) => s.skill).concat(calls.map((c) => c.skill)))],
+    [...new Set(agents.filter((a) => a.i !== 0).map((a) => a.type))]);
+  const agentCss = (type) => (agentColour.get(type) || colourOf("agent", type)).css;
   const timelineAgents = ordered.map(({ a, depth }) => ({
     label: agentName(a.i), group: a.i === 0 ? "main session" : a.type, depth,
-    t0: at(a.t0), t1: valid(a.t1) ? at(a.t1) : NaN, css: a.i === 0 ? "var(--other)" : colourOf("agent", a.type).css,
+    t0: at(a.t0), t1: valid(a.t1) ? at(a.t1) : NaN, css: a.i === 0 ? "var(--other)" : agentCss(a.type),
     cost: a.cost, a,
     tip: { title: agentName(a.i), sub: a.i === 0 ? null : `started by ${agentName(a.parent ?? 0)}`,
       rows: [["Cost", fmt.usd(a.cost)], ["Ran for", valid(a.t1) && valid(a.t0) ? fmt.secs(a.t1 - a.t0) : "still running"], ["Model", a.model || "—"],
@@ -275,7 +279,7 @@ function runPage(id) {
         sub: "skills, your messages, problems, checks and errors on top · spend so far · every subagent as a bar, coloured by type",
         t0: r.t0, t1: end, lanes, curve, agents: timelineAgents, layout, controls: layoutSel,
         legendItems: runSkills.filter((s) => s !== "(none)").map((s) => ({ label: `skill: ${human(s)}`, css: colourOf("skill", s).css }))
-          .concat(types.map((t) => ({ label: `agent: ${t}`, css: colourOf("agent", t).css }))).concat([{ label: "main session", css: "var(--other)" },
+          .concat(types.map((t) => ({ label: `agent: ${t}`, css: agentCss(t) }))).concat([{ label: "main session", css: "var(--other)" },
           { label: `${TONE.worse.icon} problem / error / bad check`, css: "var(--worse)", shape: "triangle" }, { label: "ok check", css: "var(--better)", kind: "dot" },
           { label: "your message", css: "var(--text2)", shape: "diamond" }]),
         agentCols: [{ label: "Type", value: (a) => a.group }, { label: "Cost", num: true, value: (a) => a.cost, cell: (a) => fmt.usd(a.cost) },
@@ -286,10 +290,10 @@ function runPage(id) {
       h("div", { class: "grid" },
         barChart({ title: "Spend by agent type", question: "Which kind of agent did the money go to?",
           takeaway: () => shareTakeaway([...byType].map(([k, e]) => ({ label: k, value: e.value })), "of the run's spend"), items: [...byType].map(([k, e]) => ({ label: k, name: k, value: e.value, rows: [["Agents", fmt.int(e.n)]],
-          css: k === "main session" ? "var(--other)" : colourOf("agent", k).css })), fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Agent type" }),
+          css: k === "main session" ? "var(--other)" : agentCss(k) })), fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", share: true, labelTitle: "Agent type" }),
         barChart({ title: "The costliest agents", question: "Which single agents cost the most?", sub: "the twelve most expensive",
           items: agents.filter((a) => a.cost > 0).sort((a, b) => b.cost - a.cost).slice(0, 12).map((a) => ({ label: agentName(a.i), value: a.cost,
-            css: a.i === 0 ? "var(--other)" : colourOf("agent", a.type).css, rows: [["Ran for", valid(a.t1) && valid(a.t0) ? fmt.secs(a.t1 - a.t0) : "—"], ["Model", a.model || "—"]] })),
+            css: a.i === 0 ? "var(--other)" : agentCss(a.type), rows: [["Ran for", valid(a.t1) && valid(a.t0) ? fmt.secs(a.t1 - a.t0) : "—"], ["Model", a.model || "—"]] })),
           fmt: fmt.usd, tickFmt: fmt.usdTick, valueTitle: "Spend, US$", labelTitle: "Agent" })),
       h("div", { class: "grid" },
         barChart({ title: "Spend by model", question: "Which models did this run pay for?", items: spendModel.map((m) => ({ label: m.label, name: m.label, value: m.value })), ns: "model",

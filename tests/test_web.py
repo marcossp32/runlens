@@ -494,6 +494,17 @@ class Renders(unittest.TestCase):
         self.assertEqual(len(asked), 2, asked)
         self.assertEqual(len(set(asked)), 2, asked)
 
+    def test_run_explorer_never_gives_a_skill_and_an_agent_type_one_colour(self):
+        m = model()
+        a = m["explore"]["agents"]
+        a["r"].append([a["r"][0][0], 3, 0, "general-purpose", "fix", "claude-sonnet-5-5", 200, 400, 0.2, "completed", 1, 0, 2, 0, 0, None, 0, None])
+        path = TMP / "agentcolours.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = dump(path, "#/run/s1v1aaaa")
+        keys = re.findall(r'<li><svg class="lkey"[^>]*>.*?style="fill:([^"]+)".*?</svg>((?:skill|agent): [^<]+)</li>', card(dom, "What happened in this run, and when?"))
+        self.assertEqual(len(keys), 4, keys)  # flow, once_only, Explore, general-purpose
+        self.assertEqual(len({css for css, _ in keys}), 4, keys)
+
     def test_axis_ticks_land_on_round_values(self):
         m = model()
         t = m["explore"]["tools"]
