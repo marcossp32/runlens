@@ -306,6 +306,7 @@ def archive(cfg, quiet=False, **filters):
     n, cache = 0, load_cache()
     for main, info in select(cfg, cache=cache, **filters):
         sid = main.stem
+        new = not fs_path(config.ARCHIVE / info["project"] / f"{sid}.runlens.json").exists()
         try:
             changed = archive_run(cfg, main, info, quiet)
         except Exception as e:  # one unreadable run must not stop the others
@@ -313,7 +314,8 @@ def archive(cfg, quiet=False, **filters):
             continue
         n += 1
         if not quiet:
-            print(f"{'updated' if changed else 'same   '}  {info['started'][:16]}  {sid}  {info['cwd']}")
+            label = "new    " if new else "updated" if changed else "same   "
+            print(f"{label}  {info['started'][:16]}  {sid}  {info['cwd']}")
     try:
         write_json(config.HOME / SCAN_CACHE, cache)
     except OSError:

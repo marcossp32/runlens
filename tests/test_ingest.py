@@ -857,6 +857,23 @@ class Install(Sandbox):
         self.assertIn("is not valid JSON", str(ctx.exception))
         self.assertEqual(self.settings.read_text(encoding="utf-8"), "{not json")
 
+    def test_odd_shapes_give_a_message_not_a_traceback(self):
+        self.settings.write_text(json.dumps({"hooks": {"SessionEnd": {"hooks": []}}}), encoding="utf-8")
+        with self.assertRaises(SystemExit) as ctx:
+            self.quiet(hooks.install, skill=False)
+        self.assertIn('"SessionEnd" is not a list', str(ctx.exception))
+        self.settings.write_text(json.dumps({"hooks": "x"}), encoding="utf-8")
+        with self.assertRaises(SystemExit) as ctx:
+            self.quiet(hooks.uninstall)
+        self.assertIn('"hooks" is not an object', str(ctx.exception))
+
+    def test_a_second_install_the_same_day_says_the_backup_is_the_earlier_one(self):
+        self.settings.write_text("{}", encoding="utf-8")
+        self.quiet(hooks.install, skill=False)
+        self.assertNotIn("earlier today", self.out)
+        self.quiet(hooks.install, skill=False)
+        self.assertIn("made earlier today", self.out)
+
 
 class Cli(Sandbox):
     def run_cli(self, *args, stdin=None):
@@ -916,6 +933,41 @@ class Cli(Sandbox):
             cli.friendly(duckdb.IOException('IO Error: Could not set lock on file "x": El proceso no tiene acceso porque est� siendo utilizado'))
         self.assertIn("in use by another runlens process", err.getvalue())
         self.assertNotIn("�", err.getvalue())
+
+    def test_messages_name_the_cause(self):
+        empty_dash = self.run_cli("dashboard", "--out", str(self.tmp / "d.html"))
+        self.assertEqual(empty_dash.returncode, 0, empty_dash.stderr)
+        self.assertIn("no runs in the database yet", empty_dash.stderr)  # an empty page, but said why
+        r = simple_run(self.projects, "ecececec-0000-0000-0000-000000000001")
+        first = self.run_cli("archive")
+        self.assertIn(f"new      2026-10-01T10:00  {r.sid}", first.stdout)  # copied for the first time is not "updated"
+        self.assertIn(f"same     2026-10-01T10:00  {r.sid}", self.run_cli("archive").stdout)
+        self.run_cli("ingest", "--quiet")
+        rep = self.run_cli("report", "--session", "nosuch", "--out", str(self.tmp / "r.html"))
+        self.assertEqual(rep.returncode, 1)
+        self.assertIn("no run matches --session nosuch", rep.stderr)
+        for args, flag in ((("ingest", "--since", "notadate"), "--since"), (("prune", "--before", "notadate"), "--before")):
+            res = self.run_cli(*args)
+            self.assertEqual(res.returncode, 2, args)
+            self.assertIn(f"argument {flag}: 'notadate' is not an ISO date", res.stderr)
+            self.assertNotIn("Traceback", res.stderr)
+        folder = self.tmp / "outdir"
+        folder.mkdir()
+        dash = self.run_cli("dashboard", "--out", str(folder))
+        self.assertEqual(dash.returncode, 1)
+        self.assertIn("is a folder: give a file path", dash.stderr)
+        self.assertNotIn("WinError", dash.stderr)
+        show = self.run_cli("show", "nosuch")
+        self.assertEqual((show.returncode, show.stdout), (1, ""))
+        self.assertIn("no incident or tool call with id nosuch", show.stderr)
+
+    def test_summary_prints_every_row(self):
+        for i in range(45):
+            simple_run(self.projects, f"edededed-0000-0000-0000-{i:012d}")
+        self.refresh()
+        out = self.run_cli("summary").stdout  # piped, as here: DuckDB's printer showed 20 of them
+        self.assertIn("(45 rows)", out)
+        self.assertNotIn("shown", out)
 
     def test_report_with_a_quote_in_the_path(self):
         odd = self.tmp / "o'brien"

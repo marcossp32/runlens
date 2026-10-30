@@ -270,21 +270,31 @@ def write_settings(settings):
 
 
 def backup_settings():
-    """One backup per day at most, so repeated installs do not pile up copies."""
+    """One backup per day at most, so repeated installs do not pile up copies. Returns (path, written now)."""
     backup = SETTINGS.with_name(f"settings.json.runlens-backup-{datetime.now():%Y%m%d}")
-    if not backup.exists():
-        shutil.copy2(SETTINGS, backup)
-    return backup
+    if backup.exists():
+        return backup, False
+    shutil.copy2(SETTINGS, backup)
+    return backup, True
 
 
-def install(skill=True):
-    settings = read_settings()
-    if SETTINGS.exists():
-        print(f"backup  {backup_settings()}")
+def session_end_groups(settings):
+    """settings["hooks"]["SessionEnd"], created if absent; a message, not a traceback, when either has the wrong shape."""
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise SystemExit(f"{SETTINGS}: \"hooks\" is not an object; fix it, then run this again")
     groups = hooks.setdefault("SessionEnd", [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"{SETTINGS}: \"hooks\".\"SessionEnd\" is not a list of hook groups; fix it, then run this again")
+    return groups
+
+
+def install(skill=True):
+    settings = read_settings()
+    groups = session_end_groups(settings)  # checked before anything is written
+    if SETTINGS.exists():
+        backup, made = backup_settings()
+        print(f"backup  {backup}" + ("" if made else " (made earlier today; kept, not overwritten)"))
     groups[:] = [g for g in groups if not is_ours(g)]
     groups.append({"hooks": [our_hook()]})
     write_settings(settings)
@@ -326,8 +336,12 @@ def uninstall():
         print("no runlens hook installed")
         return
     settings = read_settings()
-    groups = (settings.get("hooks") or {}).get("SessionEnd", [])
+    if not settings.get("hooks"):
+        print("no runlens hook installed")
+        return
+    groups = session_end_groups(settings)
     kept = [g for g in groups if not is_ours(g)]
+
     if len(kept) == len(groups):
         print("no runlens hook installed")
         return

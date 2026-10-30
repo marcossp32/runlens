@@ -39,7 +39,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="command", required=True)
 
     def filters(p):
-        p.add_argument("--since", help="runs started on or after this ISO date")
+        p.add_argument("--since", type=iso_date, help="runs started on or after this ISO date")
         p.add_argument("--skill", action="append", help="only runs that used this skill (repeatable)")
         p.add_argument("--project", action="append", help="only runs whose cwd contains this text (repeatable)")
         p.add_argument("--session", action="append", help="only this session id (repeatable)")
@@ -54,7 +54,7 @@ def main(argv=None):
     p.add_argument("--session", action="append")
     p.add_argument("--no-sources", action="store_true", help="skip comparing the archive with ~/.claude/projects")
     p = sub.add_parser("prune")
-    p.add_argument("--before", help="runs started before this ISO date")
+    p.add_argument("--before", type=iso_date, help="runs started before this ISO date")
     p.add_argument("--session", action="append", help="this session id or 8-character prefix (repeatable)")
     p.add_argument("--keep-archive", action="store_true", help="delete database rows only, keep the archived transcripts")
     p.add_argument("--yes", action="store_true", help="delete; without it, only list what would be deleted")
@@ -186,19 +186,32 @@ def main(argv=None):
     elif a.command == "summary":
         from .store import connect
         con = connect(read_only=True)
-        print(con.sql("""SELECT session_id[:8] AS run, started::DATE AS day, regexp_extract(cwd, '[^\\\\/]+$') AS repo,
-                                round(cost_usd, 2) AS usd, cost_estimated AS est, round(active_ms / 3.6e6, 1) AS active_h,
-                                n_agents AS agents, tool_calls, tool_errors, idle_calls, incidents, bad_markers
-                         FROM v_runs ORDER BY started"""))
-        print(con.sql("""SELECT skill, runs, api_calls, round(cost_usd, 2) AS usd, cost_pct AS pct, tool_calls,
-                                tool_errors, idle_calls, incidents, bad_markers
-                         FROM v_skill ORDER BY cost_usd DESC NULLS LAST"""))
+        try:  # every row, piped or not (DuckDB's own printer cuts long results to 20 rows)
+            emit(con.execute("""SELECT session_id[:8] AS run, started::DATE AS day, regexp_extract(cwd, '[^\\\\/]+$') AS repo,
+                                       round(cost_usd, 2) AS usd, cost_estimated AS est, round(active_ms / 3.6e6, 1) AS active_h,
+                                       n_agents AS agents, tool_calls, tool_errors, idle_calls, incidents, bad_markers
+                                FROM v_runs ORDER BY started"""), a)
+            print()
+            emit(con.execute("""SELECT skill, runs, api_calls, round(cost_usd, 2) AS usd, cost_pct AS pct, tool_calls,
+                                       tool_errors, idle_calls, incidents, bad_markers
+                                FROM v_skill ORDER BY cost_usd DESC NULLS LAST"""), a)
+            if not con.execute("SELECT count(*) FROM runs").fetchone()[0]:
+                print("no runs in the database yet: run `runlens refresh`")
+        finally:
+            con.close()
     elif a.command == "report":
         from .report import write_report
         print(write_report(cfg, a.out, a.session))
     elif a.command == "dashboard":
         from .dashboard import write_dashboard
         print(write_dashboard(cfg, a.out))
+        from .store import connect
+        con = connect(read_only=True)
+        try:
+            if not con.execute("SELECT count(*) FROM runs").fetchone()[0]:
+                print("note: no runs in the database yet, so the page is empty: run `runlens refresh`", file=sys.stderr)
+        finally:
+            con.close()
     elif a.command in ("score", "versions", "proposals", "verify"):
         return method_command(a, cfg)
     elif a.command == "show":
@@ -398,7 +411,17 @@ def _versions_text(out):
                       "(100 = no change)", _table(cols, rows)] + notes + dirs)
 
 
+def iso_date(text):
+    """argparse type for --since and --before: an ISO date, refused with the flag's name instead of a traceback later."""
+    try:
+        config.since_utc(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an ISO date like 2026-09-28 or 2026-09-28T14:00") from None
+    return text
+
+
 def output_flags(p):
+
     g = p.add_mutually_exclusive_group()
     g.add_argument("--json", action="store_true", help="print the rows as a JSON array")
     g.add_argument("--csv", action="store_true", help="print the rows as CSV")
