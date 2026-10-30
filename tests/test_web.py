@@ -184,8 +184,8 @@ def find_browser():
     return None
 
 
-def dump(path, route, budget=5000, until=None, tries=4):
-    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile.
+def dump(path, route, budget=5000, until=None, tries=4, size="1280,900"):
+    """The DOM of the page at a route, after its scripts ran, in a fresh headless browser profile (size: the window, "w,h").
 
     The virtual-time budget runs timers, not frames: on a loaded machine Chrome can spend it and dump before it
     paints once, so nothing that waits on a frame (ResizeObserver, IntersectionObserver, requestAnimationFrame)
@@ -196,7 +196,7 @@ def dump(path, route, budget=5000, until=None, tries=4):
     for _ in range(tries):
         prof = tempfile.mkdtemp(prefix="runlens-browser-", dir=TMP)
         cmd = [find_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", f"--user-data-dir={prof}",
-               f"--virtual-time-budget={budget}", "--window-size=1280,900", "--dump-dom", path.as_uri() + route]
+               f"--virtual-time-budget={budget}", f"--window-size={size}", "--dump-dom", path.as_uri() + route]
         try:
             dom = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
         except subprocess.TimeoutExpired:
@@ -259,6 +259,22 @@ class Model(unittest.TestCase):
         t = explorer.table(("a", "b"), [["x", 1], ["y", 2], ["x", 3]], codes=("a",))
         self.assertEqual(t["d"]["a"], ["x", "y"])
         self.assertEqual([r[0] for r in t["r"]], [0, 1, 0])
+
+    def test_health_counts_labels_that_match_no_incident(self):
+        import duckdb
+        con = duckdb.connect()
+
+        def rows(sql, params=None):  # as explorer.build's: a missing table gives no rows
+            try:
+                cur = con.execute(sql, params or [])
+            except (duckdb.CatalogException, duckdb.BinderException):
+                return []
+            return [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+
+        self.assertEqual(explorer.health(rows, {})["orphan_labels"], 0)  # no labels table yet
+        con.execute("CREATE TABLE incidents (incident_id VARCHAR); INSERT INTO incidents VALUES ('a')")
+        con.execute("CREATE TABLE labels (incident_id VARCHAR); INSERT INTO labels VALUES ('a'), ('gone'), ('gone'), ('lost')")
+        self.assertEqual(explorer.health(rows, {})["orphan_labels"], 2)  # as `runlens check` counts them
 
     def test_duration_bins(self):
         self.assertEqual(explorer.duration_bin(5), 0)
@@ -565,6 +581,65 @@ class Renders(unittest.TestCase):
         self.assertNotIn('class="ghost custom"', plain)
         self.assertNotIn('class="settingsnote"', plain)
 
+    # ---- issue #30: controls that never appeared, lost state or ignored the settings ----
+
+    def test_runs_calendar_offers_its_colour_select(self):
+        path = TMP / "cal.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/runs?cal=runs")
+        sel = re.search(r'<select aria-label="Colour the days by">(.*?)</select>', dom, re.S)
+        self.assertIsNotNone(sel, "the calendar's colour select is not on the page")
+        self.assertRegex(sel.group(1), r'<option value="runs" selected="">Runs</option>')
+
+    def test_per_unit_weights_keep_their_decimals(self):
+        path = TMP / "wu.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/unit/skill%3Aflow?wu=flow%3Acost%3A1.5.seconds%3A0")
+        self.assertRegex(dom, r'data-key="w-cost"[^>]*><output class="sp-val">×1[.,]5</output>')  # not ×1
+        self.assertRegex(dom, r'data-key="w-seconds"[^>]*><output class="sp-val">×0</output>')
+
+    def test_unknown_baseline_version_is_the_default(self):
+        path = TMP / "base.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        self.assertNotIn('class="ghost custom"', dump(path, "#/?base=ver%3Av99"))
+        self.assertIn('class="ghost custom"', dump(path, "#/?base=ver%3Av1"))
+
+    def test_how_it_works_follows_the_score_settings_and_filters(self):
+        path = TMP / "method.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/method?ci=80").split('<article class="page"')[1])  # the page, not the Score menu's choices
+        self.assertIn("80%", text)
+        self.assertNotIn("95%", text)
+        unit = dump(path, "#/unit/skill%3Aflow?w=cost%3A5")
+        score = float(re.search(r'class="summary[^"]*"[^>]*data-score="([\d.]+)"', unit).group(1))
+        text = visible(dump(path, "#/method?tab=example&w=cost%3A5"))
+        self.assertIn("Worked out with your weights", text)
+        self.assertEqual(int(re.search(r"So the score is (\d+)", text).group(1)), round(score))  # the score the unit page shows
+        text = visible(dump(path, "#/method?tab=example&repo=nowhere"))
+        self.assertIn("nothing to walk through", text)
+        self.assertNotIn("So the score is", text)
+
+    def test_data_health_says_the_filters_do_not_apply_and_counts_orphan_labels(self):
+        m = model()
+        m["explore"]["health"]["orphan_labels"] = 59
+        path = TMP / "health.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = dump(path, "#/health?repo=other")
+        self.assertIn('class="settingsnote healthfilters"', dom)
+        self.assertIn("59 incident labels match no incident", visible(dom))
+        self.assertNotIn('class="settingsnote healthfilters"', dump(path, "#/health"))
+
+    def test_filter_counts_are_the_runs_a_choice_would_leave(self):
+        path = TMP / "fcount.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        count = lambda dom, v: int(re.search(rf'data-text="{re.escape(v)}".*?class="fcount">(\d+)<', dom, re.S).group(1))
+        dom = dump(path, "#/runs")
+        self.assertEqual(count(dom, "2.2.0"), 2)  # runs 4, 5 and 6 used it; run 6 is still open
+        dom = dump(path, "#/runs?repo=other")
+        self.assertEqual((count(dom, "2.1.0"), count(dom, "2.2.0")), (1, 1))  # the repo filter applies to the Claude Code counts
+        self.assertEqual(count(dom, "other"), 2)  # a dimension's own filter does not narrow its counts
+        self.assertEqual(count(dump(path, "#/runs?pop=all"), "2.2.0"), 3)
+
 
 def build_demo():
     """The demo history and its model, built in child processes with their own RUNLENS_HOME."""
@@ -650,6 +725,17 @@ class Recompute(unittest.TestCase):
         self.assertRegex(text, r"(Error streak and Repeated call|Repeated call and Error streak): 24 ?% of the problems each")
         text = visible(dump(self.path, "#/diagnostics?tab=tools", budget=12000))
         self.assertRegex(text, r"(Bash and Grep|Grep and Bash) are the slowest on average")
+
+    def test_a_phone_keeps_captions_inside_and_marks_what_scrolls(self):
+        # issue #31: at 390 px the run explorer's caption fits its chart, and a heatmap wider than its card says so.
+        rid = self.model["explore"]["runs"]["r"][0][0]
+        dom = dump(self.path, f"#/run/{rid}", size="390,860", until=r'class="sectionlabel"')
+        caption = re.search(r'<text class="sectionlabel"[^>]*>([^<]+)</text>', dom).group(1)
+        self.assertNotIn("indented under the agent that started it", caption)  # the long wording does not fit 390 px
+        self.assertTrue(caption.startswith("Agents"), caption)
+        dom = dump(self.path, "#/?tab=measures", size="390,860", until=r'class="plot more-right"')  # the measures heatmap
+        self.assertIn('class="plot more-right"', dom)
+        self.assertNotIn('class="plot more-right"', dump(self.path, "#/?tab=measures", until=r'class="rowlabel"'))  # it fits at 1280 px
 
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")

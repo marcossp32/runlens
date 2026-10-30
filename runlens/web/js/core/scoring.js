@@ -12,7 +12,7 @@
      base=self|prev|first|ver:v2   what 100 means: the skill's typical run (default), the version before,
                                    its first version, or one chosen version (on a skill's page)
      w=cost:3,seconds:0            weights for every unit (over config.toml's)
-     wu=m-build:cost:1.errors:0    weights for one unit, over everything else
+     wu=review-pr:cost:1.5.seconds:0  weights for one unit, over everything else
      ci=90                         confidence level of intervals and verdicts, in % */
 
 const SCORE_STORE = "runlens-score";
@@ -23,13 +23,16 @@ const S = { base: "self", w: {}, wu: {}, ci: MODEL_CI };
 
 function readScoreSettings() {
   const b = param("base") || "self";
-  S.base = BASES[b] || /^ver:v\d+$/.test(b) ? b : "self";
+  // A chosen version must exist on some unit: an unknown one (ver:v99) means the default, not a silent "custom".
+  S.base = BASES[b] || (/^ver:v\d+$/.test(b) && Object.values(DATA.versions || {}).some((vs) => vs.some((v) => `ver:${v.label}` === b))) ? b : "self";
+  if (S.base !== b) setParams({ base: null }); // and the link drops it, so it does not claim a baseline it does not use
   S.ci = CI_CHOICES.find((c) => String(Math.round(c * 100)) === param("ci")) || MODEL_CI;
   S.w = parseWeights(param("w") || "");
   S.wu = {};
   for (const part of (param("wu") || "").split(";").filter(Boolean)) {
     const cut = part.indexOf(":");
-    if (cut > 0) S.wu[safeDecode(part.slice(0, cut))] = parseWeights(part.slice(cut + 1).replace(/\./g, ","));
+    // "." separates one unit's measures (cost:1.5.seconds:0): only a "." before a measure name, so 1.5 keeps its decimal.
+    if (cut > 0) S.wu[safeDecode(part.slice(0, cut))] = parseWeights(part.slice(cut + 1).replace(/\.(?=[A-Za-z_]+:)/g, ","));
   }
 }
 function parseWeights(text) {

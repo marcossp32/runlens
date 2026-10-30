@@ -25,7 +25,8 @@ function storeViews(list) {
   }
 }
 
-function renderViewsMenu() {
+// `said` is a message for the status line, kept across the redraw that saving causes.
+function renderViewsMenu(said = "") {
   if (!VIEWS_EL) return;
   const wasOpen = VIEWS_EL.open;
   const configured = DATA.views || [];
@@ -39,7 +40,7 @@ function renderViewsMenu() {
       VIEWS_EL.open = true;
     } }, "Delete") : h("span", { class: "muted vfrom" }, "config.toml"));
   const name = h("input", { type: "text", maxlength: 80, placeholder: "Name this view", "aria-label": "Name for the current view" });
-  const status = h("span", { class: "muted", role: "status" });
+  const status = h("span", { class: "muted", role: "status" }, said);
   const save = button("Save", () => {
     const n = name.value.trim();
     if (!n) {
@@ -48,9 +49,10 @@ function renderViewsMenu() {
     }
     const list = savedViews().filter((x) => x.name !== n);
     list.unshift({ name: n, hash: location.hash || "#/" });
-    status.textContent = storeViews(list) ? "Saved." : "This browser does not allow saving.";
-    renderViewsMenu();
+    renderViewsMenu(storeViews(list) ? "Saved." : "This browser does not allow saving.");
     VIEWS_EL.open = true;
+    const again = VIEWS_EL.querySelector(".vsave input");
+    if (again) again.focus({ preventScroll: true });
   }, { class: "btn" });
   name.addEventListener("keydown", (e) => {
     if (e.key === "Enter") save.click();
@@ -63,6 +65,7 @@ function renderViewsMenu() {
       h("div", { class: "vsave" }, name, save), status,
       note("To share a view with everyone who opens this file, add it to config.toml: [[dashboard.view]] name = \"…\", hash = \"#/…\".")));
   VIEWS_EL.open = wasOpen;
+  keepInView(VIEWS_EL); // redrawn while open: its new panel is placed again
 }
 
 // ---- data health: what is wrong (warn) and what is only worth knowing (info) ----
@@ -81,6 +84,7 @@ function healthIssues() {
   if (old) add("warn", `${fmt.runs(old)} read by an older parser`, "Run runlens refresh --force to read them again.");
   if (s.unreadable_lines) add("warn", `${fmt.int(s.unreadable_lines)} transcript lines could not be read`, "A transcript may be cut or corrupt.");
   if (H.pending_count) add("warn", `${fmt.int(H.pending_count)} session${H.pending_count === 1 ? "" : "s"} waiting to be ingested`, "Run runlens refresh to process the queue.");
+  if (H.orphan_labels) add("warn", `${fmt.int(H.orphan_labels)} incident label${H.orphan_labels === 1 ? "" : "s"} match no incident`, "Their incident ids changed or their run was deleted, so they are ignored until the incident is labelled again (runlens check says the same).");
   if ((H.hook_errors || []).length) add("warn", "The hook logged errors", "See hooks.log; the newest lines are on this page.");
   const last = Date.parse(s.last_ingest || "");
   const gen = Date.parse(DATA.generated || "");

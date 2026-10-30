@@ -107,7 +107,7 @@ function forestPlot(spec) {
       rows,
     }),
     draw(w) {
-      const R = rowH() + 4, top = 28;
+      const R = rowH() + 4;
       const labelW = Math.min(maxLabel(rows.map((r) => r.label), FONT.label) + 16, Math.max(100, w * 0.3));
       const txt = (r) => r.words || effectWords(r.effect);
       const valW = Math.min(maxLabel(rows.map((r) => `▲ ${txt(r)}`), FONT.axis) + 16, Math.max(110, w * 0.3));
@@ -117,14 +117,18 @@ function forestPlot(spec) {
       const lo = clamp(Math.min(...vals) / 1.1, 1 / (cap * 1.5), 1), hi = clamp(Math.max(...vals) * 1.1, 1, cap * 1.5);
       const x = scaleLog(lo, hi, x0, x1);
       const tk = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4].filter((v) => v >= lo && v <= hi);
+      let left = spec.leftLabel || "◀ worse", right = spec.rightLabel || "better ▶";
+      if (textWidth(left, FONT.small) + textWidth(right, FONT.small) + 16 > x1 - x0) [left, right] = ["◀ worse", "better ▶"];
+      // "no change" sits over ×1: on a narrow plot it would cover the direction labels, so it moves up a line.
+      const half = textWidth("no change", FONT.small) / 2 + 6;
+      const clash = x(1) - half < x0 + textWidth(left, FONT.small) || x(1) + half > x1 - textWidth(right, FONT.small);
+      const top = clash ? 40 : 28;
       const H = top + rows.length * R + 46;
       const root = svgRoot(w, H, `${spec.title}: ${rows.length} rows`);
       axisX(root, { scale: x, ticks: tk.map((v) => ({ v, label: `×${fmt.num(v, 2)}`, ref: v === 1 })), x0, x1, y: top + rows.length * R, grid: true, gridTop: top - 6,
         title: spec.axisTitle || "Effect, log scale (×1 = no change)" });
-      let left = spec.leftLabel || "◀ worse", right = spec.rightLabel || "better ▶";
-      if (textWidth(left, FONT.small) + textWidth(right, FONT.small) + 16 > x1 - x0) [left, right] = ["◀ worse", "better ▶"];
       root.append(svg("text", { class: "dirlabel", x: x0, y: top - 12 }, left), svg("text", { class: "dirlabel", x: x1, y: top - 12, "text-anchor": "end" }, right),
-        svg("text", { class: "reflabel", x: x(1), y: top - 12, "text-anchor": "middle" }, "no change"));
+        svg("text", { class: "reflabel", x: x(1), y: top - (clash ? 26 : 12), "text-anchor": "middle" }, "no change"));
       rows.forEach((r, i) => {
         const y = top + i * R + R / 2;
         const t = TONE[r.tone] || TONE.unclear;
@@ -229,7 +233,7 @@ function calendarChart(spec) {
   const weeks = Math.ceil(all.length / 7);
   const max = Math.max(...[...spec.days.values()].map((d) => d.value), 1e-9);
   return chartCard({
-    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, height: 7 * 18 + 60,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, controls: spec.controls, height: 7 * 18 + 60,
     legend: () => scaleLegend("seq", spec.legendText || ["less", "more"]),
     table: () => ({ cols: [{ label: "Day", value: (d) => d.day }, { label: spec.valueTitle || "Value", num: true, value: (d) => d.value, cell: (d) => fmtv(d.value) }],
       rows: keys.map((k) => ({ day: k, value: spec.days.get(k).value })) }),
@@ -637,7 +641,12 @@ function runTimeline(spec) {
         });
       }
       // agents
-      root.append(svg("text", { class: "sectionlabel", x: 0, y: yAgents - 6 }, spec.layout === "packed" ? "Subagents grouped by type: one bar per subagent, from start to end; bars share a row when they do not overlap" : "Agents: one bar per agent, from start to end, indented under the agent that started it"));
+      // The caption in the longest wording that fits the width (a phone gets the short one).
+      const captions = spec.layout === "packed"
+        ? ["Subagents grouped by type: one bar per subagent, from start to end; bars share a row when they do not overlap", "Subagents by type: one bar each, start to end", "Subagents by type"]
+        : ["Agents: one bar per agent, from start to end, indented under the agent that started it", "Agents: one bar each, under the agent that started it", "Agents, under their parent"];
+      const caption = captions.find((c) => textWidth(c, 11, 600) <= w - 4) || fitText(captions[captions.length - 1], w - 4, 11, 600);
+      root.append(svg("text", { class: "sectionlabel", x: 0, y: yAgents - 6 }, caption));
       let yy = yAgents;
       for (const r of rowsOut) {
         const indent = spec.layout === "packed" ? 0 : Math.min(5, r.depth || 0) * 10;

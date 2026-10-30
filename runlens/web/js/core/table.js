@@ -129,7 +129,7 @@ function tabs(label, items, opts = {}) {
       }
       panels[i].hidden = !on;
     });
-    if (write && opts.param) setParams({ [opts.param]: id === items[0].id ? null : id });
+    if (write && opts.param) setParams({ [opts.param]: id === items[0].id ? null : id }, true);
     if (opts.onSelect) opts.onSelect(id);
   };
   buttons.forEach((b, i) => {

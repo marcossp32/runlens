@@ -59,6 +59,23 @@ function redrawForPrint() {
      n, minN                           sample size: under minN the chart says so and is drawn muted
      controls                          at most two small controls for this chart (a measure, a scale), in its header
    } */
+
+// A drawing wider than its card scrolls sideways (a heatmap on a phone). The side that has more fades out, so the
+// reader sees there is more, and a cut column reads as "continues" rather than as the end of the chart.
+const CUED = new WeakSet();
+function scrollCue(el) {
+  const update = () => {
+    const over = el.scrollWidth > el.clientWidth + 1;
+    el.classList.toggle("more-right", over && el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    el.classList.toggle("more-left", over && el.scrollLeft > 1);
+  };
+  if (!CUED.has(el)) {
+    CUED.add(el);
+    el.addEventListener("scroll", update, { passive: true });
+  }
+  update();
+}
+
 function chartCard(spec) {
   const id = `c${Math.random().toString(36).slice(2, 9)}`;
   const plot = h("div", { class: "plot", style: `min-height:${spec.height || 180}px` });
@@ -115,6 +132,7 @@ function chartCard(spec) {
       } else this.svg = null;
       plot.replaceChildren(node || empty("Nothing to draw."));
       plot.style.minHeight = "";
+      scrollCue(plot);
       exportButtons.forEach((b) => { b.disabled = !this.svg; });
     },
   };
