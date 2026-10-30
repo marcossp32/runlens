@@ -447,6 +447,15 @@ class Renders(unittest.TestCase):
         self.assertNotIn("No measure has data", text)
         self.assertIn("Agent roles are not scored", text)
 
+    def test_spend_per_success_says_which_average_it_is(self):
+        # Spend ÷ eventual successes is not the geometric-mean cost per invocation, and not tied to the first-pass rate.
+        path = TMP / "cps.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        text = visible(dump(path, "#/?tab=outcome"))
+        self.assertNotIn("Cost per success", text)
+        self.assertIn("Spend per eventual success", text)
+        self.assertIn("a typical value (a geometric mean)", text)
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")

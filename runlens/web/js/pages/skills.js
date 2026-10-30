@@ -348,9 +348,10 @@ function outcomePanel(bases) {
       cols: [nameCol("Skill"), { key: "o", label: ow.rate, num: true, value: (u) => u.kpi.outcome, cell: (u) => fmt.pct(u.kpi.outcome) },
         { key: "n", label: "Attempts", num: true, value: (u) => sumOf(u.runList, (r) => r.on) },
         { key: "e", label: "Eventual successes", num: true, value: (u) => sumOf(u.runList, (r) => r.oe) },
-        { key: "cps", label: "Cost per success", num: true, value: (u) => (sumOf(u.runList, (r) => r.oe) ? u.spend / sumOf(u.runList, (r) => r.oe) : null),
+        { key: "cps", label: "Spend per eventual success", num: true, value: (u) => (sumOf(u.runList, (r) => r.oe) ? u.spend / sumOf(u.runList, (r) => r.oe) : null),
           cell: (u) => fmt.usd(sumOf(u.runList, (r) => r.oe) ? u.spend / sumOf(u.runList, (r) => r.oe) : null) }],
-      rows: bases.filter((u) => sumOf(u.runList, (r) => r.on)), sort: { key: "n", dir: -1 } }).el);
+      rows: bases.filter((u) => sumOf(u.runList, (r) => r.on)), sort: { key: "n", dir: -1 } }).el,
+    note(`Spend per eventual success is the skill's total spend divided by its successes at any attempt, not only the first, so it is an average of totals. Cost per invocation, elsewhere, is a typical value (a geometric mean), so a few expensive runs raise the first and barely move the second: spend per success can sit above cost per invocation even when every attempt succeeds.`));
 }
 
 // Up to n named series in their own colour; the rest folded into one grey "Other".
