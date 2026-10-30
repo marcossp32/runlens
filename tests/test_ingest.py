@@ -390,6 +390,24 @@ class Ingest(Sandbox):
         self.quiet(archive.archive, self.cfg, since="2026-09-30T23:00:00Z")
         self.assertEqual(len(list(fs_path(self.home / "archive").glob("*/*.runlens.json"))), 1)
 
+    def test_ingest_skill_and_project_filters_are_applied(self):
+        simple_run(self.projects, "a2a2a2a2-0000-0000-0000-000000000001")  # skill flow, cwd C:\work\repo
+        other = Run(self.projects, "a2a2a2a2-0000-0000-0000-000000000002", project="C--work-site", cwd="C:\\work\\site")
+        for i in range(3):
+            other.turn(f"o{i}", f"ot{i}", attr="deploy")
+        other.end()
+        other.write()
+        self.quiet(archive.archive, self.cfg)
+        run = lambda *args: self.quiet(cli.main, ["--config", str(self.tmp / "none.toml"), "ingest", "--force", *args])
+        run("--skill", "nosuchskill")
+        self.assertIn("0 run(s) ingested", self.out)
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 0)
+        run("--skill", "deploy")
+        self.assertEqual([r[0] for r in self.q("SELECT session_id FROM runs")], [other.sid])
+        run("--project", "REPO")  # case-insensitive, like archive
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 2)
+        self.assertIn("1 run(s) ingested", self.out)
+
     def test_structured_results_permissions_prompts_mentions(self):
         r = Run(self.projects, "acacacac-0000-0000-0000-000000000001")
         r.rec(type="user", message={"role": "user", "content": "<command-name>/flow</command-name>"})  # old CC: no origin

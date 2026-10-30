@@ -161,7 +161,7 @@ def main(argv=None):
             archive(cfg, quiet=a.quiet, **flt())
         if a.command in ("ingest", "refresh"):
             from .store import ingest
-            ingest(cfg, since=a.since, sessions=a.session, quiet=a.quiet, force=a.force)
+            ingest(cfg, quiet=a.quiet, force=a.force, **flt())
     finally:
         if lock:
             lock.release()

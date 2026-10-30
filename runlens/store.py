@@ -329,8 +329,10 @@ def manifests(sessions=None):
             yield mf, e
 
 
-def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
-    """Load archived runs into DuckDB. Returns how many runs were (re)loaded."""
+def ingest(cfg, since=None, sessions=None, quiet=False, force=False, skills=None, projects=None):
+    """Load archived runs into DuckDB. Returns how many runs were (re)loaded.
+
+    The filters match what `archive` selects on: a skill seen in the run, a text in its cwd."""
     since_dt = config.since_utc(since)
     cfg_hash = config_hash(cfg)
     con = connect(wait=300)
@@ -380,7 +382,11 @@ def ingest(cfg, since=None, sessions=None, quiet=False, force=False):
             continue
         if since_dt and (config.parse_ts(info.get("started")) or since_dt) < since_dt:
             continue
-        main = mf.with_name(f"{sid}.jsonl")
+        if skills and not set(skills) & set(info.get("skills") or []):
+            continue
+        if projects and not any(p.lower() in (info.get("cwd") or "").lower() for p in projects):
+            continue
+        main =mf.with_name(f"{sid}.jsonl")
         if not main.exists():
             errors.append(err(sid, main, "read", FileNotFoundError("the archived transcript is missing")))
             continue
