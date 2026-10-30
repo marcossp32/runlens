@@ -66,6 +66,7 @@ function diagProblems() {
   const events = EX.events.filter((e) => RUNSET.has(e.run) && e.kind !== "human_prompt");
   const callsAll = sumOf(tools, (t) => t.calls);
   const errN = sumOf(errs, (e) => e.n);
+  const alsoProblems = ["compaction", "interrupt", "api_error"].filter((t) => incByType.has(t));
   const skillRates = [...callsBySkill.keys()].filter((s) => callsBySkill.get(s) >= 20 && skillShown(s)).map((s) => ({ label: human(s), value: rate100(s) })).filter((x) => x.value > 0);
   return h("div", {},
     answer(`${plural(inc.length, "problem")} in these runs, ${fmt.num((100 * inc.length) / Math.max(1, callsAll), 2)} per 100 tool calls${types[0] ? `; the most common is ${human(types[0].label).toLowerCase()} (${fmt.int(types[0].n)})` : ""}. `
@@ -135,7 +136,10 @@ function diagProblems() {
         },
         legendText: ["rarer", "more frequent"],
       })),
-    section({ title: "Other signals", collapsible: true, collapsed: true, intro: "Context compactions and other recorded events that are not problems." },
+    // Compactions, interrupts and API errors are also incidents (runlens/incidents.py), so they are among the problems
+    // counted above; this section must not call them "not problems".
+    section({ title: "Other signals", collapsible: true, collapsed: true,
+      intro: `Context compactions in detail, and the other events recorded.${alsoProblems.length ? ` Also counted among the problems above: ${listWords(alsoProblems.map((t) => ({ compaction: "context compactions", interrupt: "interrupts", api_error: "API errors" })[t]))}.` : ""}` },
       comps.length ? scatterChart({
         title: "Context compactions over time", question: "Is context pressure growing, and which skills fill the context?",
         sub: "one mark per compaction · height = tokens in the context just before it",
@@ -145,7 +149,7 @@ function diagProblems() {
         legendItems: [{ label: "automatic", css: "var(--c1)", kind: "dot" }, { label: "you asked (manual)", css: "var(--c2)", shape: "square" }],
         takeaway: `${plural(comps.length, "compaction")}, ${fmt.int(comps.filter((c) => c.trigger === "auto").length)} automatic; the context held up to ${fmt.compact(Math.max(...comps.map((c) => c.pre || 0)))} tokens before one.`,
       }) : emptyCard("Context compactions over time", "No context compaction in these runs."),
-      barChart({ title: "Other events", question: "What else happened that is not a problem?", items: rollup(events, (e) => e.kind, ["one"]).map((x) => ({ label: human(x.label), value: events.filter((e) => e.kind === x.label).length })),
+      barChart({ title: "Other events", question: "What else was recorded?", items: rollup(events, (e) => e.kind, ["one"]).map((x) => ({ label: human(x.label), value: events.filter((e) => e.kind === x.label).length })),
         fmt: countFmt, valueTitle: "Events", labelTitle: "Event" })));
 }
 

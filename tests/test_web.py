@@ -422,6 +422,15 @@ class Renders(unittest.TestCase):
         self.assertRegex(text, r"· 7[.,]6 ?%")  # T0's 100 calls of 1,309, not of the 1,134 the twelve bars hold
         self.assertNotIn("does most of the work", text)
 
+    def test_compactions_counted_as_problems_are_not_called_other(self):
+        m = model()
+        m["explore"]["incidents"]["r"].append([m["explore"]["runs"]["r"][0][0], 400, "compaction", "flow", 0, "main", "incc", "auto", 0, 1, None])
+        path = TMP / "comp.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics"))
+        self.assertNotIn("that are not problems", text)
+        self.assertIn("Also counted among the problems above: context compactions.", text)
+
     def test_filter_bar_counts_the_runs_left(self):
         path = TMP / "filters.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")
