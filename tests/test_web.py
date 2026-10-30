@@ -552,6 +552,15 @@ class Recompute(unittest.TestCase):
         self.assertEqual(int(kpis["Pull requests"].replace(",", "")), prs)
         self.assertEqual(re.sub(r"\D", "", kpis["Spend"]), f"{round(spend * 100)}")  # digits only: the separators follow the browser's locale
 
+    def test_flow_takeaway_says_most_only_for_a_majority(self):
+        # In the demo the commonest first skill starts well under half the runs, and the widest band of the
+        # sankey (one step) is not the matrix's most common hand-over (every step).
+        text = visible(dump(self.path, "#/diagnostics?tab=flow", budget=12000))
+        self.assertNotIn("Most runs start with", text)
+        self.assertRegex(text, r"More runs start with [\w-]+ than with any other skill \(\d+ of \d+ runs\)")
+        self.assertNotIn("the most common hand-over is", text)
+        self.assertRegex(text, r"the widest band is [\w-]+ → [\w-]+ from step \d to \d")
+
     def test_filters_recompute_and_keep_a_verdict(self):
         score, dom = self.score_at("#/unit/skill%3Awrite-tests?repo=acme-shop&ci=80")
         self.assertGreater(score, 0)

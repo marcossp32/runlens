@@ -413,10 +413,17 @@ function diagFlow() {
   return h("div", {},
     section({ title: "The order skills run in", intro: "How a run moves from one skill to the next in the main session." },
     sankeyChart({ title: "How runs move from skill to skill", question: "In what order do the skills run, and where does a flow stop?",
+      // "Most" only for a majority; the widest band is one step's link, so it is named with its step: the matrix
+      // below counts hand-overs at every step and can have a different top pair.
       takeaway: () => {
         const s0 = stages[0] && stages[0][0];
+        if (!s0) return null;
+        const n0 = sumOf(stages[0], (s) => s.value);
+        const firsts = stages[0].filter((s) => s.value === s0.value).map((s) => human(s.key));
+        const start = 2 * s0.value > n0 ? `Most runs start with ${human(s0.key)} (${fmt.int(s0.value)} of ${fmt.runs(n0)})`
+          : `More runs start with ${listWords(firsts)} than with any other skill (${fmt.int(s0.value)} of ${fmt.runs(n0)}${firsts.length > 1 ? " each" : ""})`;
         const l0 = [...links].sort((a, b) => b.value - a.value)[0];
-        return s0 ? `Most runs start with ${human(s0.key)} (${fmt.runs(s0.value)})${l0 ? `; the most common hand-over is ${human(l0.from[1])} → ${human(l0.to[1])} (${fmt.runs(l0.value)})` : ""}.` : null;
+        return `${start}${l0 ? `; the widest band is ${human(l0.from[1])} → ${human(l0.to[1])} from step ${l0.from[0] + 1} to ${l0.to[0] + 1} (${fmt.runs(l0.value)})` : ""}.`;
       },
       sub: `read left to right: each column is a step of the main session (repeats folded), the first ${STEPS} steps · each block is a skill, labelled with its name · band width = how many runs took that path`, stages, links,
       stageLabel: (i) => `step ${i + 1}`, fmt: (v) => fmt.runs(v),
