@@ -479,6 +479,21 @@ class Renders(unittest.TestCase):
         self.assertNotIn('class="ghost custom"', dump(path, "#/?base=ver%3Av99"))
         self.assertIn('class="ghost custom"', dump(path, "#/?base=ver%3Av1"))
 
+    def test_how_it_works_follows_the_score_settings_and_filters(self):
+        path = TMP / "method.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        text = visible(dump(path, "#/method?ci=80").split('<article class="page"')[1])  # the page, not the Score menu's choices
+        self.assertIn("80%", text)
+        self.assertNotIn("95%", text)
+        unit = dump(path, "#/unit/skill%3Aflow?w=cost%3A5")
+        score = float(re.search(r'class="summary[^"]*"[^>]*data-score="([\d.]+)"', unit).group(1))
+        text = visible(dump(path, "#/method?tab=example&w=cost%3A5"))
+        self.assertIn("Worked out with your weights", text)
+        self.assertEqual(int(re.search(r"So the score is (\d+)", text).group(1)), round(score))  # the score the unit page shows
+        text = visible(dump(path, "#/method?tab=example&repo=nowhere"))
+        self.assertIn("nothing to walk through", text)
+        self.assertNotIn("So the score is", text)
+
 
 def build_demo():
     """The demo history and its model, built in child processes with their own RUNLENS_HOME."""

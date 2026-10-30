@@ -1,10 +1,15 @@
 /* pages/method.js: how a score and a verdict are made, followed on one of your own skills (#/method). */
 
+// The example is scored as every other page scores it (the Score settings and the filters), on the current
+// version with the most runs, so its numbers match the Skills page.
 function workedExample() {
-  const unit = DATA.units.filter((u) => u.kind === "skill" && u.score != null).sort((a, b) => b.runs - a.runs)
-    .find((u) => (DATA.versions[u.id] || []).some((v) => v.label === u.current && Object.keys(v.metrics || {}).length));
-  if (!unit) return empty("There is no scored skill yet, so there is nothing to walk through.");
-  const v = DATA.versions[unit.id].find((x) => x.label === unit.current);
+  const pick = DATA.units.filter((u) => u.kind === "skill" && u.baseline && skillShown(u.name)).map((u) => {
+    const sc = scoreUnit(u);
+    return { unit: u, v: sc.versions.find((x) => x.label === sc.current) };
+  }).filter((c) => c.v && c.v.score != null && Object.keys(c.v.metrics || {}).length).sort((a, b) => b.v.runs - a.v.runs)[0];
+  if (!pick) return empty(filtered() ? "No skill has a scored version in these filters, so there is nothing to walk through." : "There is no scored skill yet, so there is nothing to walk through.");
+  const { unit, v } = pick;
+  const refWords = S.base === "self" ? "the skill's typical run" : baseWords();
   const parts = contributions(v);
   const wsum = parts.reduce((n, p) => n + p.d.weight, 0);
   const acc = parts.reduce((n, p) => n + p.d.weight * Math.log(p.d.ratio), 0);
@@ -12,9 +17,10 @@ function workedExample() {
     p.d.weight, fmt.num(p.d.weight * Math.log(p.d.ratio), 3)]);
   const j = verdict(v.score, v.ci, v);
   return h("div", { class: "prose" },
-    h("p", {}, `This is ${unit.name}, version ${nameOf(v)}, which has ${fmt.runs(v.runs)}. Each row is one measure. The ratio compares the skill's typical run with the value that counts, so a ratio above 1 means this version did better than the skill usually does.`),
+    scoreSettingsNote(),
+    h("p", {}, `This is ${unit.name}, version ${nameOf(v)}, which has ${fmt.runs(v.runs)}${slicing() ? " in the filters" : ""}. Each row is one measure. The ratio compares ${refWords} with the value that counts, so a ratio above 1 means this version did better than ${S.base === "self" ? "the skill usually does" : refWords}.`),
     plainTable("Worked example",
-      [{ label: "Measure" }, { label: "This version", num: true }, { label: "Typical run of the skill", num: true }, { label: "Value that counts", num: true },
+      [{ label: "Measure" }, { label: "This version", num: true }, { label: S.base === "self" ? "Typical run of the skill" : `Reference: ${refWords}`, num: true }, { label: "Value that counts", num: true },
         { label: "Ratio", num: true }, { label: "Weight", num: true }, { label: "Weight × ln(ratio)", num: true }], rows),
     h("p", {}, `“Value that counts” is this version's value pulled toward the skill's own value, as if it had ${DATA.method.shrink} extra typical runs. Ratios are capped at ×${DATA.method.max_ratio} and ×${fmt.num(1 / DATA.method.max_ratio, 2)}.`),
     h("ol", {},
@@ -24,7 +30,7 @@ function workedExample() {
     h("p", {}, `So the score is ${fmt.score(v.score)}`, v.ci ? `, with a range of ${fmt.interval(v.ci)}.` : "."),
     waterfallChart({ title: `The same sum, step by step: ${unit.name} ${nameOf(v)}`, question: "How does each measure take the score from 100 to its value?",
       takeaway: `Each bar is one measure's push: right raises the score, left lowers it. Together they take ${unit.name} ${nameOf(v)} from 100 to ${fmt.score(v.score)}.`,
-      sub: "each step is weight × ln(ratio) ÷ total weight; the steps multiply", score: v.score, base: "the skill's typical run", n: v.runs, minN: MIN_RUNS,
+      sub: "each step is weight × ln(ratio) ÷ total weight; the steps multiply", score: v.score, base: refWords, n: v.runs, minN: MIN_RUNS,
       rows: [...parts].sort((a, b) => Math.abs(b.share) - Math.abs(a.share)).map((p) => ({ label: metricLabel(p.m), share: p.share,
         tip: [["Ratio", fmt.ratio(p.d.ratio)], ["Weight", `×${p.d.weight}`]] })) }),
     h("p", {}, `The verdict is separate: ${j.sentence}`));
@@ -32,7 +38,7 @@ function workedExample() {
 
 function methodPage() {
   const m = DATA.method;
-  const pct = Math.round((m.confidence || 0.95) * 100);
+  const pct = pctOf(); // the confidence level in use: config.toml's, or the one chosen in Score
   const formula = [
     "value     = Σ num / Σ den over the runs          (log measures: num = Σ ln(x + offset) per invocation)",
     "counted   = (Σ num + K · d · typical) / (Σ den + K · d)      d = the skill's mean den per run",
