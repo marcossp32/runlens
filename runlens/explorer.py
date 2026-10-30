@@ -395,9 +395,14 @@ def health(rows, rid):
             h[k] = v.isoformat(timespec="seconds")
     errors = rows("""SELECT session_id, path, stage, error, detail, failed_at FROM ingest_errors
                      ORDER BY failed_at DESC LIMIT 100""")
+    # A resumed session's transcript holds the calls of every process, but its cost-state may only cover the later
+    # ones (runs.cost_uncovered_usd > 0): the transcript then shows more output than Claude Code counted, and the
+    # share went over 100%. Only runs whose cost-state covers every call are compared.
     coverage = rows("""SELECT session_id, sum(transcript_output) AS seen, sum(cost_state_output) AS counted,
                               sum(cost_state_usd) AS cost
-                       FROM v_token_coverage GROUP BY 1""")
+                       FROM v_token_coverage
+                       WHERE session_id NOT IN (SELECT session_id FROM runs WHERE coalesce(cost_uncovered_usd, 0) > 0)
+                       GROUP BY 1""")
     try:
         pending = sorted(p.name for p in config.PENDING.iterdir() if p.is_file() and not p.name.startswith(".")) \
             if config.PENDING.is_dir() else []

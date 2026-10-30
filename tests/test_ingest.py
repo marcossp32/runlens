@@ -530,6 +530,26 @@ class Ingest(Sandbox):
         self.assertEqual([(x["model"], x["n"]) for x in rows("apierr")], [("claude-sonnet-5-5", 1)])
         self.assertEqual({x["model"] for x in rows("agents") if x["i"] == 1}, {"claude-sonnet-5-5"})
 
+    def test_token_coverage_leaves_out_calls_cost_state_does_not_cover(self):
+        from runlens import explorer
+        r = Run(self.projects, "dfdfdfdf-0000-0000-0000-000000000001")
+        r.rec(type="user", message={"role": "user", "content": "go"}, promptSource="typed")
+        for i in range(4):
+            r.turn(f"c{i}", f"ct{i}")  # 50 output tokens each in the transcript
+        # the cost-state's process started after the first two calls: it counts the last two only
+        start = int((T0 + timedelta(seconds=6)).timestamp() * 1000)
+        r.rec(type="cost-state", totalCostUSD=0.5, startTime=start, modelUsage={"claude-sonnet-5-5": {"costUSD": 0.5, "outputTokens": 100}})
+        r.write()
+        simple_run(self.projects, "dfdfdfdf-0000-0000-0000-000000000002")
+        self.refresh()
+        self.assertGreater(self.q("SELECT cost_uncovered_usd FROM runs WHERE session_id LIKE 'dfdfdfdf-%1'")[0][0], 0)
+        con = store.connect(read_only=True)
+        try:
+            cov = explorer.build(con)["health"]["coverage"]
+        finally:
+            con.close()
+        self.assertEqual([c[0] for c in cov], ["dfdfdfdf-0000-0000-0000-000000000002"])
+
     def test_unknown_model_is_flagged_not_guessed(self):
         r = Run(self.projects, "adadadad-0000-0000-0000-000000000001")
         r.rec(type="assistant", message={"id": "u1", "model": "claude-future-9", "content": [],
