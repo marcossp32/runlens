@@ -456,6 +456,16 @@ class Renders(unittest.TestCase):
         self.assertNotIn('class="ghost custom"', plain)
         self.assertNotIn('class="settingsnote"', plain)
 
+    # ---- issue #30: controls that never appeared, lost state or ignored the settings ----
+
+    def test_runs_calendar_offers_its_colour_select(self):
+        path = TMP / "cal.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/runs?cal=runs")
+        sel = re.search(r'<select aria-label="Colour the days by">(.*?)</select>', dom, re.S)
+        self.assertIsNotNone(sel, "the calendar's colour select is not on the page")
+        self.assertRegex(sel.group(1), r'<option value="runs" selected="">Runs</option>')
+
 
 def build_demo():
     """The demo history and its model, built in child processes with their own RUNLENS_HOME."""

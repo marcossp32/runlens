@@ -229,7 +229,7 @@ function calendarChart(spec) {
   const weeks = Math.ceil(all.length / 7);
   const max = Math.max(...[...spec.days.values()].map((d) => d.value), 1e-9);
   return chartCard({
-    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, height: 7 * 18 + 60,
+    title: spec.title, question: spec.question, takeaway: spec.takeaway, howto: spec.howto, legendInHowto: spec.legendInHowto, sub: spec.sub, notes: spec.notes, controls: spec.controls, height: 7 * 18 + 60,
     legend: () => scaleLegend("seq", spec.legendText || ["less", "more"]),
     table: () => ({ cols: [{ label: "Day", value: (d) => d.day }, { label: spec.valueTitle || "Value", num: true, value: (d) => d.value, cell: (d) => fmtv(d.value) }],
       rows: keys.map((k) => ({ day: k, value: spec.days.get(k).value })) }),
