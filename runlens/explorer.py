@@ -382,6 +382,8 @@ def health(rows, rid):
             hook_errors = [clip(x, 240) for x in lines if re.search(r"error|exception|traceback|failed", x, re.I)][-10:]
     except OSError:
         pass
+    # Labels whose incident is gone, as `runlens check` warns (check.orphan_labels); no labels table gives none.
+    orphans = rows("SELECT count(DISTINCT incident_id) AS n FROM labels WHERE incident_id NOT IN (SELECT incident_id FROM incidents)")
     return {
         "summary": h,
         "ingest_errors": [{"run": (e["session_id"] or "")[:8], "sid": e["session_id"], "path": e["path"], "stage": e["stage"],
@@ -391,4 +393,5 @@ def health(rows, rid):
         "coverage": [[rid[c["session_id"]], c["seen"], c["counted"], num(c["cost"])] for c in coverage if c["session_id"] in rid],
         "pending": pending[:50], "pending_count": len(pending),
         "hook_errors": hook_errors,
+        "orphan_labels": (orphans[0]["n"] or 0) if orphans else 0,
     }

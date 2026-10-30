@@ -260,6 +260,22 @@ class Model(unittest.TestCase):
         self.assertEqual(t["d"]["a"], ["x", "y"])
         self.assertEqual([r[0] for r in t["r"]], [0, 1, 0])
 
+    def test_health_counts_labels_that_match_no_incident(self):
+        import duckdb
+        con = duckdb.connect()
+
+        def rows(sql, params=None):  # as explorer.build's: a missing table gives no rows
+            try:
+                cur = con.execute(sql, params or [])
+            except (duckdb.CatalogException, duckdb.BinderException):
+                return []
+            return [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+
+        self.assertEqual(explorer.health(rows, {})["orphan_labels"], 0)  # no labels table yet
+        con.execute("CREATE TABLE incidents (incident_id VARCHAR); INSERT INTO incidents VALUES ('a')")
+        con.execute("CREATE TABLE labels (incident_id VARCHAR); INSERT INTO labels VALUES ('a'), ('gone'), ('gone'), ('lost')")
+        self.assertEqual(explorer.health(rows, {})["orphan_labels"], 2)  # as `runlens check` counts them
+
     def test_duration_bins(self):
         self.assertEqual(explorer.duration_bin(5), 0)
         self.assertEqual(explorer.duration_bin(10), 1)
@@ -493,6 +509,16 @@ class Renders(unittest.TestCase):
         text = visible(dump(path, "#/method?tab=example&repo=nowhere"))
         self.assertIn("nothing to walk through", text)
         self.assertNotIn("So the score is", text)
+
+    def test_data_health_says_the_filters_do_not_apply_and_counts_orphan_labels(self):
+        m = model()
+        m["explore"]["health"]["orphan_labels"] = 59
+        path = TMP / "health.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        dom = dump(path, "#/health?repo=other")
+        self.assertIn('class="settingsnote healthfilters"', dom)
+        self.assertIn("59 incident labels match no incident", visible(dom))
+        self.assertNotIn('class="settingsnote healthfilters"', dump(path, "#/health"))
 
 
 def build_demo():

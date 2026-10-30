@@ -81,6 +81,7 @@ function healthIssues() {
   if (old) add("warn", `${fmt.runs(old)} read by an older parser`, "Run runlens refresh --force to read them again.");
   if (s.unreadable_lines) add("warn", `${fmt.int(s.unreadable_lines)} transcript lines could not be read`, "A transcript may be cut or corrupt.");
   if (H.pending_count) add("warn", `${fmt.int(H.pending_count)} session${H.pending_count === 1 ? "" : "s"} waiting to be ingested`, "Run runlens refresh to process the queue.");
+  if (H.orphan_labels) add("warn", `${fmt.int(H.orphan_labels)} incident label${H.orphan_labels === 1 ? "" : "s"} match no incident`, "Their incident ids changed or their run was deleted, so they are ignored until the incident is labelled again (runlens check says the same).");
   if ((H.hook_errors || []).length) add("warn", "The hook logged errors", "See hooks.log; the newest lines are on this page.");
   const last = Date.parse(s.last_ingest || "");
   const gen = Date.parse(DATA.generated || "");
