@@ -466,6 +466,19 @@ class Renders(unittest.TestCase):
         self.assertIsNotNone(sel, "the calendar's colour select is not on the page")
         self.assertRegex(sel.group(1), r'<option value="runs" selected="">Runs</option>')
 
+    def test_per_unit_weights_keep_their_decimals(self):
+        path = TMP / "wu.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        dom = dump(path, "#/unit/skill%3Aflow?wu=flow%3Acost%3A1.5.seconds%3A0")
+        self.assertRegex(dom, r'data-key="w-cost"[^>]*><output class="sp-val">×1[.,]5</output>')  # not ×1
+        self.assertRegex(dom, r'data-key="w-seconds"[^>]*><output class="sp-val">×0</output>')
+
+    def test_unknown_baseline_version_is_the_default(self):
+        path = TMP / "base.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        self.assertNotIn('class="ghost custom"', dump(path, "#/?base=ver%3Av99"))
+        self.assertIn('class="ghost custom"', dump(path, "#/?base=ver%3Av1"))
+
 
 def build_demo():
     """The demo history and its model, built in child processes with their own RUNLENS_HOME."""
