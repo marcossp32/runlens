@@ -360,6 +360,8 @@ def method_command(a, cfg):
                 for r in results:
                     if r["confounders"]:
                         print(f"{r['id']} confounded by: {'; '.join(r['confounders'])}")
+                    for n in r.get("notes") or []:
+                        print(f"{r['id']} note: {n}")
     finally:
         con.close()
     return 0
@@ -381,6 +383,17 @@ def _outcome_text(o):
     return f"{o['value']:.0%} of {o['n']}" if o and o["value"] is not None else "-"
 
 
+def _verdict_notes(items):
+    """Lines under a table: what confounded a verdict, and notes on what differed without confounding it.
+    Confounders only under a `confounded` verdict: under `not enough runs` they decided nothing."""
+    lines = []
+    for name, x in items:
+        if x["verdict"] == "confounded":
+            lines.append(f"{name}: confounded by {'; '.join(x['confounders'])}")
+        lines += [f"{name}: note: {n}" for n in x.get("notes") or []]
+    return lines
+
+
 def _score_text(out):
     pop = out["population"]
     head = (f"{pop['runs']} finished runs ({pop['open']} open and {pop['stub']} stub runs left out). Each unit's current "
@@ -394,7 +407,7 @@ def _score_text(out):
              u["verdict"] or ("only one version" if u["versions"] == 1 else "-"), u["vs"] or "-",
              _diff_text(u["difference"]), _outcome_text(u.get("current_outcome")),
              _num((u.get("current_typical") or {}).get("cost"), 2)] for u in out["units"]]
-    notes = [f"{u['unit']}: confounded by {'; '.join(u['confounders'])}" for u in out["units"] if u["verdict"] == "confounded"]
+    notes = _verdict_notes((u["unit"], u) for u in out["units"])
     legend = ("runs and invocations count every version; current runs, outcome and cost/inv are the current version's "
               "own. difference: the current version against `vs`, with its 95% interval (no interval: too few runs a side)")
     return "\n".join([head, _table(cols, rows), legend] + notes)
@@ -404,8 +417,7 @@ def _versions_text(out):
     cols = ["version", "hash", "runs", "invocations", "score", "verdict", "vs", "difference", "outcome", "cost/success"]
     rows = [[v["label"], v["hash"], v["runs"], v["invocations"], _num(v["score"]), v["verdict"] or "first", v["vs"] or "-",
              _diff_text(v["difference"]), _outcome_text(v["outcome"]), _num(v["cost_per_success_usd"], 2)] for v in out["versions"]]
-    # only under a `confounded` verdict, as in `score`: under `not enough runs` the confounders decided nothing
-    notes = [f"{v['label']}: confounded by {'; '.join(v['confounders'])}" for v in out["versions"] if v["verdict"] == "confounded"]
+    notes = _verdict_notes((v["label"], v) for v in out["versions"])
     dirs = [f"files: {'; '.join(out['skill_dirs'])}"] if out.get("skill_dirs") else []
     return "\n".join([f"{out['skill']}: score 100 = its own typical run; difference = the version against the one before "
                       "(100 = no change)", _table(cols, rows)] + notes + dirs)

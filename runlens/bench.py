@@ -205,7 +205,7 @@ def settings(cfg=None, groups=None):
         "min_runs": int(method.get("min_runs", MIN_RUNS)),
         "resamples": int(method.get("resamples", RESAMPLES)),
         "confidence": float(method.get("confidence", CONFIDENCE)),
-        "cc_version": method.get("cc_version", "patch"),
+        "cc_version": method.get("cc_version", "minor"),
         "auto_groups": bool(method.get("auto_groups", True)),
     }
     if s["min_runs"] < 2:
@@ -489,17 +489,32 @@ def shift(a, b):
     return 0.5 * sum(abs(a[k] / ta - b[k] / tb) for k in set(a) | set(b))
 
 
-def _top_change(a, b):
-    """The member of a mix whose share moved most, as 'name x% → y%'. On a tie, the one that grew."""
+def _top_change(a, b, of):
+    """The member of a mix whose share moved most, as 'name x% → y% of <of>'. On a tie, the one that grew."""
     ta, tb = sum(a.values()) or 1, sum(b.values()) or 1
     moved = lambda x: b[x] / tb - a[x] / ta
     k = max(sorted(set(a) | set(b)), key=lambda x: (round(abs(moved(x)), 9), moved(x) > 0))
-    return f"{k} {a[k] / ta:.0%} → {b[k] / tb:.0%}"
+    return f"{k} {a[k] / ta:.0%} → {b[k] / tb:.0%} of {of}"
 
 
-def _mode(c):
-    """The most common member of a mix; on a tie, the first by name."""
-    return max(sorted(c), key=lambda k: c[k])
+def _version_key(v):
+    """Sort key for version strings: 2.1.9 before 2.1.10, 'unknown' last."""
+    return (v == "unknown", [(0, int(x), "") if x.isdigit() else (1, 0, x) for x in re.split(r"[.-]", v)])
+
+
+def _span(c, unit="version"):
+    """What one side ran on: a single value by name, a few listed, many as a count and a range."""
+    names = sorted(c, key=_version_key)
+    if len(names) == 1:
+        return names[0]
+    if len(names) <= 3:
+        return f"{len(names)} {unit}s ({', '.join(names)})"
+    return f"{len(names)} {unit}s ({names[0]} to {names[-1]})"
+
+
+def _shared(a, b):
+    n = len(set(a) & set(b))
+    return "none shared" if not n else "all shared" if n == len(set(a) | set(b)) else f"{n} shared"
 
 
 def model_id(model):
@@ -518,9 +533,14 @@ def mix_threshold(n):
     return max(MIX_SHIFT, MIX_NOISE / math.sqrt(max(n, 1)))
 
 
-def confounders_of(side_a, side_b, own_skills, ctx):
-    """What else differed between two sets of runs. `side_*` are run rows with their context."""
-    out = []
+def confounders_of(side_a, side_b, own_skills, ctx, labels=("A", "B")):
+    """What else differed between two sets of runs, and notes on what differed but does not count.
+
+    `side_*` are run rows with their context, `labels` the two sides' names for the text. Returns (confounders,
+    notes). With [method] cc_version = "minor" (the default), a shift in Claude Code patch releases inside one minor
+    is a note, not a confounder: patches ship almost daily, so counting them would confound nearly every verdict."""
+    out, notes = [], []
+    la, lb = labels
     sids_a = sorted({r["sid"] for r in side_a})
     sids_b = sorted({r["sid"] for r in side_b})
     limit = mix_threshold(min(len(sids_a), len(sids_b)))
@@ -532,23 +552,34 @@ def confounders_of(side_a, side_b, own_skills, ctx):
         ha = Counter(short(versions[sid][s]) for sid in sids_a if s in versions.get(sid, {}))
         hb = Counter(short(versions[sid][s]) for sid in sids_b if s in versions.get(sid, {}))
         if ha and hb and shift(ha, hb) >= mix_threshold(min(sum(ha.values()), sum(hb.values()))):
-            out.append(f"{s} also changed ({_top_change(ha, hb)})")
+            if len(ha) == 1 and len(hb) == 1:
+                out.append(f"{s} also changed ({next(iter(ha))} → {next(iter(hb))})")
+            else:
+                out.append(f"{s} also changed: {_top_change(ha, hb, f'the runs that used {s}')}")
     mix = lambda rows, field: sum((r[field] for r in sorted(rows, key=lambda r: r["sid"])), Counter())
-    for field, what in (("models", "model mix (share of main-agent cost)"), ("efforts", "effort mix (share of turns)")):
+    for field, what, of in (("models", "model mix", "main-agent cost"), ("efforts", "effort mix", "turns")):
         a, b = mix(side_a, field), mix(side_b, field)
         if shift(a, b) >= limit:
-            out.append(f"{what}: {_top_change(a, b)}")
+            out.append(f"{what}: {_top_change(a, b, of)}")
     runs = ctx["sessions"]
-    for field, what in (("cc", "Claude Code version"), ("repo", "project mix")):
-        a = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_a)
-        b = Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids_b)
-        if shift(a, b) >= limit:
-            top_a, top_b = _mode(a), _mode(b)
-            if field == "cc" and top_a != top_b:
-                out.append(f"Claude Code {top_a} → {top_b}")
-            else:  # the most common value is the same on both sides: name the one whose share moved
-                out.append(f"{what}: {_top_change(a, b)}")
-    return out
+    attr = lambda field, sids: Counter(ctx["run_attr"](runs.get(sid), field) for sid in sids)
+    a, b = attr("cc", sids_a), attr("cc", sids_b)
+    if shift(a, b) >= limit:
+        if len(a) == 1 and len(b) == 1:  # every run on each side on one version: that is one upgrade
+            out.append(f"Claude Code {next(iter(a))} → {next(iter(b))}")
+        else:
+            out.append(f"Claude Code version: {la} ran on {_span(a)}, {lb} on {_span(b)}, {_shared(a, b)}; "
+                       f"{_top_change(a, b, 'runs')}")
+    elif ctx.get("cc_version") == "minor":
+        pa, pb = attr("cc_patch", sids_a), attr("cc_patch", sids_b)
+        if shift(pa, pb) >= limit:
+            notes.append(f"Claude Code patches also changed: {la} ran on {_span(pa, 'patch version')}, "
+                         f"{lb} on {_span(pb, 'patch version')}, {_shared(pa, pb)}. Not counted as a confounder "
+                         "(cc_version = \"minor\"), so a patch that changed behaviour would go unflagged")
+    a, b = attr("repo", sids_a), attr("repo", sids_b)
+    if shift(a, b) >= limit:
+        out.append(f"project mix: {_top_change(a, b, 'runs')}")
+    return out, notes
 
 
 # ---- skill sets found in the history ----------------------------------------------------
@@ -871,6 +902,8 @@ def compute(data, groups=None, resamples=None, cfg=None):
             return "unknown"
         if field == "cc":
             return cc_level(run.get("cc_version"), st["cc_version"])
+        if field == "cc_patch":
+            return cc_level(run.get("cc_version"), "patch")
         return repo_of(run["session_id"]) or "unknown"
 
     # One row per (unit, session, version).
@@ -906,7 +939,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
             "os": os_, "oe": oe, "on": on, "models": c["models"], "efforts": c["efforts"],
         })
 
-    ctx = {"session_versions": session_versions, "sessions": sessions, "run_attr": run_attr}
+    ctx = {"session_versions": session_versions, "sessions": sessions, "run_attr": run_attr, "cc_version": st["cc_version"]}
 
     def name_of(uid):
         kind, _, rest = uid.partition(":")
@@ -991,7 +1024,7 @@ def compute(data, groups=None, resamples=None, cfg=None):
             if last:
                 units_entry.update(current=last["label"], score=last["score"], ci=last["ci"], verdict=last["verdict"],
                                    vs=last["vs"], delta=last["delta"], difference=last["difference"],
-                                   confounders=last["confounders"], direction=last["direction"], p=last.get("p"))
+                                   confounders=last["confounders"], notes=last.get("notes", []), direction=last["direction"], p=last.get("p"))
         units_entry["versions"] = len(vlist)
         units.append(units_entry)
         versions_out[uid] = vlist
@@ -1068,7 +1101,7 @@ def describe_unit(uid, kind, name, rows, base, pseudo, weights, o, group_of, min
         "auto": bool(group_of[uid].get("auto")) if kind == "group" else False,
         "runs": len({r["sid"] for r in rows}), "invocations": sum(r["invocations"] for r in rows),
         "versions": 0, "current": None, "score": None, "ci": None, "verdict": None, "direction": None, "vs": None,
-        "delta": None, "difference": None, "confounders": [], "low_sample": len({r["sid"] for r in rows}) < min_runs,
+        "delta": None, "difference": None, "confounders": [], "notes": [], "low_sample": len({r["sid"] for r in rows}) < min_runs,
         "kpi": {**kpi, **extras(rows)}, "outcome": outcome_summary(o, rows), "p": None, "q": None, "adjusted": None,
         "baseline": base, "pseudo": pseudo, "weights": weights,
         "first_seen": min(starts, default=None), "last_seen": max(starts, default=None),
@@ -1115,7 +1148,7 @@ def version_entry(uid, i, vkey, vmap, xs, base, pseudo, weights, o, st, diffs):
         "score": 100 * math.exp(d) if d is not None else None, "ci": ci, "metrics": metrics,
         "outcome": outcome_summary(o, xs), "kpi": extras(xs),
         "typical": {m["key"]: display(m, internal(m, sums_of(xs, m["key"]))) for m in MEASURES if m["key"] in base},
-        "changes": diffs, "verdict": None, "direction": None, "p": None, "vs": None, "difference": None, "confounders": [],
+        "changes": diffs, "verdict": None, "direction": None, "p": None, "vs": None, "difference": None, "confounders": [], "notes": [],
         "delta": None, "overlap": None,
     }
 
@@ -1131,8 +1164,8 @@ def pair_entry(uid, va, vb, rows_a, rows_b, base, pseudo, weights, own_skills, c
     enough = n_a >= st["min_runs"] and n_b >= st["min_runs"]
     res = compare(rows_a, rows_b, base, pseudo, weights, f"{uid}|{va['key']}|{vb['key']}", st["resamples"],
                   st["confidence"], interval=enough)
-    conf = confounders_of(rows_a, rows_b, own_skills, ctx)
-    notes = [f"cost leaves out {n} of {len(side)} runs of {label} (no cost-state: list price on a partial transcript)"
+    conf, notes = confounders_of(rows_a, rows_b, own_skills, ctx, (va["label"], vb["label"]))
+    notes += [f"cost leaves out {n} of {len(side)} runs of {label} (no cost-state: list price on a partial transcript)"
              for label, side in ((va["label"], rows_a), (vb["label"], rows_b))
              for n in [sum(1 for r in side if ctx["sessions"][r["sid"]].get("cost_estimated"))] if n]
     verdict, direction = verdict_of(res["ci"], n_a, n_b, conf, st["min_runs"], scored=res["d"] is not None)
@@ -1166,7 +1199,7 @@ def unit_summary(model, u):
     current = next((v for v in model["versions"].get(u["id"], []) if v["label"] == u["current"]), None)
     return {"unit": u["id"], "name": u["name"], "kind": u["kind"], "runs": u["runs"], "invocations": u["invocations"],
             "versions": u["versions"], "current": u["current"], "verdict": u["verdict"], "direction": u["direction"],
-            "vs": u["vs"], "confounders": u["confounders"], "outcome": u["outcome"], "difference": _diff_out(u["difference"]),
+            "vs": u["vs"], "confounders": u["confounders"], "notes": u.get("notes", []), "outcome": u["outcome"], "difference": _diff_out(u["difference"]),
             "p_adjusted": u.get("q"),
             "score": u["score"], "ci95": u["ci"],
             "typical": {k: v for k, v in u["kpi"].items() if k in MEASURE},

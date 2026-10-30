@@ -10,11 +10,12 @@ verdicts (bench.compare), and records one of:
   inconclusive     no clear change: the interval holds 0, which is not evidence that the edit did nothing
                    (with a handful of runs a real effect usually looks like this)
   refuted          the measure moved the other way, and the whole interval is on that side (see `moved`)
-
-`observed` says better or worse on the quality scale (lower cost is better); `moved` says higher or lower
-in the measure's own terms, the way the hypothesis' `direction` is written.
   not enough runs  fewer than [method] min_runs runs on either side (or no newer version yet)
   confounded       something else changed between the two sides, named in `confounders`
+
+`observed` says better or worse on the quality scale (lower cost is better); `moved` says higher or lower
+in the measure's own terms, the way the hypothesis' `direction` is written. `notes` holds what differed
+without counting as a confounder, such as Claude Code patch releases under [method] cc_version = "minor".
 
 Proposals live in the `proposals` table of the runlens database. Labels and proposals are
 the only rows a re-ingest never touches.
@@ -105,7 +106,7 @@ def check(model, p, min_runs=None):
            "measure": p["measure"], "direction": p["direction"], "evidence": p["evidence"],
            "after_versions": [v["label"] for v in after], "runs_before": bench.n_runs(rows_a), "runs_after": bench.n_runs(rows_b),
            "invocations_before": sum(r["invocations"] for r in rows_a), "invocations_after": sum(r["invocations"] for r in rows_b),
-           "verdict": "not enough runs", "observed": None, "moved": None, "difference": None, "confounders": []}
+           "verdict": "not enough runs", "observed": None, "moved": None, "difference": None, "confounders": [], "notes": []}
     if unit is None or not rows_a or not rows_b:
         out["note"] = "no runs of the base version" if not rows_a else "no runs of a newer version since the proposal"
         return out
@@ -118,7 +119,7 @@ def check(model, p, min_runs=None):
     enough = out["runs_before"] >= min_runs and out["runs_after"] >= min_runs
     res = bench.compare(rows_a, rows_b, unit["baseline"], unit["pseudo"], weights, f"{p['id']}|{uid}",
                         model["method"]["resamples"], model["method"]["confidence"], interval=enough)
-    ctx_conf = _confounders(model, uid, versions, before, after)
+    ctx_conf, ctx_notes = _confounders(model, uid, versions, before, after)
     if p["measure"] == "score":
         value = 100 * math.exp(res["d"]) if res["d"] is not None else None
         ci = [100 * math.exp(x) for x in res["ci"]] if res["ci"] else None
@@ -139,7 +140,7 @@ def check(model, p, min_runs=None):
         if p["measure"] == "outcome" and res["outcome"]:
             out["difference"]["value"] = res["outcome"]["value"]
             out["difference"]["value_ci95"] = res["outcome"]["ci"]
-    out["confounders"] = ctx_conf
+    out["confounders"], out["notes"] = ctx_conf, ctx_notes
     if not enough or moved is None:
         return out
     higher_is_better = p["measure"] in ("score", "outcome")
@@ -165,10 +166,11 @@ def _confounders(model, uid, versions, before, after):
         hi = max(order.index(x) for x in labels_b)
         span = set(order[lo:hi + 1])
         direct = [x for x in pairs if x["vs_previous"] and x["a"] in span and x["b"] in span]
-    out = []
+    out, notes = [], []
     for x in direct:
         out += [c for c in x["confounders"] if c not in out]
-    return out
+        notes += [n for n in x.get("notes", []) if n not in notes]
+    return out, notes
 
 
 def _ts(x):

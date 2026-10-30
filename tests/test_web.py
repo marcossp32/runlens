@@ -438,6 +438,18 @@ class Renders(unittest.TestCase):
         text = visible(dump(path, "#/?kind=groups"))
         self.assertIn("1 confounded", text)
 
+    def test_a_note_on_the_verdict_is_shown_beside_it(self):
+        # A Claude Code patch shift under cc_version = "minor" is a note: said next to the verdict, not a confounder.
+        m = copy.deepcopy(model())
+        note = "Claude Code patches also changed: v1 ran on 2 patch versions (2.1.1, 2.1.2), v2 on 2.1.9, none shared"
+        m["units"][0]["notes"] = [note]
+        m["versions"]["skill:flow"][1]["notes"] = [note]
+        path = TMP / "notes.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/unit/skill%3Aflow"))
+        self.assertGreaterEqual(text.count(f"Note: {note}."), 2, text)  # under the verdict and on the version
+        self.assertNotIn("Not comparable", text)
+
     def test_range_takeaway_speaks_only_of_the_rows_it_judged(self):
         # A confounded skill whose whole range is above 100 sits next to a skill whose range crosses 100:
         # the takeaway may not say that every range crosses 100.
