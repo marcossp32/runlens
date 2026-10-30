@@ -48,6 +48,9 @@ function human(name) {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
+// A problem's detail as the reader's locale writes its numbers: "auto, 484996 tokens before" -> "auto, 484,996 tokens before".
+const readableDetail = (s) => (s ? String(s).replace(/\b\d{4,}\b(?= tokens?\b)/g, (n) => fmt.int(Number(n))) : null);
+
 // A version without a recorded skill text is named by what is known, not by a number.
 const nameOf = (v) => (v.recorded ? v.label : "unrecorded");
 const findVersion = (s) => (DATA.versions[s.id] || []).find((v) => v.key === s.key) || null;

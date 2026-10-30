@@ -533,6 +533,21 @@ class Renders(unittest.TestCase):
         self.assertEqual(len(fills), 2, dom[-400:])  # flow and once_only
         self.assertEqual(len(set(fills)), 2, fills)
 
+    def test_labels_say_what_they_are(self):
+        m = model()
+        ex = m["explore"]
+        tools = ex["tools"]["r"]
+        tools += [[r[0], "Bash", "flow", 20, 1, 0, 9000] for r in tools[:3]] + [[r[0], "bash", "flow", 2, 2, 0, 10] for r in tools[:3]]
+        inc = ex["incidents"]
+        inc["r"][0][inc["c"].index("detail")] = "auto, 484996 tokens before"
+        path = TMP / "labels.html"
+        path.write_text(dashboard.render(m), encoding="utf-8")
+        text = visible(dump(path, "#/diagnostics?tab=tools"))
+        self.assertIn("bash (no such tool, not Bash)", text)
+        run = dump(path, "#/run/s1v1aaaa")
+        self.assertNotIn("484996", " ".join(re.findall(r'aria-label="([^"]*)"', run)))
+        self.assertRegex(run, r'aria-label="[^"]*484\D996 tokens before')
+
     def test_a_stub_run_says_what_it_lacks(self):
         m = model()
         runs = m["explore"]["runs"]

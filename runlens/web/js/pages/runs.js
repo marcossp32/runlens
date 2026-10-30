@@ -214,7 +214,7 @@ function runPage(id) {
   const lanes = [skillLane,
     { label: "Your messages", items: prompts.map((e) => ({ t: at(e.t), css: "var(--text2)", shape: "diamond", tip: { title: "You wrote", rows: [["When", fmt.hour(at(e.t))], ["How", human(e.source || "typed")]] } })) },
     { label: "Problems", items: incidents.map((x) => ({ t: at(x.t), css: x.policy ? "var(--other)" : "var(--worse)", shape: "triangle",
-      tip: { title: human(x.type), sub: x.detail || null, rows: [["When", fmt.hour(at(x.t))], ["Agent", agentName(x.agent)], ["Skill", human(x.skill)], ...(x.label ? [["Label", human(x.label)]] : []), ["Show", `runlens show ${x.id}`]] } })) },
+      tip: { title: human(x.type), sub: readableDetail(x.detail), rows: [["When", fmt.hour(at(x.t))], ["Agent", agentName(x.agent)], ["Skill", human(x.skill)], ...(x.label ? [["Label", human(x.label)]] : []), ["Show", `runlens show ${x.id}`]] } })) },
     { label: "Checks", items: markers.map((m) => ({ t: at(m.t), css: m.bad ? "var(--worse)" : "var(--better)", shape: m.bad ? "square" : "circle",
       tip: { title: `${human(m.marker)}: ${m.value}`, rows: [["When", fmt.hour(at(m.t))], ["Skill", human(m.skill)], ["Reading", m.bad ? `${TONE.worse.icon} bad value` : `${TONE.better.icon} ok`]] } })) },
     { label: "Tool errors", items: errors.map((e) => ({ t: at(e.t), css: "var(--worse)", shape: "tick", tip: { title: `${e.tool}: ${human(e.class)}`, rows: [["When", fmt.hour(at(e.t))], ["Agent", agentName(e.agent)], ["Show", `runlens show ${e.id}`]] } })) },
