@@ -93,6 +93,7 @@ function renderScorePanel() {
     note("Saved in the link and in this browser. A weight of 0 shows a measure without scoring it."));
   fill(SCORE_EL, summary, panel);
   SCORE_EL.open = wasOpen;
+  keepInView(SCORE_EL); // redrawn while open: its new panel is placed again
   if (focusKey) {
     const el = SCORE_EL.querySelector(`[data-key="${focusKey}"]`);
     if (el) el.focus({ preventScroll: true });

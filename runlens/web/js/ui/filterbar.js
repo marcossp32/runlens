@@ -170,4 +170,21 @@ document.addEventListener("toggle", (e) => {
   const d = e.target;
   if (!d.open || !d.matches || !d.matches("details.fdrop, details.menu")) return;
   for (const o of document.querySelectorAll("details.fdrop[open], details.menu[open]")) if (o !== d) o.open = false;
+  keepInView(d);
 }, true);
+
+// A menu's panel hangs from its button, so on a narrow screen it can open past an edge (Score and Views once the
+// header wraps, a filter in the middle of the row). Slide it back inside the window.
+function keepInView(d) {
+  const panel = d && d.open ? d.querySelector(":scope > .menu-panel, :scope > .fpanel") : null;
+  if (!panel) return;
+  panel.style.transform = "";
+  const r = panel.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth, m = 8;
+  let dx = r.right > vw - m ? vw - m - r.right : 0;
+  if (r.left + dx < m) dx = m - r.left;
+  if (dx) panel.style.transform = `translateX(${Math.round(dx)}px)`;
+}
+window.addEventListener("resize", () => {
+  for (const d of document.querySelectorAll("details.fdrop[open], details.menu[open]")) keepInView(d);
+});

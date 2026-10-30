@@ -65,6 +65,7 @@ function renderViewsMenu(said = "") {
       h("div", { class: "vsave" }, name, save), status,
       note("To share a view with everyone who opens this file, add it to config.toml: [[dashboard.view]] name = \"…\", hash = \"#/…\".")));
   VIEWS_EL.open = wasOpen;
+  keepInView(VIEWS_EL); // redrawn while open: its new panel is placed again
 }
 
 // ---- data health: what is wrong (warn) and what is only worth knowing (info) ----
