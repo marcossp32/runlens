@@ -145,6 +145,11 @@ def main(argv=None):
     cfg = config.load(a.config)
     flt = lambda: {"since": a.since, "skills": a.skill, "projects": a.project, "sessions": a.session}
 
+    if a.command in ("archive", "ingest", "refresh") and a.session:
+        from .archive import unprune
+        for sid in unprune(a.session):  # naming a pruned run is how it is brought back
+            if not a.quiet:
+                print(f"{sid[:8]}  was pruned: taken off the pruned list")
     if a.command == "refresh":
         from .hooks import drain, pending
         if pending():  # sessions the hook queued: archive and ingest them first, then the rest

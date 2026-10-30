@@ -212,7 +212,7 @@ Every command accepts `--config <file>` before the command name (default `~/.run
 | `ingest` | Load the archive into DuckDB. Incremental: unchanged runs are skipped (see [Data](#data-reference)) | as `archive`, plus `--force` (parse every run again) |
 | `refresh` | Drain the hook's queue, then `archive` + `ingest` | as `ingest` |
 | `check` | Compare the database with the archive and the archive with `~/.claude/projects`, and warn when the installed `/runlens-retro` is older than this runlens's; exits 1 on any `FAIL` or `WARN` | `--session ID` (repeatable), `--no-sources` (skip the comparison with `~/.claude/projects`) |
-| `prune` | Delete runs from the database and the archive. Lists them unless `--yes` | `--before DATE`, `--session ID` (or 8-char prefix, repeatable), `--keep-archive` (database rows only), `--yes` |
+| `prune` | Delete runs from the database and the archive. Lists them unless `--yes`. A pruned run stays out: `archive`, `ingest`, `refresh` and `check` skip it until a `--session` names it again (`refresh --session ID` brings it back) | `--before DATE`, `--session ID` (or 8-char prefix, repeatable), `--keep-archive` (database rows only), `--yes` |
 | `migrate-evidence` | Convert evidence archived by runlens 0.1 into deduplicated blobs and delete the old folders. Dry run unless `--yes` | `--yes`, `--keep-excluded` (also keep browser profiles, databases, node_modules) |
 | `sql "<query>"` | Any read-only query over the tables and views | `--json`, `--csv` |
 
@@ -301,7 +301,7 @@ Views (in [`views.sql`](runlens/views.sql)): `v_runs`, `v_skill`, `v_role`, `v_m
 
 - **Everything is local.** The archive, database, dashboard and report live in `~/.runlens/`. Nothing is sent anywhere, except incident timelines and skill text to `claude -p` when you run `classify`.
 - **Redaction.** `[privacy] redact = true` masks API keys and tokens (Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google, Stripe, npm), private keys, JWTs, bearer tokens, passwords in URLs and assignments, and e-mail addresses in the stored text columns (tool inputs and outputs, agent text, prompts, skill texts, event details, marker values), and in the task prompt and history that `export-eval` writes; the working directory, git branch and PR links are not masked. Text is masked before it is cut to its stored length. Add your own regexes in `patterns`. Hashes are taken before masking, so counts do not change. The archived transcripts stay verbatim, because they are what runlens re-ingests from.
-- **Retention.** `runlens prune --before 2026-01-01` (or `--session <id>`) lists the runs it would delete; add `--yes` to delete their database rows and archived files. `--keep-archive` deletes only the rows.
+- **Retention.** `runlens prune --before 2026-01-01` (or `--session <id>`) lists the runs it would delete; add `--yes` to delete their database rows and archived files. `--keep-archive` deletes only the rows. runlens remembers what it pruned (`~/.runlens/pruned.json`), so a run whose transcript is still in `~/.claude/projects` is not copied back by the next `refresh`, and `check` does not ask for it. `runlens refresh --session <id>` brings one back.
 - **Evidence.** `[[evidence]]` files are stored once by content hash under `archive/_blobs`. By default only files modified during the run are kept, at most `max_mb` per run and rule, and browser profiles (cookies, saved passwords, local storage), databases, `node_modules`, `.git` objects and virtualenvs are never kept. Add your own `exclude` globs.
 
 ## Troubleshooting

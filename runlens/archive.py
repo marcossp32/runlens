@@ -79,13 +79,14 @@ def select(cfg, since=None, skills=None, projects=None, sessions=None, cache=Non
     want_skills = set(skills or sel.get("skills", []))
     want_projects = [p.lower() for p in (projects or sel.get("projects", []))]
     cache = {} if cache is None else cache
+    gone = pruned()
     found = {p.as_posix(): p for p in config.PROJECTS.glob("*/*.jsonl")}
     for extra in transcripts or []:  # a transcript_path the hook was given, wherever Claude Code keeps its projects
         extra = Path(extra)
         if extra.suffix == ".jsonl" and extra.is_file():
             found.setdefault(extra.as_posix(), extra)
     for main in sorted(found.values()):
-        if sessions and main.stem not in sessions:
+        if (sessions and main.stem not in sessions) or main.stem in gone:
             continue
         try:
             sig = source_signature(main)
@@ -107,6 +108,34 @@ def select(cfg, since=None, skills=None, projects=None, sessions=None, cache=Non
             continue
         info["source"] = sig
         yield main, info
+
+
+PRUNED = "pruned.json"
+
+
+def pruned():
+    """{session id: what was recorded} for every run `prune` deleted. archive, ingest and check leave these out,
+    so a pruned run is not copied, loaded or asked for again while its source is still in ~/.claude/projects."""
+    try:
+        data = read_json(config.HOME / PRUNED)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def record_pruned(entries):
+    if entries:
+        write_json(config.HOME / PRUNED, {**pruned(), **{e["session_id"]: e for e in entries}})
+
+
+def unprune(ids):
+    """Take runs off the pruned list (by full id or 8-character prefix), so the next archive and ingest bring them
+    back. Returns the session ids taken off."""
+    have = pruned()
+    gone = [sid for sid in have if any(sid == x or sid[:8] == x for x in ids or [])]
+    if gone:
+        write_json(config.HOME / PRUNED, {k: v for k, v in have.items() if k not in gone})
+    return gone
 
 
 def load_cache():
@@ -316,8 +345,10 @@ def archive_run(cfg, main, info, quiet=True):
 
 def stale_runs():
     """Archived runs whose source in ~/.claude/projects changed after they were copied: (sid, project, reason)."""
-    out = []
+    out, gone = [], pruned()
     for mf in sorted(fs_path(config.ARCHIVE).glob("*/*.runlens.json")):
+        if mf.name.removesuffix(".runlens.json") in gone:
+            continue  # pruned with --keep-archive: no longer tracked
         try:
             info = read_json(mf)
         except (OSError, ValueError):

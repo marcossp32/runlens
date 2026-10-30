@@ -75,6 +75,11 @@
 - `CLAUDE_CONFIG_DIR` is honoured for settings, skills and the transcripts folder, and the hook passes its `transcript_path` to the drain, so sessions outside `~/.claude/projects` are no longer dropped as "not selected" (#5).
 - `runlens refresh` takes the drain lock while it archives and ingests; the drain looks at the queue once more after releasing the lock; the log no longer says "archived and ingested" for a run whose ingest failed (#5).
 
+- A `config.toml` that does not load no longer makes the SessionEnd hook lose the session: the hook queues it first and writes the config error to `hooks.log`, and the detached drain logs its config error there too instead of to nowhere. `runlens refresh` drains the queue once the config is fixed (#33).
+- `ingest --skill` and `--project` (and the ingest step of `refresh`) are applied; they were accepted and ignored (#33).
+- Pruned runs stay pruned. `prune` records what it deleted, so `refresh` no longer copies a run back from `~/.claude/projects`, `ingest` no longer reloads one pruned with `--keep-archive`, and `check` no longer asks for either. Naming a run with `--session` in `archive`, `ingest` or `refresh` brings it back (#33).
+- The drain's log says why a queued session was skipped: pruned, no transcript, or not selected by `[select]` (#33).
+
 ### Config, packaging and CI
 - `config.toml` is checked for typos and wrong types: an unknown section or key (`[runs] idle_hourz`, `[selectt]`) and a value of the wrong type (`[method] min_runs = "x"`, `resamples = 4000.5`) stop the command with a one-line error that names the key (#17).
 - `uv run pytest` works: pytest is a dev dependency group. pyproject lists the supported Python versions (3.11 to 3.14) and explains why `pytz` is a dependency although it is never imported (DuckDB needs it for TIMESTAMPTZ).

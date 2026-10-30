@@ -568,6 +568,27 @@ class Ingest(Sandbox):
         self.assertEqual([r[0] for r in self.q("SELECT session_id FROM runs")], ["afafafaf-0000-0000-0000-000000000002"])
         self.assertFalse(fs_path(self.home / "archive" / "C--work-repo" / f"{old.sid}.jsonl").exists())
 
+    def test_pruned_runs_stay_pruned_until_named_again(self):
+        a = simple_run(self.projects, "a3a3a3a3-0000-0000-0000-000000000001")
+        b = simple_run(self.projects, "a3a3a3a3-0000-0000-0000-000000000002")
+        c = simple_run(self.projects, "a3a3a3a3-0000-0000-0000-000000000003")
+        self.refresh()
+        self.quiet(store.prune, sessions=[a.sid], yes=True)
+        self.quiet(store.prune, sessions=[b.sid], keep_archive=True, yes=True)
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)  # neither is asked for back
+        cli_args = ["--config", str(self.tmp / "none.toml")]
+        self.quiet(cli.main, cli_args + ["refresh", "--force"])
+        self.assertEqual([r[0] for r in self.q("SELECT session_id FROM runs")], [c.sid])
+        self.assertFalse(fs_path(self.home / "archive" / "C--work-repo" / f"{a.sid}.jsonl").exists())
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
+        self.quiet(cli.main, cli_args + ["refresh", "--session", a.sid])  # naming it brings it back
+        self.assertEqual(sorted(r[0] for r in self.q("SELECT session_id FROM runs")), [a.sid, c.sid])
+        self.quiet(cli.main, cli_args + ["ingest", "--session", b.sid[:8]])  # by prefix too; its archive was kept
+        self.assertIn("taken off the pruned list", self.out)
+        self.quiet(cli.main, cli_args + ["ingest"])
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 3)
+        self.assertEqual(self.quiet(check.check, cfg=self.cfg), 0, self.out)
+
 
 class Sources(Sandbox):
     def test_check_finds_stale_and_unarchived_runs(self):
@@ -750,6 +771,19 @@ class HookQueue(Sandbox):
         self.assertEqual(hooks.drain(self.cfg), 0)
         self.assertEqual(hooks.pending(), [])
         self.assertIn("skipped", (self.home / "hooks.log").read_text(encoding="utf-8"))
+
+    def test_the_log_says_why_a_queued_session_was_skipped(self):
+        r = simple_run(self.projects, "d2d2d2d2-0000-0000-0000-000000000001")
+        self.refresh()
+        self.quiet(store.prune, sessions=[r.sid], yes=True)
+        hooks.enqueue(r.sid)
+        hooks.enqueue("d2d2d2d2-0000-0000-0000-00000000dead")  # no transcript anywhere
+        hooks.drain(self.cfg)
+        log = (self.home / "hooks.log").read_text(encoding="utf-8")
+        self.assertIn(f"skipped {r.sid}: pruned earlier", log)
+        self.assertIn("skipped d2d2d2d2-0000-0000-0000-00000000dead: no transcript", log)
+        self.assertNotIn("not selected", log)
+        self.assertEqual(self.q("SELECT count(*) FROM runs")[0][0], 0)
 
     def test_lock_errors_are_recognised_and_waited_for(self):
         store.connect().close()

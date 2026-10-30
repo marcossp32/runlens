@@ -318,10 +318,12 @@ def fingerprint(main):
 
 
 def manifests(sessions=None):
-    """(manifest path, info or exception) for every archived run, optionally only some sessions."""
+    """(manifest path, info or exception) for every archived run that was not pruned, optionally only some sessions."""
+    from .archive import pruned
+    gone = pruned()
     for mf in sorted(fs_path(config.ARCHIVE).glob("*/*.runlens.json")):
         sid = mf.name.removesuffix(".runlens.json")
-        if sessions and sid not in sessions:
+        if (sessions and sid not in sessions) or sid in gone:
             continue
         try:
             yield mf, read_json(mf)
@@ -487,9 +489,14 @@ def prune(before=None, sessions=None, keep_archive=False, yes=False):
         con.execute("COMMIT")
     finally:
         con.close()
+    # Remembered, so refresh does not copy the run again from ~/.claude/projects and check does not ask for it back.
+    now = datetime.now(timezone.utc).isoformat()
+    arch.record_pruned([{"session_id": sid, "project": project, "started": str(started), "pruned_at": now,
+                         "archive_kept": keep_archive} for sid, project, started in rows])
     if not keep_archive:
         for sid, project, _ in rows:
             arch.remove_run(project, sid)
         arch.collect_garbage()
-    print(f"{len(rows)} run(s) deleted")
+    print(f"{len(rows)} run(s) deleted" + (f"; they stay out of archive and ingest until "
+                                             f"`runlens refresh --session <id>`" if rows else ""))
     return len(rows)

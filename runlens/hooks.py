@@ -158,6 +158,16 @@ class DrainLock:
             self.fh = None
 
 
+def why_skipped(sid, transcripts=()):
+    """Why `archive` took nothing for a queued session, for hooks.log."""
+    from .archive import pruned
+    if sid in pruned():
+        return f"pruned earlier (`runlens refresh --session {sid}` brings it back)"
+    if not any(config.PROJECTS.glob(f"*/{sid}.jsonl")) and not any(Path(t).is_file() for t in transcripts):
+        return f"no transcript for it in {config.PROJECTS}"
+    return "not selected by [select] in config.toml"
+
+
 def drain(cfg, wait_lock=False):
     """Archive and ingest every queued session, then rebuild the dashboard once.
 
@@ -194,10 +204,11 @@ def drain(cfg, wait_lock=False):
                 selected = set()
                 for sid in sids:
                     try:
-                        if archive(cfg, quiet=True, sessions=[sid], transcripts=[t for t in [queued_transcript(sid)] if t]):
+                        transcripts = [t for t in [queued_transcript(sid)] if t]
+                        if archive(cfg, quiet=True, sessions=[sid], transcripts=transcripts):
                             selected.add(sid)
                         else:
-                            log(f"skipped {sid}: not selected by [select] in config.toml")
+                            log(f"skipped {sid}: {why_skipped(sid, transcripts)}")
                             (config.PENDING / sid).unlink(missing_ok=True)
                     except Exception as e:
                         log(f"error archiving {sid}: {type(e).__name__}: {e}")

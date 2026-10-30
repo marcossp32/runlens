@@ -9,6 +9,7 @@ open, models with no price, sessions still waiting in the hook's queue, and an
 installed /runlens-retro older than the one this runlens ships.
 """
 from . import config, store
+from .archive import pruned
 from .fs import fs_path, read_json
 from .transcripts import PARSER_VERSION, iter_records, run_files
 
@@ -39,10 +40,11 @@ def check(sessions=None, cfg=None, sources=True):
     try:
         in_db = {r[0]: r[1:] for r in con.execute("SELECT session_id, status, is_stub, parser_version FROM runs").fetchall()}
         failed = {r[0] for r in con.execute("SELECT session_id FROM ingest_errors").fetchall()}
+        gone = pruned()
         for mf in sorted(fs_path(config.ARCHIVE).glob("*/*.runlens.json")):
             sid = mf.name.removesuffix(".runlens.json")
-            if sessions and sid not in sessions and sid[:8] not in sessions:
-                continue
+            if (sessions and sid not in sessions and sid[:8] not in sessions) or sid in gone:
+                continue  # a run pruned with --keep-archive is no longer tracked
             if sid not in in_db:
                 if sid in failed:
                     continue  # reported with its error below
