@@ -486,6 +486,14 @@ class Renders(unittest.TestCase):
         ticks = x_ticks(card(dom, "How do the items' scores and cost sit side by side?"))
         self.assertGreaterEqual(len(ticks), 2, ticks)
 
+    def test_each_outcome_chart_asks_its_own_question(self):
+        path = TMP / "questions.html"
+        path.write_text(dashboard.render(wording_model()), encoding="utf-8")
+        dom = dump(path, "#/?tab=cost")
+        asked = re.findall(r'<figcaption class="cardtitle"[^>]*>(How do the skills[^<]*)</figcaption>', dom)
+        self.assertEqual(len(asked), 2, asked)
+        self.assertEqual(len(set(asked)), 2, asked)
+
     def test_axis_ticks_land_on_round_values(self):
         m = model()
         t = m["explore"]["tools"]
