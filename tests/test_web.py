@@ -483,8 +483,11 @@ class Renders(unittest.TestCase):
         path = TMP / "onepoint.html"
         path.write_text(dashboard.render(model()), encoding="utf-8")
         dom = dump(path, "#/?tab=cost&skills=flow", until=r'<g class="axis-x">')
-        ticks = x_ticks(card(dom, "How do the items' scores and cost sit side by side?"))
+        markup = card(dom, "How do the items' scores and cost sit side by side?")
+        ticks = x_ticks(markup)
         self.assertGreaterEqual(len(ticks), 2, ticks)
+        y = re.findall(r'<text class="tick"[^>]*>([^<]*)</text>', re.search(r'<g class="axis-y">(.*?)</g>', markup, re.S).group(1))
+        self.assertEqual(len(y), len(set(y)), y)  # no two score ticks read the same (99.5 and 100 both as "100")
 
     def test_each_outcome_chart_asks_its_own_question(self):
         path = TMP / "questions.html"

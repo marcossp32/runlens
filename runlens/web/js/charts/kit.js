@@ -211,7 +211,8 @@ function dayColumns(spec) {
 
 /* ---- scatter: two measures, one dot per item; numbers, logs or time across ----
    spec: {title, points: [{x, y, ns, name, css, shape, r, label, tip: {title, rows}, href}],
-          x: {title, fmt, log, time}, y: {title, fmt, log, ref, refLabel}, labels, vlines: [{t, label}], legendItems, sizeNote} */
+          x: {title, fmt, log, time}, y: {title, fmt, log, ref, refLabel, fit, whole}, labels, vlines: [{t, label}], legendItems, sizeNote}
+   y.whole: ticks on whole numbers, for values shown without decimals (scores) */
 function scatterChart(spec) {
   const pts = spec.points.filter((p) => valid(p.x) && valid(p.y) && (!spec.x.log || p.x > 0) && (!spec.y.log || p.y > 0));
   if (!pts.length) return emptyCard(spec.title, spec.emptyText || "Not enough data for this chart yet.", spec.notes);
@@ -236,8 +237,8 @@ function scatterChart(spec) {
         yt = logTicks(lo, hi);
         y = scaleLog(lo, hi, H - bottom, top);
       } else if (spec.y.fit) {
-        const lo = Math.min(...ys), hi = Math.max(...ys), pad = (hi - lo) * 0.12 || 5;
-        yt = ticks(lo - pad, hi + pad, 5);
+        const lo = Math.min(...ys), hi = Math.max(...ys), pad = Math.max((hi - lo) * 0.12 || 5, spec.y.whole ? 2 : 0);
+        yt = ticks(lo - pad, hi + pad, 5, spec.y.whole);
         y = scaleLinear(Math.min(lo - pad, yt[0]), Math.max(hi + pad, yt[yt.length - 1]), H - bottom, top);
       } else {
         const nm = niceMax(Math.max(...ys) * 1.04, 5);

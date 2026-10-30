@@ -248,7 +248,8 @@ function costPanel(shown) {
         tip: { title: u.name, rows: [["Score", fmt.score(u.score)], ["Outcome", fmt.pct(u.kpi.outcome)], ["Cost per invocation", fmt.usd(u.kpi.cost)], ["Runs", fmt.int(u.runs)]] },
       })),
       x: { title: "Cost per invocation, US$ (log scale)", log: true, fmt: fmt.usdTick },
-      y: yOutcome ? { title: `${ow.rate}: share of attempts (higher is better)`, fmt: (v) => fmt.pct(v, 0), fit: true } : { title: `Score (100 = ${baseWords()}, higher is better)`, fmt: fmt.score, fit: true, ref: 100, refLabel: "100 = usual level" },
+      // a tick at 92.5 % keeps its decimal, so two ticks never read the same
+      y: yOutcome ? { title: `${ow.rate}: share of attempts (higher is better)`, fmt: (v) => fmt.pct(v, Math.abs(v * 100 - Math.round(v * 100)) > 1e-6 ? 1 : 0), fit: true } : { title: `Score (100 = ${baseWords()}, higher is better)`, fmt: fmt.score, fit: true, whole: true, ref: 100, refLabel: "100 = usual level" },
       frontier: { x: "low", y: "high" }, labels: true, labelTitle: "Skill",
       legendItems: [...names].map((n) => { const c = colourOf("skill", n); return { label: n, css: c.css, shape: c.shape }; }).concat([{ label: "Pareto frontier", css: "var(--text2)", kind: "line" }]),
       extraCols: [{ label: "Runs", num: true, value: (p) => p.runs }],
