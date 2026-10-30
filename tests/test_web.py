@@ -520,6 +520,17 @@ class Renders(unittest.TestCase):
         self.assertIn("59 incident labels match no incident", visible(dom))
         self.assertNotIn('class="settingsnote healthfilters"', dump(path, "#/health"))
 
+    def test_filter_counts_are_the_runs_a_choice_would_leave(self):
+        path = TMP / "fcount.html"
+        path.write_text(dashboard.render(model()), encoding="utf-8")
+        count = lambda dom, v: int(re.search(rf'data-text="{re.escape(v)}".*?class="fcount">(\d+)<', dom, re.S).group(1))
+        dom = dump(path, "#/runs")
+        self.assertEqual(count(dom, "2.2.0"), 2)  # runs 4, 5 and 6 used it; run 6 is still open
+        dom = dump(path, "#/runs?repo=other")
+        self.assertEqual((count(dom, "2.1.0"), count(dom, "2.2.0")), (1, 1))  # the repo filter applies to the Claude Code counts
+        self.assertEqual(count(dom, "other"), 2)  # a dimension's own filter does not narrow its counts
+        self.assertEqual(count(dump(path, "#/runs?pop=all"), "2.2.0"), 3)
+
 
 def build_demo():
     """The demo history and its model, built in child processes with their own RUNLENS_HOME."""

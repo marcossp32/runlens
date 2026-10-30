@@ -25,6 +25,9 @@ function dimMenu(d) {
     box.append(h("div", { class: "fpanel" }, note("Not recorded.")));
     return box;
   }
+  // Each count is the runs that ticking the value alone would leave: the other filters and the population apply.
+  const counts = new Map();
+  for (const r of EX.runs) if (runPasses(r, d.key)) for (const v of new Set(d.of(r) || [])) counts.set(v, (counts.get(v) || 0) + 1);
   const write = (values) => refreshAfter({ [d.key]: values.length && values.length < opts.length ? values.join(",") : null });
   const search = opts.length > 8 ? h("input", { type: "search", class: "fsearch", placeholder: `Find ${d.plural}`, "aria-label": `Find ${d.plural}` }) : null;
   const list = h("ul", { class: "flist" }, opts.map((o) => {
@@ -40,7 +43,7 @@ function dimMenu(d) {
     const dot = d.key === "skills" ? colourOf("skill", o.value) : d.key === "model" ? colourOf("model", o.value) : null;
     return h("li", { "data-text": String(o.value).toLowerCase() }, h("label", {}, cb,
       dot && !dot.other ? svg("svg", { class: "lkey", width: 10, height: 10, "aria-hidden": "true" }, marker(dot.shape, 5, 5, 4, { style: `fill:${dot.css}` })) : null,
-      h("span", { class: "fopt" }, show(o.value)), h("span", { class: "fcount" }, fmt.int(o.runs))));
+      h("span", { class: "fopt" }, show(o.value)), h("span", { class: "fcount" }, fmt.int(counts.get(o.value) || 0))));
   }));
   if (search) {
     search.addEventListener("input", () => {
